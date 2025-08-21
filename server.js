@@ -19,7 +19,7 @@ app.use(
       "http://localhost:8082", // customer frontend (local)
       "http://localhost:8081", // admin panel (local)
       "http://localhost:3000", // vite local
-      process.env.FRONTEND_URL || "" // ✅ deployed frontend
+      process.env.FRONTEND_URL || "*" // ✅ allow deployed frontend OR fallback
     ],
     credentials: true,
   })
@@ -46,7 +46,11 @@ app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 
 // Health check
 app.get("/api/test", (_req, res) => {
-  res.json({ ok: true, message: "✅ Server is working!", timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    message: "✅ Server is working!",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Root
@@ -58,6 +62,6 @@ app.use(errorHandler);
 
 /* ---------- Start ---------- */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
