@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
-const Category = require("../models/category.js"); // ✅ Explicit import with .js
+const Category = require("../models/categoryModel.js"); // ✅ fixed
 
 // ---------------- Schema ----------------
 const productSchema = new mongoose.Schema(
