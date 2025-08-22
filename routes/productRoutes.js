@@ -1,13 +1,13 @@
-// backend/routes/productRoutes.js
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
+const Category = require("../models/category.js"); // ✅ Explicit import with .js
 
 // ---------------- Schema ----------------
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    sku: { type: String, required: true, unique: true, trim: true }, // 🔑 SKU should be unique
+    sku: { type: String, required: true, unique: true, trim: true }, // 🔑 SKU unique
     price: { type: Number, default: 0 },
     description: { type: String, trim: true },
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },

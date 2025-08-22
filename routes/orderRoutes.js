@@ -1,12 +1,9 @@
-// backend/routes/orderRoutes.js
 const express = require("express");
 const router = express.Router();
-const Order = require("../models/orderModel");
+const Order = require("../models/orderModel.js"); // ✅ Added .js
 
 /**
  * GET /api/orders
- * - If ?customerId= present → only that customer's orders
- * - Admin view → all orders with basic customer fields populated
  */
 router.get("/", async (req, res) => {
   try {
@@ -26,7 +23,6 @@ router.get("/", async (req, res) => {
 
 /**
  * GET /api/orders/:id
- * - Single order by ID
  */
 router.get("/:id", async (req, res) => {
   try {
@@ -43,13 +39,6 @@ router.get("/:id", async (req, res) => {
 
 /**
  * POST /api/orders
- * Body: {
- *   customerId,
- *   items:[{ productId, name, qty, price, image }],
- *   total,
- *   paymentMethod,
- *   shipping:{ address, phone, email, notes }
- * }
  */
 router.post("/", async (req, res) => {
   try {
@@ -72,14 +61,13 @@ router.post("/", async (req, res) => {
       try {
         order = await order.save();
 
-        // Return with populated customer fields
+        // return with populated customer fields
         const saved = await Order.findById(order._id)
           .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
           .lean();
 
         return res.status(201).json({ order: saved });
       } catch (e) {
-        // Handle rare orderNumber unique collision
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
           order.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
           continue;
@@ -96,7 +84,6 @@ router.post("/", async (req, res) => {
 
 /**
  * PATCH /api/orders/:id/status
- * Body: { status }
  */
 router.patch("/:id/status", async (req, res) => {
   try {
@@ -120,7 +107,6 @@ router.patch("/:id/status", async (req, res) => {
 
 /**
  * DELETE /api/orders/:id
- * - Only Admin should use this
  */
 router.delete("/:id", async (req, res) => {
   try {
