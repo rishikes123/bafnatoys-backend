@@ -7,12 +7,12 @@ const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
 const app = express();
 
-// Connect DB
+// ✅ Connect DB
 connectDB();
 
 // ✅ CORS setup
 const allowedOrigins = [
-  process.env.FRONTEND_URL || "", // Env me set karo (Vercel frontend URL)
+  process.env.FRONTEND_URL || "", // Vercel frontend URL (Railway ENV me set karo)
   "http://localhost:3000",        // React local
   "http://localhost:5173",        // Vite local
   "http://localhost:8080",
@@ -20,16 +20,16 @@ const allowedOrigins = [
   "http://localhost:8082",
 ];
 
-// Regex: sabhi vercel.app domains allow
+// ✅ Regex: allow all vercel.app subdomains
 const vercelRegex = /\.vercel\.app$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (
-        !origin ||
-        allowedOrigins.includes(origin) ||
-        vercelRegex.test(origin)   // ✅ allow all vercel subdomains
+        !origin ||                        // direct API test tools (Postman, curl)
+        allowedOrigins.includes(origin) || 
+        vercelRegex.test(origin)          // allow *.vercel.app
       ) {
         callback(null, true);
       } else {
@@ -41,15 +41,15 @@ app.use(
   })
 );
 
-// Body parsers
+// ✅ Body parsers
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
-// Static assets
+// ✅ Static assets
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
-// Routes
+// ✅ Routes
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
@@ -60,7 +60,7 @@ app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 
-// Health check
+// ✅ Health check
 app.get("/api/test", (_req, res) => {
   res.json({
     ok: true,
@@ -69,14 +69,14 @@ app.get("/api/test", (_req, res) => {
   });
 });
 
-// Root
-app.get("/", (_req, res) => res.send("Bafnatoys API running 🚀"));
+// ✅ Root
+app.get("/", (_req, res) => res.send("🚀 Bafnatoys API running"));
 
-// Error handlers
+// ✅ Error handlers
 app.use(notFound);
 app.use(errorHandler);
 
-// Start server
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
