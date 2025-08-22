@@ -1,9 +1,9 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Category = require('../models/categoryModel.js'); // ✅ fixed
+const Category = require("../models/categoryModel.js"); // ✅ matches exact file name
 
 // Get all categories
-router.get('/', async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const cats = await Category.find();
     res.json(cats);
@@ -12,8 +12,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Create a new category
-router.post('/', async (req, res) => {
+// Create category
+router.post("/", async (req, res) => {
   try {
     const cat = new Category({ name: req.body.name });
     await cat.save();
@@ -23,8 +23,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update a category
-router.put('/:id', async (req, res) => {
+// Update category
+router.put("/:id", async (req, res) => {
   try {
     const cat = await Category.findById(req.params.id);
     if (!cat) return res.status(404).json({ message: "Category not found" });
@@ -37,8 +37,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete a category
-router.delete('/:id', async (req, res) => {
+// Delete category
+router.delete("/:id", async (req, res) => {
   try {
     const cat = await Category.findById(req.params.id);
     if (!cat) return res.status(404).json({ message: "Category not found" });
