@@ -10,12 +10,26 @@ const app = express();
 // DB connect
 connectDB();
 
-// CORS
+// ✅ CORS setup
+const allowedOrigins = [
+  process.env.FRONTEND_URL,   // Vercel ka frontend URL (Railway ENV me set karo)
+  "http://localhost:3000",    // React local
+  "http://localhost:5173",    // Vite local
+  "http://localhost:8080",    // optional
+  "http://localhost:8081",    // optional
+  "http://localhost:8082",    // optional
+];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL
-      ? [process.env.FRONTEND_URL, "http://localhost:8082", "http://localhost:8081", "http://localhost:3000"]
-      : "*",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log("❌ CORS blocked:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
