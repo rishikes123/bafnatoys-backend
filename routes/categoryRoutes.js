@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Category = require('../models/category'); // ✅ must match filename
+const Category = require('../models/category.js'); // ✅ Fixed: added .js to match exact filename
 
 // Get all categories
 router.get('/', async (req, res) => {
