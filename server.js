@@ -14,7 +14,7 @@ connectDB();
 app.use(
   cors({
     origin: process.env.FRONTEND_URL
-      ? [process.env.FRONTEND_URL, "http://localhost:8082", "http://localhost:8081", "http://localhost:3000"]
+      ? [process.env.FRONTEND_URL, "http://localhost:3000", "http://localhost:5173"]
       : "*",
     credentials: true,
   })
@@ -24,7 +24,7 @@ app.use(
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
-// Static assets
+// Static assets (make sure folders exist in repo with `.gitkeep`)
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
@@ -41,18 +41,22 @@ app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 
 // Health check
 app.get("/api/test", (_req, res) => {
-  res.json({ ok: true, message: "✅ Server is working!", timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    message: "✅ Server is working!",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Root
-app.get("/", (_req, res) => res.send("Bafnatoys API running"));
+app.get("/", (_req, res) => res.send("Bafnatoys API running 🚀"));
 
 // Error handlers
 app.use(notFound);
 app.use(errorHandler);
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080; // Railway prefers 8080
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
