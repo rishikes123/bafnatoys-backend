@@ -13,7 +13,7 @@ const normalizePhone = (v = "") => {
   return digits.slice(-10);
 };
 
-/* ------------------------------ create ------------------------------- */
+/* ------------------------------ CREATE ------------------------------- */
 /**
  * POST /api/registrations/register
  * multipart/form-data (field name: visitingCard)
@@ -59,21 +59,22 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       zip,
       otpMobile: nMobile,
       whatsapp: nWhats,
-      password, // (note: store hashed in a real app)
+      password, // ⚠️ NOTE: hash before saving in real production
       visitingCardUrl,
       isApproved: null, // Pending by default
     });
 
     await doc.save();
-    res
-      .status(201)
-      .json({ message: "Registration submitted. Awaiting admin approval." });
+    res.status(201).json({
+      message: "Registration submitted. Awaiting admin approval.",
+      user: doc,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message || "Server error" });
   }
 });
 
-/* ------------------------------- read -------------------------------- */
+/* ------------------------------- READ ------------------------------- */
 /**
  * GET /api/registrations
  * Returns all registrations (admin list)
@@ -94,8 +95,7 @@ router.get("/", async (_req, res) => {
 router.get("/phone/:otpMobile", async (req, res) => {
   try {
     const raw = normalizePhone(req.params.otpMobile);
-    // Backward-compatible search (in case old docs still have +91/91 stored)
-    const candidates = [raw, `+91${raw}`, `91${raw}`];
+    const candidates = [raw, `+91${raw}`, `91${raw}`]; // backward compatibility
 
     const user = await Registration.findOne({ otpMobile: { $in: candidates } });
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -106,7 +106,7 @@ router.get("/phone/:otpMobile", async (req, res) => {
   }
 });
 
-/* ----------------------------- update -------------------------------- */
+/* ------------------------------ UPDATE ------------------------------- */
 /**
  * PUT /api/registrations/:id
  * Accepts:
@@ -117,7 +117,7 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Allowed fields to update
+    // Allowed fields
     const allowed = [
       "firmName",
       "shopName",
@@ -146,22 +146,19 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     const doc = await Registration.findByIdAndUpdate(id, update, { new: true });
     if (!doc) return res.status(404).json({ message: "Registration not found" });
 
-    return res.json(doc);
+    res.json(doc);
   } catch (err) {
     console.error("Update registration error:", err);
-    // Multer's "Unexpected field" error → tell client the exact field name to use
     if (err && err.code === "LIMIT_UNEXPECTED_FILE") {
-      return res.status(400).json({
-        message: 'Unexpected field. Use file field name "visitingCard".',
-      });
+      return res
+        .status(400)
+        .json({ message: 'Unexpected field. Use file field name "visitingCard".' });
     }
-    return res
-      .status(500)
-      .json({ message: err.message || "Failed to update profile" });
+    res.status(500).json({ message: err.message || "Failed to update profile" });
   }
 });
 
-/* ----------------------------- approve/reject ------------------------- */
+/* -------------------------- APPROVE / REJECT ------------------------- */
 /**
  * POST /api/registrations/:id/approve
  */
@@ -186,7 +183,7 @@ router.post("/:id/reject", async (req, res) => {
   }
 });
 
-/* ----------------------------- delete -------------------------------- */
+/* ------------------------------- DELETE ------------------------------ */
 /**
  * DELETE /api/registrations/:id
  */

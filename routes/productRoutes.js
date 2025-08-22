@@ -1,83 +1,91 @@
-const express = require('express');
+// backend/routes/productRoutes.js
+const express = require("express");
 const router = express.Router();
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-// Product Schema with SKU + taxFields!
-const productSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  sku: { type: String, required: true, trim: true }, // SKU field, required
-  price: Number,
-  description: String,
-  category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },
-  images: [String],
-  bulkPricing: [{
-    inner: String,
-    qty: Number,
-    price: Number,
-  }],
-  taxFields: {               // ⭐️⭐️⭐️ ADD THIS FIELD!
-    type: [String],
-    default: []
+// ---------------- Schema ----------------
+const productSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    sku: { type: String, required: true, unique: true, trim: true }, // 🔑 SKU should be unique
+    price: { type: Number, default: 0 },
+    description: { type: String, trim: true },
+    category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
+    images: [{ type: String }],
+    bulkPricing: [
+      {
+        inner: String,
+        qty: { type: Number, min: 1 },
+        price: { type: Number, min: 0 },
+      },
+    ],
+    taxFields: {
+      type: [String], // e.g. ["GST", "IGST"]
+      default: [],
+    },
   },
-}, { timestamps: true });
+  { timestamps: true }
+);
 
-const Product = mongoose.models.Product || mongoose.model('Product', productSchema);
+const Product =
+  mongoose.models.Product || mongoose.model("Product", productSchema);
 
-// Get all products
-router.get('/', async (req, res) => {
+// ---------------- Routes ----------------
+
+// GET all products
+router.get("/", async (_req, res) => {
   try {
-    const prods = await Product.find().populate('category');
+    const prods = await Product.find().populate("category");
     res.json(prods);
-  } catch (e) {
+  } catch (err) {
     res.status(500).json({ message: "Failed to fetch products" });
   }
 });
 
-// Get one product by ID
-router.get('/:id', async (req, res) => {
+// GET one product
+router.get("/:id", async (req, res) => {
   try {
-    const prod = await Product.findById(req.params.id).populate('category');
+    const prod = await Product.findById(req.params.id).populate("category");
     if (!prod) return res.status(404).json({ message: "Product not found" });
     res.json(prod);
-  } catch (e) {
-    res.status(404).json({ message: "Product not found" });
+  } catch (err) {
+    res.status(400).json({ message: "Invalid product ID" });
   }
 });
 
-// Create product
-router.post('/', async (req, res) => {
+// CREATE product
+router.post("/", async (req, res) => {
   try {
-    const prod = new Product(req.body);   // taxFields aa jayega agar payload me hai!
+    const prod = new Product(req.body); // taxFields + bulkPricing included
     await prod.save();
     res.status(201).json(prod);
-  } catch (e) {
-    res.status(400).json({ message: e.message || "Failed to create product" });
+  } catch (err) {
+    res.status(400).json({ message: err.message || "Failed to create product" });
   }
 });
 
-// Update product
-router.put('/:id', async (req, res) => {
+// UPDATE product
+router.put("/:id", async (req, res) => {
   try {
-    const prod = await Product.findByIdAndUpdate(
-      req.params.id,
-      req.body,         // taxFields update ho jayega agar payload me hai!
-      { new: true, runValidators: true }
-    );
+    const prod = await Product.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
     if (!prod) return res.status(404).json({ message: "Product not found" });
     res.json(prod);
-  } catch (e) {
-    res.status(400).json({ message: e.message || "Failed to update product" });
+  } catch (err) {
+    res.status(400).json({ message: err.message || "Failed to update product" });
   }
 });
 
-// Delete product
-router.delete('/:id', async (req, res) => {
+// DELETE product
+router.delete("/:id", async (req, res) => {
   try {
     const prod = await Product.findByIdAndDelete(req.params.id);
     if (!prod) return res.status(404).json({ message: "Product not found" });
-    res.json({ message: "Deleted" });
-  } catch (e) {
-    res.status(404).json({ message: "Product not found" });
+    res.json({ message: "Product deleted" });
+  } catch (err) {
+    res.status(400).json({ message: "Invalid product ID" });
   }
 });
 

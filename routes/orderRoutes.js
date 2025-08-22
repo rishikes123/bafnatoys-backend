@@ -5,15 +5,15 @@ const Order = require("../models/orderModel");
 
 /**
  * GET /api/orders
- * - customerId query aayega to sirf us customer ke orders
- * - admin list ke liye Registration (customer) ke basic fields populate
+ * - If ?customerId= present → only that customer's orders
+ * - Admin view → all orders with basic customer fields populated
  */
 router.get("/", async (req, res) => {
   try {
     const { customerId } = req.query;
-    const q = customerId ? { customerId } : {};
+    const filter = customerId ? { customerId } : {};
 
-    const orders = await Order.find(q)
+    const orders = await Order.find(filter)
       .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
       .sort({ createdAt: -1 })
       .lean();
@@ -26,7 +26,7 @@ router.get("/", async (req, res) => {
 
 /**
  * GET /api/orders/:id
- * - single order with populated customer
+ * - Single order by ID
  */
 router.get("/:id", async (req, res) => {
   try {
@@ -43,18 +43,20 @@ router.get("/:id", async (req, res) => {
 
 /**
  * POST /api/orders
- * Body: { customerId, items:[{productId,name,qty,price,image}], total, paymentMethod, shipping:{address, phone, email, notes} }
- * - orderNumber model me pre('validate') se aayega
- * - rare duplicate par retry
+ * Body: {
+ *   customerId,
+ *   items:[{ productId, name, qty, price, image }],
+ *   total,
+ *   paymentMethod,
+ *   shipping:{ address, phone, email, notes }
+ * }
  */
 router.post("/", async (req, res) => {
   try {
     const { customerId, items, total, paymentMethod, shipping } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "customerId and non-empty items are required" });
+      return res.status(400).json({ message: "customerId and non-empty items are required" });
     }
 
     let order = new Order({
@@ -62,14 +64,15 @@ router.post("/", async (req, res) => {
       items,
       total,
       paymentMethod: paymentMethod || "COD",
-      shipping: shipping || {}, // ⬅️ store address/phone/email/notes
+      shipping: shipping || {},
     });
 
     const MAX_TRIES = 5;
     for (let i = 0; i < MAX_TRIES; i++) {
       try {
         order = await order.save();
-        // return with populated customer for immediate UI
+
+        // Return with populated customer fields
         const saved = await Order.findById(order._id)
           .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
           .lean();
@@ -84,6 +87,7 @@ router.post("/", async (req, res) => {
         throw e;
       }
     }
+
     res.status(500).json({ message: "Could not create order (retries exhausted)" });
   } catch (err) {
     res.status(500).json({ message: err.message || "Server error" });
@@ -92,10 +96,13 @@ router.post("/", async (req, res) => {
 
 /**
  * PATCH /api/orders/:id/status
+ * Body: { status }
  */
 router.patch("/:id/status", async (req, res) => {
   try {
     const { status } = req.body;
+    if (!status) return res.status(400).json({ message: "Status is required" });
+
     const order = await Order.findByIdAndUpdate(
       req.params.id,
       { status },
@@ -113,13 +120,13 @@ router.patch("/:id/status", async (req, res) => {
 
 /**
  * DELETE /api/orders/:id
- * - used by Admin panel
+ * - Only Admin should use this
  */
 router.delete("/:id", async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id).lean();
     if (!order) return res.status(404).json({ message: "Order not found" });
-    res.json({ ok: true });
+    res.json({ ok: true, message: "Order deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message || "Server error" });
   }
