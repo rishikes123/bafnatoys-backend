@@ -12,21 +12,24 @@ connectDB();
 
 // ✅ CORS Setup
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  "http://localhost:3000",
-  "http://localhost:5173",
+  process.env.FRONTEND_URL,         // from .env / Railway
+  "http://localhost:3000",          // local React
+  "http://localhost:5173",          // local Vite
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
 ];
 
-// Regex: allow all vercel.app subdomains
+// Regex: allow all *.vercel.app subdomains (optional)
 const vercelRegex = /\.vercel\.app$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
+      // Allow no-origin requests (like curl, mobile apps)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
         callback(null, true);
       } else {
         console.log("❌ CORS blocked:", origin);
