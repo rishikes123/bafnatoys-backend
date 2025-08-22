@@ -7,14 +7,14 @@ const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
 const app = express();
 
-// DB connect
+// Connect DB
 connectDB();
 
 // ✅ CORS setup
 const allowedOrigins = [
-  process.env.FRONTEND_URL,   // main Vercel frontend URL (Railway ENV me set karo)
-  "http://localhost:3000",    // React local
-  "http://localhost:5173",    // Vite local
+  process.env.FRONTEND_URL || "", // Env me set karo (Vercel frontend URL)
+  "http://localhost:3000",        // React local
+  "http://localhost:5173",        // Vite local
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
@@ -62,11 +62,15 @@ app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 
 // Health check
 app.get("/api/test", (_req, res) => {
-  res.json({ ok: true, message: "✅ Server is working!", timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    message: "✅ Server is working!",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Root
-app.get("/", (_req, res) => res.send("Bafnatoys API running"));
+app.get("/", (_req, res) => res.send("Bafnatoys API running 🚀"));
 
 // Error handlers
 app.use(notFound);
