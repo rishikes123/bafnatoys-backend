@@ -9,8 +9,8 @@ router.post("/", upload.array("images", 10), (req, res) => {
       return res.status(400).json({ message: "No files uploaded" });
     }
 
-    // ✅ Cloudinary URLs directly milenge
-    const urls = req.files.map((file) => file.path);
+    // ✅ Cloudinary URLs return karo (secure_url agar ho to use karo, warna path)
+    const urls = req.files.map((file) => file.secure_url || file.path);
 
     console.log("✅ Uploaded to Cloudinary:", urls);
 
