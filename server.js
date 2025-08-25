@@ -12,24 +12,28 @@ connectDB();
 
 // ✅ CORS Setup
 const allowedOrigins = [
-  process.env.FRONTEND_URL,         // from .env / Railway
-  "http://localhost:3000",          // local React
-  "http://localhost:5173",          // local Vite
+  process.env.FRONTEND_URL,         // production frontend from .env
+  "http://localhost:3000",          // CRA default
+  "http://localhost:5173",          // Vite default
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
 ];
 
-// Regex: allow all *.vercel.app subdomains (optional)
+// Regex: allow all *.vercel.app subdomains
 const vercelRegex = /\.vercel\.app$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow no-origin requests (like curl, mobile apps)
-      if (!origin) return callback(null, true);
+      if (!origin) return callback(null, true); // Postman / curl
 
-      if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
+      // ✅ Allow: listed origins, vercel subdomains, OR localhost:any
+      if (
+        allowedOrigins.includes(origin) ||
+        vercelRegex.test(origin) ||
+        origin.startsWith("http://localhost:")
+      ) {
         callback(null, true);
       } else {
         console.log("❌ CORS blocked:", origin);
@@ -41,16 +45,16 @@ app.use(
 );
 
 // ✅ Body parsers
-app.use(express.json({ limit: "5mb" }));
-app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// ✅ Static assets
+// ✅ Static assets (if you still keep local uploads)
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 // ✅ Routes
 app.use("/api/categories", require("./routes/categoryRoutes"));
-app.use("/api/upload", require("./routes/uploadRoutes"));
+app.use("/api/upload", require("./routes/uploadRoutes")); // 👉 Cloudinary integrated
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
 app.use("/api/auth", require("./routes/auth"));
