@@ -27,7 +27,7 @@ const vercelRegex = /\.vercel\.app$/;
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // Postman / curl
+      if (!origin) return callback(null, true); // Postman / curl (no origin)
 
       if (
         allowedOrigins.includes(origin) ||
