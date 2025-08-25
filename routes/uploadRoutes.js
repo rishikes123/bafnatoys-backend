@@ -2,22 +2,22 @@ const express = require("express");
 const router = express.Router();
 const upload = require("../middleware/upload");
 
-router.post("/", upload.array("images", 10), (req, res) => {
+// POST /api/upload
+router.post("/", upload.array("images", 10), async (req, res) => {
   try {
-    console.log("📤 Upload request received");
+    console.log("📸 Upload Request received");
+    console.log("Files received:", req.files);
 
-    if (!req.files || req.files.length === 0) {
-      console.error("❌ No files received");
-      return res.status(400).json({ error: "No files uploaded" });
-    }
+    // Cloudinary returns secure_url in file.path
+    const urls = req.files.map(file => file.path);
 
-    console.log("✅ Files uploaded to Cloudinary:", req.files);
-
-    const urls = req.files.map(file => file.path); // Cloudinary gives .path = secure_url
-    return res.json({ urls });
-  } catch (err) {
-    console.error("❌ Upload route error:", err);
-    return res.status(500).json({ error: err.message || "Upload failed" });
+    res.json({ urls });
+  } catch (error) {
+    console.error("❌ Upload Error:", error);
+    res.status(500).json({
+      message: "Upload failed",
+      error: error.message || error,
+    });
   }
 });
 
