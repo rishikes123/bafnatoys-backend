@@ -1,4 +1,3 @@
-// utils/cloudinaryUpload.js
 const cloudinary = require("../config/cloudinary");
 
 const streamUpload = (fileBuffer, folder = "products") => {
