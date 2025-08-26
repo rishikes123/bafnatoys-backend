@@ -19,23 +19,23 @@ const DEFAULTS = {
   enableSchedule: false,
   startHour: 9,
   endHour: 18,
-  days: [1, 2, 3, 4, 5, 6], // Mon–Sat
+  days: [1, 2, 3, 4, 5, 6],
   agents: [],
 };
 
-/* ---------------- GET ---------------- */
+// GET
 router.get("/", async (_req, res) => {
   try {
     let doc = await WhatsAppSettings.findOne({});
     if (!doc) doc = await WhatsAppSettings.create(DEFAULTS);
 
-    // 🔄 Backward compatibility: seed a default agent if phone exists but agents list is empty
+    // Back-compat: if no agents but legacy phone exists, seed one agent
     if ((!doc.agents || doc.agents.length === 0) && doc.phone) {
       doc.agents = [
         {
           name: "Support",
           phone: (doc.phone || "").replace(/\D/g, ""),
-          title: "Customer Support",
+          title: "",
           avatar: "",
           enabled: true,
           message: "",
@@ -46,23 +46,21 @@ router.get("/", async (_req, res) => {
 
     res.json(doc);
   } catch (e) {
-    console.error("WhatsAppSettings GET error:", e);
     res.status(500).json({ message: e.message || "Server error" });
   }
 });
 
-/* ---------------- PUT ---------------- */
+// PUT
 router.put("/", async (req, res) => {
   try {
     const payload = req.body || {};
 
-    // 🔒 Normalize phone numbers + agent cleanup
     if (Array.isArray(payload.agents)) {
       payload.agents = payload.agents
         .map((a) => ({
           ...a,
-          phone: String(a.phone || "").replace(/\D/g, ""), // only digits
-          enabled: a.enabled !== false, // force boolean
+          phone: String(a.phone || "").replace(/\D/g, ""),
+          enabled: a.enabled !== false,
         }))
         .filter((a) => a.phone); // keep only valid numbers
     }
@@ -70,12 +68,10 @@ router.put("/", async (req, res) => {
     const doc = await WhatsAppSettings.findOneAndUpdate({}, payload, {
       new: true,
       upsert: true,
-      setDefaultsOnInsert: true,
     });
 
     res.json({ message: "Saved", settings: doc });
   } catch (e) {
-    console.error("WhatsAppSettings PUT error:", e);
     res.status(500).json({ message: e.message || "Server error" });
   }
 });
