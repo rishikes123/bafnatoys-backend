@@ -7,15 +7,15 @@ const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
 const app = express();
 
-// ✅ Connect DB
+/* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
 
-// ✅ CORS Setup
+/* --------------------------- CORS CONFIG ---------------------------- */
 const allowedOrigins = [
   process.env.FRONTEND_URL, // frontend vercel
   process.env.ADMIN_URL,    // admin vercel
-  "http://localhost:3000",  // CRA default
-  "http://localhost:5173",  // Vite default
+  "http://localhost:3000",  // React CRA
+  "http://localhost:5173",  // Vite
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
@@ -27,7 +27,7 @@ const vercelRegex = /\.vercel\.app$/;
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // Postman / curl (no origin)
+      if (!origin) return callback(null, true); // Postman/curl
 
       if (
         allowedOrigins.includes(origin) ||
@@ -44,17 +44,17 @@ app.use(
   })
 );
 
-// ✅ Body parsers
+/* ------------------------ BODY PARSERS ------------------------------ */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// ✅ Static assets (if local uploads are used)
+/* ------------------------ STATIC FILES ------------------------------- */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
-// ✅ Routes
+/* --------------------------- ROUTES --------------------------------- */
 app.use("/api/categories", require("./routes/categoryRoutes"));
-app.use("/api/upload", require("./routes/uploadRoutes")); // 👉 Cloudinary integrated
+app.use("/api/upload", require("./routes/uploadRoutes")); // Cloudinary integrated
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
 app.use("/api/auth", require("./routes/auth"));
@@ -62,8 +62,9 @@ app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
+app.use("/api/otp", require("./routes/otpRoutes")); // 👉 Ab yaha MSG91 OTP use hoga
 
-// ✅ Health check
+/* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {
   res.json({
     ok: true,
@@ -72,14 +73,14 @@ app.get("/api/test", (_req, res) => {
   });
 });
 
-// ✅ Root
+/* ----------------------------- ROOT --------------------------------- */
 app.get("/", (_req, res) => res.send("🚀 Bafnatoys API running"));
 
-// ✅ Error handlers
+/* ----------------------- ERROR HANDLERS ----------------------------- */
 app.use(notFound);
 app.use(errorHandler);
 
-// ✅ Start server
+/* -------------------------- START SERVER ---------------------------- */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);

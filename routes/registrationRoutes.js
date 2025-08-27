@@ -1,23 +1,60 @@
-// backend/routes/registrationRoutes.js
 const express = require("express");
+const axios = require("axios");
 const router = express.Router();
 
 const upload = require("../middleware/upload");
 const Registration = require("../models/Registration");
 
 /* ------------------------------ helpers ------------------------------ */
-// Keep only digits; store/use last 10 digits (drop +91 / 91 if present)
+// ✅ Normalize phone (always store 10-digit)
 const normalizePhone = (v = "") => {
   const digits = String(v).replace(/\D/g, "");
   if (digits.length > 10 && digits.startsWith("91")) return digits.slice(-10);
   return digits.slice(-10);
 };
 
-/* ------------------------------ CREATE ------------------------------- */
-/**
- * POST /api/registrations/register
- * multipart/form-data (field name: visitingCard)
- */
+// ✅ In-memory OTP store (production → Redis / DB use karo)
+const otpStore = {};
+
+/* ------------------------------ OTP SEND ----------------------------- */
+router.post("/send-otp", async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ message: "Phone is required" });
+
+    const otp = Math.floor(100000 + Math.random() * 900000); // 6 digit OTP
+    otpStore[phone] = otp;
+
+    const url = `https://control.msg91.com/api/v5/otp?template_id=${process.env.MSG91_TEMPLATE_ID}&mobile=91${phone}&authkey=${process.env.MSG91_AUTHKEY}`;
+
+    await axios.get(url);
+
+    console.log(`✅ OTP ${otp} sent to ${phone}`);
+    res.json({ message: "OTP sent successfully" });
+  } catch (err) {
+    console.error("Send OTP Error:", err.response?.data || err.message);
+    res.status(500).json({ message: "Failed to send OTP" });
+  }
+});
+
+/* ----------------------------- OTP VERIFY ---------------------------- */
+router.post("/verify-otp", (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    if (!otpStore[phone])
+      return res.status(400).json({ message: "OTP not requested" });
+
+    if (otpStore[phone] != otp)
+      return res.status(400).json({ message: "Invalid OTP" });
+
+    delete otpStore[phone]; // clear after verification
+    res.json({ message: "OTP verified successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "OTP verification failed" });
+  }
+});
+
+/* ------------------------------ REGISTER ----------------------------- */
 router.post("/register", upload.single("visitingCard"), async (req, res) => {
   try {
     const {
@@ -37,11 +74,10 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
         .json({ message: "Please fill all required fields." });
     }
 
-    // Always store normalized 10-digit numbers
     const nMobile = normalizePhone(otpMobile);
     const nWhats = whatsapp ? normalizePhone(whatsapp) : "";
 
-    // Prevent duplicate registrations for same mobile
+    // prevent duplicate
     const dup = await Registration.findOne({ otpMobile: nMobile });
     if (dup) {
       return res
@@ -59,26 +95,23 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       zip,
       otpMobile: nMobile,
       whatsapp: nWhats,
-      password, // ⚠️ NOTE: hash before saving in real production
+      password, // ⚠️ hash in production
       visitingCardUrl,
       isApproved: null, // Pending by default
     });
 
     await doc.save();
     res.status(201).json({
-      message: "Registration submitted. Awaiting admin approval.",
+      message: "✅ Registration submitted. Awaiting admin approval.",
       user: doc,
     });
   } catch (err) {
+    console.error("Register error:", err);
     res.status(500).json({ message: err.message || "Server error" });
   }
 });
 
-/* ------------------------------- READ ------------------------------- */
-/**
- * GET /api/registrations
- * Returns all registrations (admin list)
- */
+/* ------------------------------- LIST ------------------------------- */
 router.get("/", async (_req, res) => {
   try {
     const users = await Registration.find().sort({ createdAt: -1 });
@@ -88,14 +121,11 @@ router.get("/", async (_req, res) => {
   }
 });
 
-/**
- * GET /api/registrations/phone/:otpMobile
- * Find user by phone for OTP login precheck. Accepts +91 / 91 / 10-digit.
- */
+/* --------------------------- FIND BY PHONE -------------------------- */
 router.get("/phone/:otpMobile", async (req, res) => {
   try {
     const raw = normalizePhone(req.params.otpMobile);
-    const candidates = [raw, `+91${raw}`, `91${raw}`]; // backward compatibility
+    const candidates = [raw, `+91${raw}`, `91${raw}`];
 
     const user = await Registration.findOne({ otpMobile: { $in: candidates } });
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -106,18 +136,11 @@ router.get("/phone/:otpMobile", async (req, res) => {
   }
 });
 
-/* ------------------------------ UPDATE ------------------------------- */
-/**
- * PUT /api/registrations/:id
- * Accepts:
- *  - JSON (regular profile updates, with visitingCardUrl string), OR
- *  - multipart/form-data (file field name: "visitingCard")
- */
+/* ------------------------------- UPDATE ------------------------------ */
 router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Allowed fields
     const allowed = [
       "firmName",
       "shopName",
@@ -134,11 +157,9 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
       if (req.body[k] !== undefined) update[k] = req.body[k];
     }
 
-    // Normalize phone numbers if present
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
     if (update.whatsapp) update.whatsapp = normalizePhone(update.whatsapp);
 
-    // If a new file is uploaded, override visitingCardUrl
     if (req.file) {
       update.visitingCardUrl = `/uploads/${req.file.filename}`;
     }
@@ -149,48 +170,41 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     res.json(doc);
   } catch (err) {
     console.error("Update registration error:", err);
+
     if (err && err.code === "LIMIT_UNEXPECTED_FILE") {
-      return res
-        .status(400)
-        .json({ message: 'Unexpected field. Use file field name "visitingCard".' });
+      return res.status(400).json({
+        message: 'Unexpected field. Use file field name "visitingCard".',
+      });
     }
+
     res.status(500).json({ message: err.message || "Failed to update profile" });
   }
 });
 
 /* -------------------------- APPROVE / REJECT ------------------------- */
-/**
- * POST /api/registrations/:id/approve
- */
 router.post("/:id/approve", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: true });
-    res.json({ message: "User approved" });
+    res.json({ message: "✅ User approved" });
   } catch (err) {
     res.status(500).json({ message: "Approval failed" });
   }
 });
 
-/**
- * POST /api/registrations/:id/reject
- */
 router.post("/:id/reject", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: false });
-    res.json({ message: "User rejected" });
+    res.json({ message: "❌ User rejected" });
   } catch (err) {
     res.status(500).json({ message: "Rejection failed" });
   }
 });
 
 /* ------------------------------- DELETE ------------------------------ */
-/**
- * DELETE /api/registrations/:id
- */
 router.delete("/:id", async (req, res) => {
   try {
     await Registration.findByIdAndDelete(req.params.id);
-    res.json({ message: "User deleted" });
+    res.json({ message: "🗑️ User deleted" });
   } catch (err) {
     res.status(500).json({ message: "Delete failed" });
   }
