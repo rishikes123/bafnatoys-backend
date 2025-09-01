@@ -13,7 +13,7 @@ const normalizePhone = (v = "") => {
   return digits.slice(-10);
 };
 
-// ✅ In-memory OTP store (production → Redis / DB use karo)
+// ✅ In-memory OTP store (for production → use Redis or DB)
 const otpStore = {};
 
 /* ------------------------------ OTP SEND ----------------------------- */
@@ -25,14 +25,28 @@ router.post("/send-otp", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000); // 6 digit OTP
     otpStore[phone] = otp;
 
-    const url = `https://control.msg91.com/api/v5/otp?template_id=${process.env.MSG91_TEMPLATE_ID}&mobile=91${phone}&authkey=${process.env.MSG91_AUTHKEY}`;
+    // ✅ MSG91 Flow API (DLT Compliant)
+    const response = await axios.post(
+      "https://control.msg91.com/api/v5/flow/",
+      {
+        template_id: process.env.MSG91_TEMPLATE_ID,    // MSG91 Flow Template ID
+        DLT_TE_ID: process.env.MSG91_DLT_TEMPLATE_ID,  // DLT Template ID
+        sender: "BAFNAR",                              // DLT Approved Sender ID
+        mobiles: "91" + phone,
+        OTP: otp,                                      // must match ##OTP## in template
+      },
+      {
+        headers: {
+          authkey: process.env.MSG91_AUTHKEY,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-    await axios.get(url);
-
-    console.log(`✅ OTP ${otp} sent to ${phone}`);
-    res.json({ message: "OTP sent successfully" });
+    console.log(`✅ OTP ${otp} sent to ${phone}`, response.data);
+    res.json({ message: "OTP sent successfully", data: response.data });
   } catch (err) {
-    console.error("Send OTP Error:", err.response?.data || err.message);
+    console.error("❌ Send OTP Error:", err.response?.data || err.message);
     res.status(500).json({ message: "Failed to send OTP" });
   }
 });
