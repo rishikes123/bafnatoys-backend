@@ -1,74 +1,18 @@
 const express = require("express");
-const axios = require("axios");
-const router = express.Router();
-
-const upload = require("../middleware/upload");
+const upload = require("../middleware/upload");        // multer-storage-cloudinary
 const Registration = require("../models/Registration");
 
+const router = express.Router();
+
 /* ------------------------------ helpers ------------------------------ */
-// ✅ Normalize phone (always store 10-digit)
 const normalizePhone = (v = "") => {
   const digits = String(v).replace(/\D/g, "");
   if (digits.length > 10 && digits.startsWith("91")) return digits.slice(-10);
   return digits.slice(-10);
 };
 
-// ✅ In-memory OTP store (for production → use Redis or DB)
-const otpStore = {};
-
-/* ------------------------------ OTP SEND ----------------------------- */
-router.post("/send-otp", async (req, res) => {
-  try {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json({ message: "Phone is required" });
-
-    const otp = Math.floor(100000 + Math.random() * 900000); // 6 digit OTP
-    otpStore[phone] = otp;
-
-    // ✅ MSG91 Flow API (DLT Compliant)
-    const response = await axios.post(
-      "https://control.msg91.com/api/v5/flow/",
-      {
-        template_id: process.env.MSG91_TEMPLATE_ID,    // MSG91 Flow Template ID
-        DLT_TE_ID: process.env.MSG91_DLT_TEMPLATE_ID,  // DLT Template ID
-        sender: "BAFNAR",                              // DLT Approved Sender ID
-        mobiles: "91" + phone,
-        OTP: otp,                                      // must match ##OTP## in template
-      },
-      {
-        headers: {
-          authkey: process.env.MSG91_AUTHKEY,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    console.log(`✅ OTP ${otp} sent to ${phone}`, response.data);
-    res.json({ message: "OTP sent successfully", data: response.data });
-  } catch (err) {
-    console.error("❌ Send OTP Error:", err.response?.data || err.message);
-    res.status(500).json({ message: "Failed to send OTP" });
-  }
-});
-
-/* ----------------------------- OTP VERIFY ---------------------------- */
-router.post("/verify-otp", (req, res) => {
-  try {
-    const { phone, otp } = req.body;
-    if (!otpStore[phone])
-      return res.status(400).json({ message: "OTP not requested" });
-
-    if (otpStore[phone] != otp)
-      return res.status(400).json({ message: "Invalid OTP" });
-
-    delete otpStore[phone]; // clear after verification
-    res.json({ message: "OTP verified successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "OTP verification failed" });
-  }
-});
-
 /* ------------------------------ REGISTER ----------------------------- */
+// POST /api/registrations/register
 router.post("/register", upload.single("visitingCard"), async (req, res) => {
   try {
     const {
@@ -79,29 +23,27 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       zip,
       otpMobile,
       whatsapp,
-      password,
+      password, // TODO: hash in production
     } = req.body;
 
     if (!firmName || !shopName || !state || !city || !zip || !otpMobile) {
-      return res
-        .status(400)
-        .json({ message: "Please fill all required fields." });
+      return res.status(400).json({ message: "Please fill all required fields." });
     }
 
     const nMobile = normalizePhone(otpMobile);
-    const nWhats = whatsapp ? normalizePhone(whatsapp) : "";
+    const nWhats  = whatsapp ? normalizePhone(whatsapp) : "";
 
-    // prevent duplicate
+    // prevent duplicate by mobile
     const dup = await Registration.findOne({ otpMobile: nMobile });
     if (dup) {
-      return res
-        .status(409)
-        .json({ message: "A user with this mobile already exists." });
+      return res.status(409).json({ message: "A user with this mobile already exists." });
     }
 
-    const visitingCardUrl = req.file ? `/uploads/${req.file.filename}` : "";
+    // ✅ Cloudinary URL from multer-storage-cloudinary
+    // req.file?.path is the secure_url (e.g., https://res.cloudinary.com/...)
+    const visitingCardUrl = req.file?.path || "";
 
-    const doc = new Registration({
+    const doc = await Registration.create({
       firmName,
       shopName,
       state,
@@ -109,13 +51,13 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       zip,
       otpMobile: nMobile,
       whatsapp: nWhats,
-      password, // ⚠️ hash in production
-      visitingCardUrl,
-      isApproved: null, // Pending by default
+      password,          // hash later
+      visitingCardUrl,   // store Cloudinary URL
+      isApproved: null,  // Pending
     });
 
-    await doc.save();
     res.status(201).json({
+      success: true,
       message: "✅ Registration submitted. Awaiting admin approval.",
       user: doc,
     });
@@ -126,6 +68,7 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
 });
 
 /* ------------------------------- LIST ------------------------------- */
+// GET /api/registrations
 router.get("/", async (_req, res) => {
   try {
     const users = await Registration.find().sort({ createdAt: -1 });
@@ -136,14 +79,12 @@ router.get("/", async (_req, res) => {
 });
 
 /* --------------------------- FIND BY PHONE -------------------------- */
+// GET /api/registrations/phone/:otpMobile
 router.get("/phone/:otpMobile", async (req, res) => {
   try {
-    const raw = normalizePhone(req.params.otpMobile);
-    const candidates = [raw, `+91${raw}`, `91${raw}`];
-
-    const user = await Registration.findOne({ otpMobile: { $in: candidates } });
+    const raw  = normalizePhone(req.params.otpMobile);
+    const user = await Registration.findOne({ otpMobile: raw });
     if (!user) return res.status(404).json({ message: "User not found" });
-
     res.json(user);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch user" });
@@ -151,19 +92,13 @@ router.get("/phone/:otpMobile", async (req, res) => {
 });
 
 /* ------------------------------- UPDATE ------------------------------ */
+// PUT /api/registrations/:id
 router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
-
     const allowed = [
-      "firmName",
-      "shopName",
-      "state",
-      "city",
-      "zip",
-      "otpMobile",
-      "whatsapp",
-      "visitingCardUrl",
+      "firmName", "shopName", "state", "city", "zip",
+      "otpMobile", "whatsapp", "visitingCardUrl", "password",
     ];
 
     const update = {};
@@ -174,9 +109,8 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
     if (update.whatsapp) update.whatsapp = normalizePhone(update.whatsapp);
 
-    if (req.file) {
-      update.visitingCardUrl = `/uploads/${req.file.filename}`;
-    }
+    // If a new file comes, replace with Cloudinary URL
+    if (req.file) update.visitingCardUrl = req.file.path;
 
     const doc = await Registration.findByIdAndUpdate(id, update, { new: true });
     if (!doc) return res.status(404).json({ message: "Registration not found" });
@@ -196,6 +130,7 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
 });
 
 /* -------------------------- APPROVE / REJECT ------------------------- */
+// POST /api/registrations/:id/approve
 router.post("/:id/approve", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: true });
@@ -205,6 +140,7 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
+// POST /api/registrations/:id/reject
 router.post("/:id/reject", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: false });
@@ -215,6 +151,7 @@ router.post("/:id/reject", async (req, res) => {
 });
 
 /* ------------------------------- DELETE ------------------------------ */
+// DELETE /api/registrations/:id
 router.delete("/:id", async (req, res) => {
   try {
     await Registration.findByIdAndDelete(req.params.id);
