@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const router = express.Router();
 
-// In-memory OTP store (dev). Use Redis in production.
+// In-memory OTP store (use Redis in production)
 const otpStore = Object.create(null);
 
 // Config
@@ -17,7 +17,7 @@ const normalizePhone = (v = "") => {
   return digits.slice(-10);
 };
 
-// Helper to check dev toggle
+// Dev toggle (returns OTP in response only in dev)
 const shouldReturnOtpInResponse = () =>
   process.env.RETURN_OTP_IN_RESPONSE === "true" || process.env.NODE_ENV !== "production";
 
@@ -35,7 +35,7 @@ router.post("/send", async (req, res) => {
     const now = Date.now();
     const existing = otpStore[phone];
 
-    // cooldown
+    // resend cooldown
     if (existing && now - (existing.lastSentAt || 0) < RESEND_COOLDOWN_MS) {
       const wait = Math.ceil((RESEND_COOLDOWN_MS - (now - existing.lastSentAt)) / 1000);
       return res.status(429).json({ success: false, message: `Please wait ${wait}s before requesting another OTP.` });
@@ -50,22 +50,23 @@ router.post("/send", async (req, res) => {
       lastSentAt: now,
     };
 
-    // prepare MSG91 payload (ensure env vars set)
+    // ---------- MSG91 (Flow API) ----------
+    // IMPORTANT:
+    //   - Use FLOW_ID (Dashboard → Flows → Flow ID)
+    //   - sender must be approved/mapped on DLT (Service-Implicit)
+    //   - variable name must match flow variable exactly (case-sensitive)
+    //     If your flow variable is "OTP", keep OTP below.
+    //     If it's "otp", change the key to "otp: String(otp)".
     const payload = {
-      template_id: process.env.MSG91_TEMPLATE_ID,
-      DLT_TE_ID: process.env.MSG91_DLT_TEMPLATE_ID,
-      sender: process.env.MSG91_SENDER || "BAFNAR",
+      flow_id: process.env.MSG91_FLOW_ID,                 // <-- set in env
+      sender: process.env.MSG91_SENDER || "BAFNAR",       // approved 6-char sender
       mobiles: "91" + phone,
-      OTP: String(otp), // ensure string
+      OTP: String(otp),                                   // match your Flow variable name
     };
 
-    // debug log: payload (do NOT log OTP in production)
-    if (shouldReturnOtpInResponse()) {
-      console.log("MSG91 payload (dev):", { ...payload, OTP: payload.OTP });
-    } else {
-      // avoid logging OTP in production
-      console.log("MSG91 payload (production):", { template_id: payload.template_id, sender: payload.sender, mobiles: payload.mobiles });
-    }
+    // Debug logs (avoid printing OTP in prod)
+    console.log("MSG91 payload:",
+      { ...payload, OTP: shouldReturnOtpInResponse() ? payload.OTP : "***" });
 
     try {
       const response = await axios.post("https://control.msg91.com/api/v5/flow/", payload, {
@@ -73,20 +74,27 @@ router.post("/send", async (req, res) => {
         timeout: 10000,
       });
 
-      // Minimal log for tracing — response.data usually contains a message id
       console.log("MSG91 send status:", response.status, "data:", response.data);
 
       if (shouldReturnOtpInResponse()) {
-        // For dev/testing only — helpful to return OTP to UI temporarily
-        return res.json({ success: true, message: "OTP sent (dev)", otp: String(otp), msg91: response.data });
+        return res.json({
+          success: true,
+          message: "OTP sent (dev)",
+          otp: String(otp),
+          msg91: response.data,
+        });
       }
 
       return res.json({ success: true, message: "OTP sent", msg91: response.data });
     } catch (e) {
-      // provider error — delete stored OTP so user can retry
+      // provider error — delete stored OTP so user can retry immediately
       delete otpStore[phone];
       console.error("MSG91 send error:", e.response?.status, e.response?.data || e.message);
-      return res.status(502).json({ success: false, message: "Failed to send OTP", error: e.response?.data || e.message });
+      return res.status(502).json({
+        success: false,
+        message: "Failed to send OTP",
+        reason: e.response?.data || e.message,
+      });
     }
   } catch (err) {
     console.error("OTP send error:", err);
@@ -101,7 +109,9 @@ router.post("/verify", (req, res) => {
   try {
     const raw = req.body.phone;
     const inputOtp = String(req.body.otp || "");
-    if (!raw || !inputOtp) return res.status(400).json({ success: false, message: "Phone and OTP required" });
+    if (!raw || !inputOtp) {
+      return res.status(400).json({ success: false, message: "Phone and OTP required" });
+    }
 
     const phone = normalizePhone(raw);
     const entry = otpStore[phone];
