@@ -1,14 +1,13 @@
-// routes/otpRoutes.js
 const express = require("express");
 const axios = require("axios");
 const router = express.Router();
 
-// In-memory OTP store (for dev). Use Redis in production.
+// In-memory OTP store (dev). Use Redis in production.
 const otpStore = Object.create(null);
 
 // Config
 const OTP_TTL_MS = 5 * 60 * 1000;       // 5 minutes
-const RESEND_COOLDOWN_MS = 30 * 1000;   // 30 seconds (as requested)
+const RESEND_COOLDOWN_MS = 30 * 1000;   // 30 seconds
 const MAX_ATTEMPTS = 5;
 
 // Normalize phone to last 10 digits
@@ -57,8 +56,16 @@ router.post("/send", async (req, res) => {
       DLT_TE_ID: process.env.MSG91_DLT_TEMPLATE_ID,
       sender: process.env.MSG91_SENDER || "BAFNAR",
       mobiles: "91" + phone,
-      OTP: otp,
+      OTP: String(otp), // ensure string
     };
+
+    // debug log: payload (do NOT log OTP in production)
+    if (shouldReturnOtpInResponse()) {
+      console.log("MSG91 payload (dev):", { ...payload, OTP: payload.OTP });
+    } else {
+      // avoid logging OTP in production
+      console.log("MSG91 payload (production):", { template_id: payload.template_id, sender: payload.sender, mobiles: payload.mobiles });
+    }
 
     try {
       const response = await axios.post("https://control.msg91.com/api/v5/flow/", payload, {
@@ -70,10 +77,11 @@ router.post("/send", async (req, res) => {
       console.log("MSG91 send status:", response.status, "data:", response.data);
 
       if (shouldReturnOtpInResponse()) {
+        // For dev/testing only — helpful to return OTP to UI temporarily
         return res.json({ success: true, message: "OTP sent (dev)", otp: String(otp), msg91: response.data });
       }
 
-      return res.json({ success: true, message: "OTP sent" });
+      return res.json({ success: true, message: "OTP sent", msg91: response.data });
     } catch (e) {
       // provider error — delete stored OTP so user can retry
       delete otpStore[phone];
