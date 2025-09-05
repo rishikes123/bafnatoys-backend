@@ -12,9 +12,10 @@ connectDB();
 
 /* --------------------------- CORS CONFIG ---------------------------- */
 const allowedOrigins = [
-  process.env.FRONTEND_URL, // must be https://bafnatoys.com
-  process.env.ADMIN_URL,    // admin panel if needed
-  "https://bafnatoys.com",  // ✅ root domain only
+  process.env.FRONTEND_URL, // e.g. https://bafnatoys.com
+  process.env.ADMIN_URL,    // e.g. https://admin.bafnatoys.com
+  "https://bafnatoys.com",  // ensure root domain is allowed
+  "https://admin.bafnatoys.com", // ensure admin subdomain is allowed
   "http://localhost:3000",  // CRA
   "http://localhost:5173",  // Vite
   "http://localhost:8080",
@@ -22,7 +23,7 @@ const allowedOrigins = [
   "http://localhost:8082",
 ];
 
-// Regex: allow *.vercel.app (for preview deployments)
+// Regex: allow *.vercel.app (preview deployments)
 const vercelRegex = /\.vercel\.app$/;
 
 app.use(
