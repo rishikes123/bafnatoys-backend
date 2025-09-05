@@ -14,6 +14,8 @@ connectDB();
 const allowedOrigins = [
   process.env.FRONTEND_URL, // frontend vercel
   process.env.ADMIN_URL,    // admin vercel
+  "https://bafnatoys.com",
+  "https://www.bafnatoys.com",
   "http://localhost:3000",  // React CRA
   "http://localhost:5173",  // Vite
   "http://localhost:8080",
@@ -24,14 +26,18 @@ const allowedOrigins = [
 // Regex: allow all *.vercel.app subdomains
 const vercelRegex = /\.vercel\.app$/;
 
+// Regex: allow all subdomains of bafnatoys.com (like www, api, etc.)
+const bafnatoysRegex = /\.bafnatoys\.com$/;
+
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // Postman/curl
+      if (!origin) return callback(null, true); // Postman/curl, server-to-server
 
       if (
         allowedOrigins.includes(origin) ||
         vercelRegex.test(origin) ||
+        bafnatoysRegex.test(origin) || // ✅ Allow *.bafnatoys.com
         origin.startsWith("http://localhost:")
       ) {
         callback(null, true);
@@ -62,7 +68,7 @@ app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
-app.use("/api/otp", require("./routes/otpRoutes")); // 👉 Ab yaha MSG91 OTP use hoga
+app.use("/api/otp", require("./routes/otpRoutes")); // 👉 MSG91 OTP
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {
