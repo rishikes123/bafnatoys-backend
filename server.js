@@ -12,38 +12,39 @@ connectDB();
 
 /* --------------------------- CORS CONFIG ---------------------------- */
 const allowedOrigins = [
-  process.env.FRONTEND_URL, // frontend vercel
-  process.env.ADMIN_URL,    // admin vercel
-  "https://bafnatoys.com",
-  "https://www.bafnatoys.com",
-  "http://localhost:3000",  // React CRA
+  process.env.FRONTEND_URL, // must be https://bafnatoys.com
+  process.env.ADMIN_URL,    // admin panel if needed
+  "https://bafnatoys.com",  // ✅ root domain only
+  "http://localhost:3000",  // CRA
   "http://localhost:5173",  // Vite
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
 ];
 
-// Regex: allow all *.vercel.app subdomains
+// Regex: allow *.vercel.app (for preview deployments)
 const vercelRegex = /\.vercel\.app$/;
-
-// Regex: allow all subdomains of bafnatoys.com (like www, api, etc.)
-const bafnatoysRegex = /\.bafnatoys\.com$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true); // Postman/curl, server-to-server
 
-      if (
-        allowedOrigins.includes(origin) ||
-        vercelRegex.test(origin) ||
-        bafnatoysRegex.test(origin) || // ✅ Allow *.bafnatoys.com
-        origin.startsWith("http://localhost:")
-      ) {
-        callback(null, true);
-      } else {
-        console.log("❌ CORS blocked:", origin);
-        callback(new Error("Not allowed by CORS"));
+      try {
+        const hostname = new URL(origin).hostname;
+
+        if (
+          allowedOrigins.includes(origin) ||
+          vercelRegex.test(hostname) ||
+          origin.startsWith("http://localhost:")
+        ) {
+          callback(null, true);
+        } else {
+          console.log("❌ CORS blocked:", origin);
+          callback(new Error("Not allowed by CORS"));
+        }
+      } catch (err) {
+        callback(new Error("Invalid Origin"));
       }
     },
     credentials: true,
