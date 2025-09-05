@@ -11,22 +11,23 @@ const app = express();
 connectDB();
 
 /* --------------------------- CORS CONFIG ---------------------------- */
+// Explicit origins
 const allowedOrigins = [
-  process.env.FRONTEND_URL, // frontend vercel
-  process.env.ADMIN_URL,    // admin vercel
+  process.env.FRONTEND_URL,  // frontend vercel (main site)
+  process.env.ADMIN_URL,     // admin panel
   "https://bafnatoys.com",
   "https://www.bafnatoys.com",
-  "http://localhost:3000",  // React CRA
-  "http://localhost:5173",  // Vite
+  "http://localhost:3000",   // React dev
+  "http://localhost:5173",   // Vite dev
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
 ];
 
-// Regex: allow all *.vercel.app subdomains
+// Regex: allow *.vercel.app (preview deployments)
 const vercelRegex = /\.vercel\.app$/;
 
-// Regex: allow all subdomains of bafnatoys.com (like www, api, etc.)
+// Regex: allow *.bafnatoys.com (www, api, etc.)
 const bafnatoysRegex = /\.bafnatoys\.com$/;
 
 app.use(
@@ -37,7 +38,7 @@ app.use(
       if (
         allowedOrigins.includes(origin) ||
         vercelRegex.test(origin) ||
-        bafnatoysRegex.test(origin) || // ✅ Allow *.bafnatoys.com
+        bafnatoysRegex.test(origin) ||
         origin.startsWith("http://localhost:")
       ) {
         callback(null, true);
