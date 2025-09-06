@@ -12,12 +12,12 @@ connectDB();
 
 /* --------------------------- CORS CONFIG ---------------------------- */
 const allowedOrigins = [
-  process.env.FRONTEND_URL, // e.g. https://bafnatoys.com
-  process.env.ADMIN_URL,    // e.g. https://admin.bafnatoys.com
-  "https://bafnatoys.com",  // ensure root domain is allowed
-  "https://admin.bafnatoys.com", // ensure admin subdomain is allowed
-  "http://localhost:3000",  // CRA
-  "http://localhost:5173",  // Vite
+  process.env.FRONTEND_URL,       // e.g. https://bafnatoys.com
+  process.env.ADMIN_URL,          // e.g. https://admin.bafnatoys.com
+  "https://bafnatoys.com",        // ensure root domain is allowed
+  "https://admin.bafnatoys.com",  // ensure admin subdomain is allowed
+  "http://localhost:3000",        // CRA
+  "http://localhost:5173",        // Vite
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
@@ -62,7 +62,7 @@ app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* --------------------------- ROUTES --------------------------------- */
 app.use("/api/categories", require("./routes/categoryRoutes"));
-app.use("/api/upload", require("./routes/uploadRoutes")); // Cloudinary integrated
+app.use("/api/upload", require("./routes/uploadRoutes")); 
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
 app.use("/api/auth", require("./routes/auth"));
@@ -70,7 +70,8 @@ app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
-app.use("/api/otp", require("./routes/otpRoutes")); // 👉 MSG91 OTP
+app.use("/api/otp", require("./routes/otpRoutes"));
+app.use("/api/addresses", require("./routes/addressRoutes")); // ✅ NEW addresses route
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {

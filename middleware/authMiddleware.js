@@ -1,8 +1,7 @@
-// backend/middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
-const Customer = require("../models/customerModel"); // match your filename
+const Customer = require("../models/customerModel");
 
-module.exports = async (req, res, next) => {
+const protect = async (req, res, next) => {
   try {
     const authHeader = req.header("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -11,7 +10,6 @@ module.exports = async (req, res, next) => {
 
     const token = authHeader.substring(7); // remove "Bearer "
 
-    // 1) Verify YOUR JWT (signed with your JWT_SECRET)
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -19,7 +17,6 @@ module.exports = async (req, res, next) => {
       return res.status(401).json({ message: "Invalid token" });
     }
 
-    // 2) Attach the customer from your DB
     const customer = await Customer.findById(decoded.id).select("-password");
     if (!customer) {
       return res.status(401).json({ message: "User not found" });
@@ -32,3 +29,5 @@ module.exports = async (req, res, next) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+module.exports = { protect }; // ✅ now export an object
