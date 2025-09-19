@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const compression = require("compression");   // ✅ ADD THIS
 const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
@@ -30,10 +31,8 @@ app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true); // Postman/curl, server-to-server
-
       try {
         const hostname = new URL(origin).hostname;
-
         if (
           allowedOrigins.includes(origin) ||
           vercelRegex.test(hostname) ||
@@ -51,6 +50,9 @@ app.use(
     credentials: true,
   })
 );
+
+/* ---------------------- ENABLE COMPRESSION -------------------------- */
+app.use(compression());   // ✅ Now all API + static responses are gzip/brotli compressed
 
 /* ------------------------ BODY PARSERS ------------------------------ */
 app.use(express.json({ limit: "10mb" }));
