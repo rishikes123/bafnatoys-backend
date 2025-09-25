@@ -1,4 +1,3 @@
-// routes/registrations.js
 const express = require("express");
 const upload = require("../middleware/upload"); // multer-storage-cloudinary
 const Registration = require("../models/Registration");
@@ -44,7 +43,7 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       otpMobile: nMobile,
       whatsapp: nWhats,
       password,          // hash later
-      visitingCardUrl,   // Cloudinary URL
+      visitingCardUrl,   // store Cloudinary URL
       isApproved: null,  // Pending
     });
 
@@ -88,7 +87,9 @@ router.get("/phone/:otpMobile", async (req, res) => {
 router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
-    const allowed = ["shopName", "otpMobile", "whatsapp", "visitingCardUrl", "password"];
+    const allowed = [
+      "shopName", "otpMobile", "whatsapp", "visitingCardUrl", "password",
+    ];
 
     const update = {};
     for (const k of allowed) {
@@ -98,6 +99,7 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
     if (update.whatsapp) update.whatsapp = normalizePhone(update.whatsapp);
 
+    // If a new file comes, replace with Cloudinary URL
     if (req.file) update.visitingCardUrl = req.file.path;
 
     const doc = await Registration.findByIdAndUpdate(id, update, { new: true });
@@ -106,16 +108,19 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     res.json(doc);
   } catch (err) {
     console.error("Update registration error:", err);
+
     if (err && err.code === "LIMIT_UNEXPECTED_FILE") {
       return res.status(400).json({
         message: 'Unexpected field. Use file field name "visitingCard".',
       });
     }
+
     res.status(500).json({ message: err.message || "Failed to update profile" });
   }
 });
 
 /* -------------------------- APPROVE / REJECT ------------------------- */
+// POST /api/registrations/:id/approve
 router.post("/:id/approve", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: true });
@@ -125,6 +130,7 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
+// POST /api/registrations/:id/reject
 router.post("/:id/reject", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: false });
@@ -135,6 +141,7 @@ router.post("/:id/reject", async (req, res) => {
 });
 
 /* ------------------------------- DELETE ------------------------------ */
+// DELETE /api/registrations/:id
 router.delete("/:id", async (req, res) => {
   try {
     await Registration.findByIdAndDelete(req.params.id);
