@@ -1,5 +1,6 @@
+// routes/registrations.js
 const express = require("express");
-const upload = require("../middleware/upload");        // multer-storage-cloudinary
+const upload = require("../middleware/upload"); // multer-storage-cloudinary
 const Registration = require("../models/Registration");
 
 const router = express.Router();
@@ -16,22 +17,18 @@ const normalizePhone = (v = "") => {
 router.post("/register", upload.single("visitingCard"), async (req, res) => {
   try {
     const {
-      firmName,
       shopName,
-      state,
-      city,
-      zip,
       otpMobile,
       whatsapp,
       password, // TODO: hash in production
     } = req.body;
 
-    if (!firmName || !shopName || !state || !city || !zip || !otpMobile) {
+    if (!shopName || !otpMobile) {
       return res.status(400).json({ message: "Please fill all required fields." });
     }
 
     const nMobile = normalizePhone(otpMobile);
-    const nWhats  = whatsapp ? normalizePhone(whatsapp) : "";
+    const nWhats = whatsapp ? normalizePhone(whatsapp) : "";
 
     // prevent duplicate by mobile
     const dup = await Registration.findOne({ otpMobile: nMobile });
@@ -40,19 +37,14 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
     }
 
     // ✅ Cloudinary URL from multer-storage-cloudinary
-    // req.file?.path is the secure_url (e.g., https://res.cloudinary.com/...)
     const visitingCardUrl = req.file?.path || "";
 
     const doc = await Registration.create({
-      firmName,
       shopName,
-      state,
-      city,
-      zip,
       otpMobile: nMobile,
       whatsapp: nWhats,
       password,          // hash later
-      visitingCardUrl,   // store Cloudinary URL
+      visitingCardUrl,   // Cloudinary URL
       isApproved: null,  // Pending
     });
 
@@ -82,7 +74,7 @@ router.get("/", async (_req, res) => {
 // GET /api/registrations/phone/:otpMobile
 router.get("/phone/:otpMobile", async (req, res) => {
   try {
-    const raw  = normalizePhone(req.params.otpMobile);
+    const raw = normalizePhone(req.params.otpMobile);
     const user = await Registration.findOne({ otpMobile: raw });
     if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
@@ -96,10 +88,7 @@ router.get("/phone/:otpMobile", async (req, res) => {
 router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
-    const allowed = [
-      "firmName", "shopName", "state", "city", "zip",
-      "otpMobile", "whatsapp", "visitingCardUrl", "password",
-    ];
+    const allowed = ["shopName", "otpMobile", "whatsapp", "visitingCardUrl", "password"];
 
     const update = {};
     for (const k of allowed) {
@@ -109,7 +98,6 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
     if (update.whatsapp) update.whatsapp = normalizePhone(update.whatsapp);
 
-    // If a new file comes, replace with Cloudinary URL
     if (req.file) update.visitingCardUrl = req.file.path;
 
     const doc = await Registration.findByIdAndUpdate(id, update, { new: true });
@@ -118,19 +106,16 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     res.json(doc);
   } catch (err) {
     console.error("Update registration error:", err);
-
     if (err && err.code === "LIMIT_UNEXPECTED_FILE") {
       return res.status(400).json({
         message: 'Unexpected field. Use file field name "visitingCard".',
       });
     }
-
     res.status(500).json({ message: err.message || "Failed to update profile" });
   }
 });
 
 /* -------------------------- APPROVE / REJECT ------------------------- */
-// POST /api/registrations/:id/approve
 router.post("/:id/approve", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: true });
@@ -140,7 +125,6 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
-// POST /api/registrations/:id/reject
 router.post("/:id/reject", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: false });
@@ -151,7 +135,6 @@ router.post("/:id/reject", async (req, res) => {
 });
 
 /* ------------------------------- DELETE ------------------------------ */
-// DELETE /api/registrations/:id
 router.delete("/:id", async (req, res) => {
   try {
     await Registration.findByIdAndDelete(req.params.id);
