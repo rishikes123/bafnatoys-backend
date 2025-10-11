@@ -62,7 +62,7 @@ app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* --------------------------- ROUTES --------------------------------- */
 app.use("/api/categories", require("./routes/categoryRoutes"));
-app.use("/api/upload", require("./routes/uploadRoutes")); 
+app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
 app.use("/api/auth", require("./routes/auth"));
@@ -72,6 +72,9 @@ app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 app.use("/api/otp", require("./routes/otpRoutes"));
 app.use("/api/addresses", require("./routes/addressRoutes")); // ✅ NEW addresses route
+
+// ✅ NEW Sitemap Route (SEO optimization)
+app.use("/", require("./routes/sitemap")); // 🌐 Sitemap for Google indexing
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {
@@ -93,4 +96,4 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
-});   
+});

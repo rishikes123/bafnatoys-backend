@@ -1,16 +1,17 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
+const slugify = require("slugify");
 const Category = require("../models/categoryModel.js");
 const cloudinary = require("../config/cloudinary");
 const multer = require("multer");
 
-// 🧠 Multer setup (for image upload)
+// 🧠 Multer setup
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 /* ------------------------------------------------------------------
-📦 Product Schema (with auto order increment)
+📦 Product Schema (with related products)
 ------------------------------------------------------------------ */
 const productSchema = new mongoose.Schema(
   {
@@ -29,39 +30,48 @@ const productSchema = new mongoose.Schema(
     ],
     taxFields: { type: [String], default: [] },
     order: { type: Number, default: 0 },
+    slug: { type: String, unique: true, trim: true },
+
+    // ✅ Related Products field (manual select)
+    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
   },
   { timestamps: true }
 );
 
 /* ------------------------------------------------------------------
-✨ Auto Increment Order Before Save
+✨ Auto Slug + Order Before Save
 ------------------------------------------------------------------ */
 productSchema.pre("save", async function (next) {
-  if (this.isNew) {
-    try {
-      // Find last order in same category
+  try {
+    if (this.isModified("name") || !this.slug) {
+      this.slug = slugify(this.name, { lower: true, strict: true });
+    }
+
+    if (this.isNew) {
       const last = await mongoose
         .model("Product")
         .findOne({ category: this.category })
         .sort({ order: -1 });
       this.order = last ? last.order + 1 : 1;
-    } catch (err) {
-      console.error("Error setting product order:", err);
     }
+
+    next();
+  } catch (err) {
+    console.error("Error in pre-save:", err);
+    next(err);
   }
-  next();
 });
 
 const Product =
   mongoose.models.Product || mongoose.model("Product", productSchema);
 
 /* ------------------------------------------------------------------
-✅ GET all products (sorted by order)
+✅ GET all products (with category name)
 ------------------------------------------------------------------ */
 router.get("/", async (_req, res) => {
   try {
     const products = await Product.find()
-      .populate("category")
+      .populate("category", "name") // ✅ only name of category
       .sort({ order: 1 });
     res.json(products);
   } catch (err) {
@@ -71,16 +81,28 @@ router.get("/", async (_req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ GET single product
+✅ GET single product by slug or ID (with related + category)
 ------------------------------------------------------------------ */
-router.get("/:id", async (req, res) => {
+router.get("/:slugOrId", async (req, res) => {
   try {
-    const prod = await Product.findById(req.params.id).populate("category");
+    const { slugOrId } = req.params;
+    const query = mongoose.Types.ObjectId.isValid(slugOrId)
+      ? { _id: slugOrId }
+      : { slug: slugOrId };
+
+    const prod = await Product.findOne(query)
+      .populate("category", "name") // ✅ show category name
+      .populate({
+        path: "relatedProducts",
+        populate: { path: "category", select: "name" }, // ✅ show related category name
+      });
+
     if (!prod) return res.status(404).json({ message: "Product not found" });
+
     res.json(prod);
   } catch (err) {
     console.error("❌ Single fetch error:", err);
-    res.status(400).json({ message: "Invalid product ID" });
+    res.status(400).json({ message: "Invalid product ID or slug" });
   }
 });
 
@@ -91,7 +113,6 @@ router.post("/", upload.array("images", 5), async (req, res) => {
   try {
     let imageUrls = [];
 
-    // 🖼️ Upload all images to Cloudinary
     if (req.files?.length > 0) {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
@@ -105,15 +126,21 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       }
     }
 
-    const prod = new Product({ ...req.body, images: imageUrls });
+    const slug = slugify(req.body.name, { lower: true, strict: true });
+
+    const prod = new Product({
+      ...req.body,
+      images: imageUrls,
+      slug,
+      relatedProducts: req.body.relatedProducts || [],
+    });
+
     await prod.save();
     console.log("✅ Product created:", prod.name);
     res.status(201).json(prod);
   } catch (err) {
     console.error("❌ Create error:", err);
-    res
-      .status(400)
-      .json({ message: err.message || "Failed to create product" });
+    res.status(400).json({ message: err.message || "Failed to create product" });
   }
 });
 
@@ -124,7 +151,6 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
   try {
     let updateData = { ...req.body };
 
-    // 🖼️ Upload new images if present
     if (req.files?.length > 0) {
       const uploaded = [];
       for (const file of req.files) {
@@ -140,6 +166,10 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
       updateData.images = uploaded;
     }
 
+    if (updateData.name) {
+      updateData.slug = slugify(updateData.name, { lower: true, strict: true });
+    }
+
     const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true,
@@ -151,9 +181,7 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
     res.json(prod);
   } catch (err) {
     console.error("❌ Update error:", err);
-    res
-      .status(400)
-      .json({ message: err.message || "Failed to update product" });
+    res.status(400).json({ message: err.message || "Failed to update product" });
   }
 });
 
@@ -174,7 +202,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ REORDER PRODUCTS (Bulk drag/drop)
+✅ REORDER PRODUCTS
 ------------------------------------------------------------------ */
 router.put("/reorder", async (req, res) => {
   try {
@@ -199,7 +227,7 @@ router.put("/reorder", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ MOVE PRODUCT UP / DOWN (Within Same Category, Auto Reindex)
+✅ MOVE PRODUCT UP / DOWN
 ------------------------------------------------------------------ */
 router.put("/:id/move", async (req, res) => {
   try {
@@ -213,23 +241,18 @@ router.put("/:id/move", async (req, res) => {
     if (!product) return res.status(404).json({ message: "Product not found" });
 
     const categoryId = product.category;
-
-    // 🧠 Get all products from the same category
     let products = await Product.find({ category: categoryId }).sort({ order: 1 });
     const index = products.findIndex((p) => p._id.toString() === id.toString());
 
     if (index === -1)
       return res.status(400).json({ message: "Product not found in category" });
 
-    // 🚫 Prevent moving outside bounds
     const swapIndex = direction === "up" ? index - 1 : index + 1;
     if (swapIndex < 0 || swapIndex >= products.length)
       return res.status(400).json({ message: "Already at boundary" });
 
-    // 🔄 Swap in-memory
     [products[index], products[swapIndex]] = [products[swapIndex], products[index]];
 
-    // 🔢 Reassign clean order numbers (1 → N)
     for (let i = 0; i < products.length; i++) {
       products[i].order = i + 1;
       await products[i].save();
@@ -237,7 +260,7 @@ router.put("/:id/move", async (req, res) => {
 
     const updatedCategoryProducts = await Product.find({ category: categoryId })
       .sort({ order: 1 })
-      .populate("category");
+      .populate("category", "name");
 
     console.log(`✅ Product moved ${direction} within category: ${product.name}`);
     res.json({
@@ -248,6 +271,28 @@ router.put("/:id/move", async (req, res) => {
   } catch (err) {
     console.error("❌ Move product error:", err);
     res.status(500).json({ message: "Failed to move product" });
+  }
+});
+
+/* ------------------------------------------------------------------
+✨ AUTO-RELATED PRODUCTS (same category)
+------------------------------------------------------------------ */
+router.get("/:id/related", async (req, res) => {
+  try {
+    const prod = await Product.findById(req.params.id);
+    if (!prod) return res.status(404).json({ message: "Product not found" });
+
+    const related = await Product.find({
+      category: prod.category,
+      _id: { $ne: prod._id },
+    })
+      .limit(6)
+      .populate("category", "name"); // ✅ show related category name
+
+    res.json(related);
+  } catch (err) {
+    console.error("❌ Related fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch related products" });
   }
 });
 
