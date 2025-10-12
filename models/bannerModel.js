@@ -5,6 +5,10 @@ const bannerSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  link: {
+    type: String, // 👈 yahan banner ka redirect link store hoga
+    default: '',  // optional hai, agar blank chhoda to koi redirect nahi hoga
+  },
   enabled: {
     type: Boolean,
     default: true,
