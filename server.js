@@ -14,23 +14,22 @@ connectDB();
 const allowedOrigins = [
   process.env.FRONTEND_URL,       // e.g. https://bafnatoys.com
   process.env.ADMIN_URL,          // e.g. https://admin.bafnatoys.com
-  "https://bafnatoys.com",
-  "https://admin.bafnatoys.com",
-  "http://localhost:3000",
-  "http://localhost:5173",
+  "https://bafnatoys.com",        // ensure root domain is allowed
+  "https://admin.bafnatoys.com",  // ensure admin subdomain is allowed
+  "http://localhost:3000",        // CRA
+  "http://localhost:5173",        // Vite
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
 ];
 
-// ✅ Allow Vercel + Replit domains dynamically
+// Regex: allow *.vercel.app (preview deployments)
 const vercelRegex = /\.vercel\.app$/;
-const replitRegex = /\.replit\.dev$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // Postman / server-to-server allowed
+      if (!origin) return callback(null, true); // Postman/curl, server-to-server
 
       try {
         const hostname = new URL(origin).hostname;
@@ -38,7 +37,6 @@ app.use(
         if (
           allowedOrigins.includes(origin) ||
           vercelRegex.test(hostname) ||
-          replitRegex.test(hostname) ||
           origin.startsWith("http://localhost:")
         ) {
           callback(null, true);
@@ -51,13 +49,8 @@ app.use(
       }
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-
-// ✅ Handle preflight (OPTIONS) requests
-app.options("*", cors());
 
 /* ------------------------ BODY PARSERS ------------------------------ */
 app.use(express.json({ limit: "10mb" }));
@@ -78,8 +71,10 @@ app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 app.use("/api/otp", require("./routes/otpRoutes"));
-app.use("/api/addresses", require("./routes/addressRoutes"));
-app.use("/", require("./routes/sitemap")); // 🌐 SEO sitemap
+app.use("/api/addresses", require("./routes/addressRoutes")); // ✅ NEW addresses route
+
+// ✅ NEW Sitemap Route (SEO optimization)
+app.use("/", require("./routes/sitemap")); // 🌐 Sitemap for Google indexing
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {
@@ -91,7 +86,7 @@ app.get("/api/test", (_req, res) => {
 });
 
 /* ----------------------------- ROOT --------------------------------- */
-app.get("/", (_req, res) => res.send("🚀 Bafnatoys API running smoothly!"));
+app.get("/", (_req, res) => res.send("🚀 Bafnatoys API running"));
 
 /* ----------------------- ERROR HANDLERS ----------------------------- */
 app.use(notFound);
