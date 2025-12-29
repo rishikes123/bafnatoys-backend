@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const RegistrationSchema = new mongoose.Schema(
   {
     shopName: { type: String, required: true },
+    address: { type: String, required: true }, // ✅ Address field added here
     otpMobile: { type: String, required: true, unique: true }, // normalized 10-digit
     whatsapp: { type: String, required: true }, // ✅ required
     password: { type: String }, // optional (hash in production)

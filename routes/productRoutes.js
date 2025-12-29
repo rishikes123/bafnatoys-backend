@@ -11,14 +11,17 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 /* ------------------------------------------------------------------
-📦 Product Schema (with related products)
+📦 Updated Product Schema (with tagline and packSize)
 ------------------------------------------------------------------ */
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     sku: { type: String, required: true, unique: true, trim: true },
-    price: { type: Number, default: 0 },
+    mrp: { type: Number, default: 0 }, // ✅ MRP field
+    price: { type: Number, default: 0 }, // Selling Price
     description: { type: String, trim: true },
+    tagline: { type: String, trim: true }, // ✅ Tagline field
+    packSize: { type: String, trim: true }, // ✅ Pack Size field
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
     images: [{ type: String }],
     bulkPricing: [
@@ -132,6 +135,8 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       ...req.body,
       images: imageUrls,
       slug,
+      tagline: req.body.tagline || "", // ✅ Add tagline
+      packSize: req.body.packSize || "", // ✅ Add pack size
       relatedProducts: req.body.relatedProducts || [],
     });
 

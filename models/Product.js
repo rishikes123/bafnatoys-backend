@@ -5,8 +5,11 @@ const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     sku: { type: String, required: true, unique: true, trim: true },
-    price: { type: Number, default: 0 },
+    mrp: { type: Number, default: 0 }, // Maximum Retail Price
+    price: { type: Number, default: 0 }, // Selling Price
     description: { type: String, trim: true },
+    tagline: { type: String, trim: true }, // ✅ Tagline field
+    packSize: { type: String, trim: true }, // ✅ Pack Size field
     images: [String],
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
     bulkPricing: [
@@ -19,8 +22,6 @@ const productSchema = new mongoose.Schema(
     taxFields: { type: [String], default: [] },
     order: { type: Number, default: 0 },
     slug: { type: String, unique: true, trim: true },
-
-    // ✅ Related Products (manual selection)
     relatedProducts: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -31,15 +32,15 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ✅ Auto slug + auto order before save
+/* ------------------------------------------------------------------
+✨ Auto Slug + Auto Order Before Save
+------------------------------------------------------------------ */
 productSchema.pre("save", async function (next) {
   try {
-    // 🧠 Generate slug if name changed
     if (this.isModified("name") || !this.slug) {
       this.slug = slugify(this.name, { lower: true, strict: true });
     }
 
-    // 🧩 Auto increment order within category
     if (this.isNew) {
       const last = await mongoose
         .model("Product")
@@ -50,7 +51,7 @@ productSchema.pre("save", async function (next) {
 
     next();
   } catch (err) {
-    console.error("❌ Error in pre-save:", err);
+    console.error("❌ Error in pre-save hook:", err);
     next(err);
   }
 });

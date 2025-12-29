@@ -12,24 +12,23 @@ connectDB();
 
 /* --------------------------- CORS CONFIG ---------------------------- */
 const allowedOrigins = [
-  process.env.FRONTEND_URL,       // e.g. https://bafnatoys.com
-  process.env.ADMIN_URL,          // e.g. https://admin.bafnatoys.com
-  "https://bafnatoys.com",        // ensure root domain is allowed
-  "https://admin.bafnatoys.com",  // ensure admin subdomain is allowed
-  "http://localhost:3000",        // CRA
+  process.env.FRONTEND_URL,       // https://bafnatoys.com
+  process.env.ADMIN_URL,          // https://admin.bafnatoys.com
+  "https://bafnatoys.com",
+  "https://admin.bafnatoys.com",
+  "http://localhost:3000",
   "http://localhost:5173",        // Vite
   "http://localhost:8080",
   "http://localhost:8081",
   "http://localhost:8082",
 ];
 
-// Regex: allow *.vercel.app (preview deployments)
 const vercelRegex = /\.vercel\.app$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // Postman/curl, server-to-server
+      if (!origin) return callback(null, true);
 
       try {
         const hostname = new URL(origin).hostname;
@@ -71,10 +70,16 @@ app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 app.use("/api/otp", require("./routes/otpRoutes"));
-app.use("/api/addresses", require("./routes/addressRoutes")); // ✅ NEW addresses route
+app.use("/api/addresses", require("./routes/addressRoutes"));
 
-// ✅ NEW Sitemap Route (SEO optimization)
-app.use("/", require("./routes/sitemap")); // 🌐 Sitemap for Google indexing
+/* ✅ SETTINGS ROUTE (WHATSAPP + COD ADVANCE) */
+app.use("/api/settings", require("./routes/settingsRoutes"));
+
+/* ✅ RAZORPAY PAYMENT ROUTE */
+app.use("/api/payments", require("./routes/paymentRoutes"));
+
+/* ✅ SITEMAP ROUTE */
+app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {

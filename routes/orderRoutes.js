@@ -1,9 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const Order = require("../models/orderModel.js"); // ✅ Added .js
+const Order = require("../models/orderModel.js");
+// ✅ FIX 1: Correct File Name (Singular)
+const Setting = require("../models/settingModel"); 
 
 /**
- * GET /api/orders
+ * @route   GET /api/orders
+ * @desc    Get all orders (optionally filter by customerId)
  */
 router.get("/", async (req, res) => {
   try {
@@ -11,110 +14,177 @@ router.get("/", async (req, res) => {
     const filter = customerId ? { customerId } : {};
 
     const orders = await Order.find(filter)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
+      .populate(
+        "customerId",
+        "firmName shopName otpMobile city state zip visitingCardUrl address"
+      )
       .sort({ createdAt: -1 })
       .lean();
 
     res.json(orders);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    res.status(500).json({
+      message: err.message || "Server error while fetching orders",
+    });
   }
 });
 
 /**
- * GET /api/orders/:id
+ * @route   GET /api/orders/:id
+ * @desc    Get a single order by ID
  */
 router.get("/:id", async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
+      .populate(
+        "customerId",
+        "firmName shopName otpMobile city state zip visitingCardUrl address"
+      )
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
     res.json(order);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    res.status(500).json({
+      message: err.message || "Server error while fetching order details",
+    });
   }
 });
 
 /**
- * POST /api/orders
+ * @route   POST /api/orders
+ * @desc    Create a new order (COD advance supported)
  */
 router.post("/", async (req, res) => {
   try {
-    const { customerId, items, total, paymentMethod, shipping } = req.body;
+    const {
+      customerId,
+      items,
+      total,
+      paymentMode, // Frontend sends 'paymentMode'
+      paymentMethod, // Backwards compatibility
+      shippingAddress,
+      // ✅ FIX 2: Accept values directly from Frontend (Checkout.tsx sends these)
+      codAdvancePaid, 
+      codRemainingAmount 
+    } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "customerId and non-empty items are required" });
+      return res.status(400).json({
+        message: "CustomerId and non-empty items are required",
+      });
     }
 
+    // Determine Payment Mode
+    const finalPaymentMethod = paymentMode || paymentMethod || "COD";
+
+    /* ================= CREATE ORDER ================= */
+    // Hum Settings fetch nahi kar rahe kyunki Frontend already calculation karke bhej raha hai.
+    
     let order = new Order({
       customerId,
       items,
       total,
-      paymentMethod: paymentMethod || "COD",
-      shipping: shipping || {},
+      paymentMethod: finalPaymentMethod,
+      shippingAddress: shippingAddress || {},
+      // Use values from frontend, or default to 0
+      codAdvancePaid: codAdvancePaid || 0,
+      codRemainingAmount: codRemainingAmount || 0,
     });
 
     const MAX_TRIES = 5;
+    let savedOrder = null;
+
+    // Order number collision retry
     for (let i = 0; i < MAX_TRIES; i++) {
       try {
-        order = await order.save();
-
-        // return with populated customer fields
-        const saved = await Order.findById(order._id)
-          .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
-          .lean();
-
-        return res.status(201).json({ order: saved });
+        savedOrder = await order.save();
+        break;
       } catch (e) {
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
-          order.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
+          order.orderNumber =
+            "ODR" + Math.floor(100000 + Math.random() * 900000);
           continue;
         }
         throw e;
       }
     }
 
-    res.status(500).json({ message: "Could not create order (retries exhausted)" });
+    if (!savedOrder) {
+      return res.status(500).json({
+        message: "Could not create order after several attempts",
+      });
+    }
+
+    const populatedOrder = await Order.findById(savedOrder._id)
+      .populate(
+        "customerId",
+        "firmName shopName otpMobile city state zip visitingCardUrl"
+      )
+      .lean();
+
+    res.status(201).json({ order: populatedOrder });
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    console.error("Order Creation Error:", err);
+    res.status(500).json({
+      message: err.message || "Server error while creating order",
+    });
   }
 });
 
 /**
- * PATCH /api/orders/:id/status
+ * @route   PATCH /api/orders/:id/status
+ * @desc    Update order status (Admin)
  */
 router.patch("/:id/status", async (req, res) => {
   try {
     const { status } = req.body;
-    if (!status) return res.status(400).json({ message: "Status is required" });
+    const allowedStatuses = [
+      "pending",
+      "processing",
+      "shipped",
+      "delivered",
+      "cancelled",
+    ];
+
+    if (!status || !allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid or missing status" });
+    }
 
     const order = await Order.findByIdAndUpdate(
       req.params.id,
       { status },
       { new: true }
     )
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
+      .populate(
+        "customerId",
+        "firmName shopName otpMobile city state zip visitingCardUrl"
+      )
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
     res.json(order);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    res.status(500).json({
+      message: err.message || "Server error while updating status",
+    });
   }
 });
 
 /**
- * DELETE /api/orders/:id
+ * @route   DELETE /api/orders/:id
+ * @desc    Delete an order
  */
 router.delete("/:id", async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id).lean();
     if (!order) return res.status(404).json({ message: "Order not found" });
-    res.json({ ok: true, message: "Order deleted" });
+
+    res.json({ ok: true, message: "Order deleted successfully" });
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    res.status(500).json({
+      message: err.message || "Server error while deleting order",
+    });
   }
 });
 

@@ -17,13 +17,15 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
   try {
     const {
       shopName,
+      address, // ✅ Added address
       otpMobile,
       whatsapp,
       password, // TODO: hash in production
     } = req.body;
 
-    if (!shopName || !otpMobile) {
-      return res.status(400).json({ message: "Please fill all required fields." });
+    // ✅ Validation updated for Address
+    if (!shopName || !otpMobile || !address) {
+      return res.status(400).json({ message: "Please fill all required fields: Shop Name, Mobile, and Address." });
     }
 
     const nMobile = normalizePhone(otpMobile);
@@ -40,6 +42,7 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
 
     const doc = await Registration.create({
       shopName,
+      address, // ✅ Save address to DB
       otpMobile: nMobile,
       whatsapp: nWhats,
       password,          // hash later
@@ -87,8 +90,9 @@ router.get("/phone/:otpMobile", async (req, res) => {
 router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
+    // ✅ Added "address" to allowed updates
     const allowed = [
-      "shopName", "otpMobile", "whatsapp", "visitingCardUrl", "password",
+      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password",
     ];
 
     const update = {};
