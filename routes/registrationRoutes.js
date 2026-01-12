@@ -1,55 +1,60 @@
 const express = require("express");
-const router = express.Router();
-const upload = require("../middleware/upload"); // multer middleware
+const upload = require("../middleware/upload"); // multer-storage-cloudinary
 const Registration = require("../models/Registration");
 
-// Helper to normalize phone
+const router = express.Router();
+
+/* ------------------------------ helpers ------------------------------ */
 const normalizePhone = (v = "") => {
   const digits = String(v).replace(/\D/g, "");
-  return digits.length > 10 ? digits.slice(-10) : digits;
+  if (digits.length > 10 && digits.startsWith("91")) return digits.slice(-10);
+  return digits.slice(-10);
 };
 
 /* ------------------------------ REGISTER ----------------------------- */
 // POST /api/registrations/register
 router.post("/register", upload.single("visitingCard"), async (req, res) => {
   try {
-    const { shopName, address, otpMobile, whatsapp, password } = req.body;
+    const {
+      shopName,
+      address, // ✅ Added address
+      otpMobile,
+      whatsapp,
+      password, // TODO: hash in production
+    } = req.body;
 
+    // ✅ Validation updated for Address
     if (!shopName || !otpMobile || !address) {
-      return res.status(400).json({ message: "Please fill Shop Name, Mobile, and Address." });
+      return res.status(400).json({ message: "Please fill all required fields: Shop Name, Mobile, and Address." });
     }
 
     const nMobile = normalizePhone(otpMobile);
     const nWhats = whatsapp ? normalizePhone(whatsapp) : "";
 
-    // Duplicate Check
+    // prevent duplicate by mobile
     const dup = await Registration.findOne({ otpMobile: nMobile });
     if (dup) {
-      return res.status(409).json({ message: "Mobile number already registered." });
+      return res.status(409).json({ message: "A user with this mobile already exists." });
     }
 
-    // Handle Optional Visiting Card
-    const visitingCardUrl = req.file ? req.file.path : "";
+    // ✅ Cloudinary URL from multer-storage-cloudinary
+    const visitingCardUrl = req.file?.path || "";
 
     const doc = await Registration.create({
       shopName,
-      address,
+      address, // ✅ Save address to DB
       otpMobile: nMobile,
       whatsapp: nWhats,
-      password,
-      visitingCardUrl,
-      
-      // ✅ CHANGE: Auto-Approve (Approval System Removed)
-      isApproved: true, 
+      password,          // hash later
+      visitingCardUrl,   // store Cloudinary URL
+      isApproved: null,  // Pending
     });
 
     res.status(201).json({
       success: true,
-      // ✅ Message updated
-      message: "✅ Registration successful! You can login now.",
+      message: "✅ Registration submitted. Awaiting admin approval.",
       user: doc,
     });
-
   } catch (err) {
     console.error("Register error:", err);
     res.status(500).json({ message: err.message || "Server error" });
@@ -57,6 +62,7 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
 });
 
 /* ------------------------------- LIST ------------------------------- */
+// GET /api/registrations
 router.get("/", async (_req, res) => {
   try {
     const users = await Registration.find().sort({ createdAt: -1 });
@@ -67,6 +73,7 @@ router.get("/", async (_req, res) => {
 });
 
 /* --------------------------- FIND BY PHONE -------------------------- */
+// GET /api/registrations/phone/:otpMobile
 router.get("/phone/:otpMobile", async (req, res) => {
   try {
     const raw = normalizePhone(req.params.otpMobile);
@@ -79,9 +86,11 @@ router.get("/phone/:otpMobile", async (req, res) => {
 });
 
 /* ------------------------------- UPDATE ------------------------------ */
+// PUT /api/registrations/:id
 router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   try {
     const id = req.params.id;
+    // ✅ Added "address" to allowed updates
     const allowed = [
       "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password",
     ];
@@ -94,6 +103,7 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
     if (update.whatsapp) update.whatsapp = normalizePhone(update.whatsapp);
 
+    // If a new file comes, replace with Cloudinary URL
     if (req.file) update.visitingCardUrl = req.file.path;
 
     const doc = await Registration.findByIdAndUpdate(id, update, { new: true });
@@ -101,12 +111,20 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
 
     res.json(doc);
   } catch (err) {
-    console.error("Update error:", err);
+    console.error("Update registration error:", err);
+
+    if (err && err.code === "LIMIT_UNEXPECTED_FILE") {
+      return res.status(400).json({
+        message: 'Unexpected field. Use file field name "visitingCard".',
+      });
+    }
+
     res.status(500).json({ message: err.message || "Failed to update profile" });
   }
 });
 
-/* -------------------------- APPROVE / REJECT (Optional Now) ------------------------- */
+/* -------------------------- APPROVE / REJECT ------------------------- */
+// POST /api/registrations/:id/approve
 router.post("/:id/approve", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: true });
@@ -116,6 +134,7 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
+// POST /api/registrations/:id/reject
 router.post("/:id/reject", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: false });
@@ -126,6 +145,7 @@ router.post("/:id/reject", async (req, res) => {
 });
 
 /* ------------------------------- DELETE ------------------------------ */
+// DELETE /api/registrations/:id
 router.delete("/:id", async (req, res) => {
   try {
     await Registration.findByIdAndDelete(req.params.id);
