@@ -9,19 +9,10 @@ const orderItemSchema = new mongoose.Schema(
       required: true,
     },
     name: { type: String, required: true },
-
-    // Total pieces
-    qty: { type: Number, required: true },
-
-    // Pieces per inner
-    innerQty: { type: Number, required: true },
-
-    // Total inners selected
-    inners: { type: Number, required: true },
-
-    // Price per piece
-    price: { type: Number, required: true },
-
+    qty: { type: Number, required: true }, // Total pieces
+    innerQty: { type: Number, required: true }, // Pieces per inner
+    inners: { type: Number, required: true }, // Total inners
+    price: { type: Number, required: true }, // Price per piece
     image: { type: String },
   },
   { _id: false }
@@ -62,6 +53,21 @@ const orderSchema = new mongoose.Schema(
       default: [],
     },
 
+    // ✅ NEW: Product Total (Bina shipping ke total)
+    itemsPrice: {
+      type: Number,
+      required: true,
+      default: 0
+    },
+
+    // ✅ NEW: Shipping Charge
+    shippingPrice: {
+      type: Number,
+      required: true,
+      default: 0
+    },
+
+    // ✅ Grand Total (Items + Shipping)
     total: {
       type: Number,
       required: true,
@@ -110,6 +116,8 @@ orderSchema.pre("validate", function (next) {
   }
 
   // Auto-calc remaining amount
+  // Ensure total is calculated if not provided, though it should be provided by backend logic
+  // remainingAmount = Grand Total - Advance Paid
   this.remainingAmount = Math.max(
     (this.total || 0) - (this.advancePaid || 0),
     0

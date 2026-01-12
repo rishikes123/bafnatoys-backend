@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const Order = require("../models/orderModel.js");
-// ✅ FIX 1: Correct File Name (Singular)
+// ✅ FIXED: Using 'orderModel' as per your file structure
+const Order = require("../models/orderModel"); 
 const Setting = require("../models/settingModel"); 
 
 /**
@@ -53,20 +53,25 @@ router.get("/:id", async (req, res) => {
 
 /**
  * @route   POST /api/orders
- * @desc    Create a new order (COD advance supported)
+ * @desc    Create a new order (Supports Shipping + COD Advance)
  */
 router.post("/", async (req, res) => {
   try {
     const {
       customerId,
       items,
-      total,
-      paymentMode, // Frontend sends 'paymentMode'
-      paymentMethod, // Backwards compatibility
+      total,              // Grand Total (Items + Shipping)
+      paymentMode,        // Frontend usually sends this
+      paymentMethod,      // Fallback
       shippingAddress,
-      // ✅ FIX 2: Accept values directly from Frontend (Checkout.tsx sends these)
+      
+      // ✅ Frontend se aane wale COD fields
       codAdvancePaid, 
-      codRemainingAmount 
+      codRemainingAmount,
+
+      // ✅ NEW: Frontend se aane wale Price Breakdown fields
+      itemsPrice,
+      shippingPrice
     } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
@@ -79,17 +84,25 @@ router.post("/", async (req, res) => {
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
 
     /* ================= CREATE ORDER ================= */
-    // Hum Settings fetch nahi kar rahe kyunki Frontend already calculation karke bhej raha hai.
     
     let order = new Order({
       customerId,
       items,
-      total,
-      paymentMethod: finalPaymentMethod,
       shippingAddress: shippingAddress || {},
-      // Use values from frontend, or default to 0
-      codAdvancePaid: codAdvancePaid || 0,
-      codRemainingAmount: codRemainingAmount || 0,
+
+      // ✅ CORRECT MAPPING (Frontend Variables -> DB Schema Fields)
+      
+      // 1. Prices
+      itemsPrice: itemsPrice || 0,        // Product Subtotal
+      shippingPrice: shippingPrice || 0,  // Shipping Charge
+      total: total,                       // Grand Total
+
+      // 2. Payment Mode (Schema field is 'paymentMode')
+      paymentMode: finalPaymentMethod,
+
+      // 3. COD Logic (Schema fields are 'advancePaid' & 'remainingAmount')
+      advancePaid: codAdvancePaid || 0,
+      remainingAmount: codRemainingAmount || 0,
     });
 
     const MAX_TRIES = 5;
@@ -102,8 +115,8 @@ router.post("/", async (req, res) => {
         break;
       } catch (e) {
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
-          order.orderNumber =
-            "ODR" + Math.floor(100000 + Math.random() * 900000);
+          // Retry with new number
+          order.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
           continue;
         }
         throw e;
