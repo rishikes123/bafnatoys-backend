@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
-// ✅ FIXED: Using 'orderModel' as per your file structure
-const Order = require("../models/orderModel"); 
-const Setting = require("../models/settingModel"); 
+// axios removed as it is no longer needed for shipping API
+const Order = require("../models/orderModel");
+const Setting = require("../models/settingModel");
 
 /**
  * @route   GET /api/orders
@@ -60,16 +60,16 @@ router.post("/", async (req, res) => {
     const {
       customerId,
       items,
-      total,              // Grand Total (Items + Shipping)
+      total,              // Grand Total
       paymentMode,        // Frontend usually sends this
       paymentMethod,      // Fallback
       shippingAddress,
       
-      // ✅ Frontend se aane wale COD fields
+      // ✅ COD fields
       codAdvancePaid, 
       codRemainingAmount,
 
-      // ✅ NEW: Frontend se aane wale Price Breakdown fields
+      // ✅ Price Breakdown
       itemsPrice,
       shippingPrice
     } = req.body;
@@ -84,23 +84,18 @@ router.post("/", async (req, res) => {
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
 
     /* ================= CREATE ORDER ================= */
-    
     let order = new Order({
       customerId,
       items,
       shippingAddress: shippingAddress || {},
 
-      // ✅ CORRECT MAPPING (Frontend Variables -> DB Schema Fields)
-      
-      // 1. Prices
-      itemsPrice: itemsPrice || 0,        // Product Subtotal
-      shippingPrice: shippingPrice || 0,  // Shipping Charge
-      total: total,                       // Grand Total
+      // ✅ CORRECT MAPPING
+      itemsPrice: itemsPrice || 0,
+      shippingPrice: shippingPrice || 0, 
+      total: total,
 
-      // 2. Payment Mode (Schema field is 'paymentMode')
       paymentMode: finalPaymentMethod,
 
-      // 3. COD Logic (Schema fields are 'advancePaid' & 'remainingAmount')
       advancePaid: codAdvancePaid || 0,
       remainingAmount: codRemainingAmount || 0,
     });
@@ -115,7 +110,6 @@ router.post("/", async (req, res) => {
         break;
       } catch (e) {
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
-          // Retry with new number
           order.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
           continue;
         }

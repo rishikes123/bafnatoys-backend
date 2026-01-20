@@ -72,12 +72,14 @@ app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 app.use("/api/otp", require("./routes/otpRoutes"));
 app.use("/api/addresses", require("./routes/addressRoutes"));
 
-/* ✅ OLD SETTINGS (WhatsApp + COD Advance) - Yeh waisa hi hai */
+/* ✅ OLD SETTINGS (WhatsApp + COD Advance) */
 app.use("/api/settings", require("./routes/settingsRoutes"));
 
-/* ✅ NEW SHIPPING RULES ADDED HERE */
-// Iska URL maine '/api/shipping-rules' rakha hai taaki conflict na ho
+/* ✅ SHIPPING RULES (Database Settings) */
 app.use("/api/shipping-rules", require("./routes/settings"));
+
+/* ✅ NEW ITHINK LOGISTICS SHIPPING (Integration) - ADDED THIS */
+app.use("/api/shipping", require("./routes/shippingRoutes"));
 
 /* ✅ RAZORPAY PAYMENT ROUTE */
 app.use("/api/payments", require("./routes/paymentRoutes"));

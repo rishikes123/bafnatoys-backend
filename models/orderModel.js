@@ -9,10 +9,10 @@ const orderItemSchema = new mongoose.Schema(
       required: true,
     },
     name: { type: String, required: true },
-    qty: { type: Number, required: true }, // Total pieces
-    innerQty: { type: Number, required: true }, // Pieces per inner
-    inners: { type: Number, required: true }, // Total inners
-    price: { type: Number, required: true }, // Price per piece
+    qty: { type: Number, required: true },
+    innerQty: { type: Number, required: true },
+    inners: { type: Number, required: true },
+    price: { type: Number, required: true },
     image: { type: String },
   },
   { _id: false }
@@ -41,61 +41,44 @@ const orderSchema = new mongoose.Schema(
       ref: "Registration",
       required: true,
     },
-
     orderNumber: {
       type: String,
       required: true,
       unique: true,
     },
-
     items: {
       type: [orderItemSchema],
       default: [],
     },
-
-    // ✅ NEW: Product Total (Bina shipping ke total)
-    itemsPrice: {
-      type: Number,
-      required: true,
-      default: 0
-    },
-
-    // ✅ NEW: Shipping Charge
-    shippingPrice: {
-      type: Number,
-      required: true,
-      default: 0
-    },
-
-    // ✅ Grand Total (Items + Shipping)
+    itemsPrice: { type: Number, default: 0 },
+    shippingPrice: { type: Number, default: 0 },
     total: {
       type: Number,
       required: true,
     },
-
-    /* ===== PAYMENT MODE ===== */
     paymentMode: {
       type: String,
       enum: ["COD", "ONLINE"],
       default: "COD",
     },
-
-    /* ===== COD ADVANCE SUPPORT ===== */
     advancePaid: {
       type: Number,
       default: 0,
     },
-
     remainingAmount: {
       type: Number,
       default: 0,
     },
-
     status: {
       type: String,
       enum: ["pending", "processing", "shipped", "delivered", "cancelled"],
       default: "pending",
     },
+
+    /* ✅ SHIPPING INTEGRATION FIELDS ADDED */
+    isShipped: { type: Boolean, default: false },
+    trackingId: { type: String, default: "" },
+    courierName: { type: String, default: "" },
 
     shippingAddress: {
       type: shippingAddressSchema,
@@ -111,13 +94,9 @@ orderSchema.index({ orderNumber: 1 }, { unique: true });
 /* ================= AUTO ORDER NUMBER ================= */
 orderSchema.pre("validate", function (next) {
   if (!this.orderNumber) {
-    this.orderNumber =
-      "ODR" + Math.floor(100000 + Math.random() * 900000);
+    this.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
   }
 
-  // Auto-calc remaining amount
-  // Ensure total is calculated if not provided, though it should be provided by backend logic
-  // remainingAmount = Grand Total - Advance Paid
   this.remainingAmount = Math.max(
     (this.total || 0) - (this.advancePaid || 0),
     0
@@ -126,5 +105,4 @@ orderSchema.pre("validate", function (next) {
   next();
 });
 
-module.exports =
-  mongoose.models.Order || mongoose.model("Order", orderSchema);
+module.exports = mongoose.models.Order || mongoose.model("Order", orderSchema);
