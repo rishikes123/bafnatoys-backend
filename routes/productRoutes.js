@@ -17,13 +17,13 @@ const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     sku: { type: String, required: true, unique: true, trim: true },
-    mrp: { type: Number, default: 0 }, // ✅ MRP field
-    price: { type: Number, default: 0 }, // Selling Price
+    mrp: { type: Number, default: 0 },
+    price: { type: Number, default: 0 },
     description: { type: String, trim: true },
-    tagline: { type: String, trim: true }, // ✅ Tagline field
-    packSize: { type: String, trim: true }, // ✅ Pack Size field
+    tagline: { type: String, trim: true },
+    packSize: { type: String, trim: true },
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
-    images: [{ type: String }],
+    images: [{ type: String }], // Array of image URLs
     bulkPricing: [
       {
         inner: String,
@@ -34,8 +34,6 @@ const productSchema = new mongoose.Schema(
     taxFields: { type: [String], default: [] },
     order: { type: Number, default: 0 },
     slug: { type: String, unique: true, trim: true },
-
-    // ✅ Related Products field (manual select)
     relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
   },
   { timestamps: true }
@@ -65,16 +63,44 @@ productSchema.pre("save", async function (next) {
   }
 });
 
-const Product =
-  mongoose.models.Product || mongoose.model("Product", productSchema);
+const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
+
+/* ==================================================================
+   ROUTES START HERE
+================================================================== */
 
 /* ------------------------------------------------------------------
-✅ GET all products (with category name)
+🔍 1. SEARCH PRODUCTS (MUST BE AT THE TOP)
+   URL: /api/products/search/all?query=abc
+------------------------------------------------------------------ */
+router.get("/search/all", async (req, res) => {
+  try {
+    const { query } = req.query;
+    if (!query) return res.json([]);
+
+    const products = await Product.find({
+      $or: [
+        { name: { $regex: query, $options: "i" } }, // Name match (case-insensitive)
+        { sku: { $regex: query, $options: "i" } },  // SKU match
+      ],
+    })
+    .select("name sku images _id category") // Return only necessary fields
+    .limit(10);
+
+    res.json(products);
+  } catch (err) {
+    console.error("❌ Search error:", err);
+    res.status(500).json({ message: "Search failed" });
+  }
+});
+
+/* ------------------------------------------------------------------
+✅ 2. GET all products
 ------------------------------------------------------------------ */
 router.get("/", async (_req, res) => {
   try {
     const products = await Product.find()
-      .populate("category", "name") // ✅ only name of category
+      .populate("category", "name")
       .sort({ order: 1 });
     res.json(products);
   } catch (err) {
@@ -84,20 +110,49 @@ router.get("/", async (_req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ GET single product by slug or ID (with related + category)
+✅ 3. GET Related Products (Must be before generic /:slugOrId)
+------------------------------------------------------------------ */
+router.get("/:id/related", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid ID" });
+    }
+    const prod = await Product.findById(req.params.id);
+    if (!prod) return res.status(404).json({ message: "Product not found" });
+
+    const related = await Product.find({
+      category: prod.category,
+      _id: { $ne: prod._id },
+    })
+      .limit(6)
+      .populate("category", "name");
+
+    res.json(related);
+  } catch (err) {
+    console.error("❌ Related fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch related products" });
+  }
+});
+
+/* ------------------------------------------------------------------
+✅ 4. GET single product by slug or ID (GENERIC ROUTE - KEEP LOWER)
 ------------------------------------------------------------------ */
 router.get("/:slugOrId", async (req, res) => {
   try {
     const { slugOrId } = req.params;
+    
+    // Prevent "search" or "reorder" from being treated as an ID
+    if (slugOrId === "search" || slugOrId === "reorder") return res.next();
+
     const query = mongoose.Types.ObjectId.isValid(slugOrId)
       ? { _id: slugOrId }
       : { slug: slugOrId };
 
     const prod = await Product.findOne(query)
-      .populate("category", "name") // ✅ show category name
+      .populate("category", "name")
       .populate({
         path: "relatedProducts",
-        populate: { path: "category", select: "name" }, // ✅ show related category name
+        populate: { path: "category", select: "name" },
       });
 
     if (!prod) return res.status(404).json({ message: "Product not found" });
@@ -110,13 +165,14 @@ router.get("/:slugOrId", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ CREATE product (with Cloudinary upload)
+✅ 5. CREATE product (🔥 Handles Files AND URLs)
 ------------------------------------------------------------------ */
 router.post("/", upload.array("images", 5), async (req, res) => {
   try {
     let imageUrls = [];
 
-    if (req.files?.length > 0) {
+    // 🔹 1. If Files are present (Direct upload via Multer)
+    if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
@@ -129,19 +185,30 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       }
     }
 
+    // 🔹 2. If URLs are present (Frontend pre-upload)
+    if (req.body.images) {
+      const bodyImages = Array.isArray(req.body.images)
+        ? req.body.images
+        : [req.body.images];
+      
+      // Filter out empty strings/nulls
+      const validUrls = bodyImages.filter(url => url && typeof url === 'string');
+      imageUrls = [...imageUrls, ...validUrls];
+    }
+
     const slug = slugify(req.body.name, { lower: true, strict: true });
 
     const prod = new Product({
       ...req.body,
-      images: imageUrls,
+      images: imageUrls, // ✅ Merged Images
       slug,
-      tagline: req.body.tagline || "", // ✅ Add tagline
-      packSize: req.body.packSize || "", // ✅ Add pack size
+      tagline: req.body.tagline || "",
+      packSize: req.body.packSize || "",
       relatedProducts: req.body.relatedProducts || [],
     });
 
     await prod.save();
-    console.log("✅ Product created:", prod.name);
+    console.log("✅ Product created successfully:", prod.name);
     res.status(201).json(prod);
   } catch (err) {
     console.error("❌ Create error:", err);
@@ -150,64 +217,7 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ UPDATE product (with Cloudinary upload)
------------------------------------------------------------------- */
-router.put("/:id", upload.array("images", 5), async (req, res) => {
-  try {
-    let updateData = { ...req.body };
-
-    if (req.files?.length > 0) {
-      const uploaded = [];
-      for (const file of req.files) {
-        const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: "bafnatoys/products" },
-            (error, result) => (error ? reject(error) : resolve(result))
-          );
-          stream.end(file.buffer);
-        });
-        uploaded.push(result.secure_url);
-      }
-      updateData.images = uploaded;
-    }
-
-    if (updateData.name) {
-      updateData.slug = slugify(updateData.name, { lower: true, strict: true });
-    }
-
-    const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!prod) return res.status(404).json({ message: "Product not found" });
-
-    console.log("✅ Product updated:", prod.name);
-    res.json(prod);
-  } catch (err) {
-    console.error("❌ Update error:", err);
-    res.status(400).json({ message: err.message || "Failed to update product" });
-  }
-});
-
-/* ------------------------------------------------------------------
-✅ DELETE product
------------------------------------------------------------------- */
-router.delete("/:id", async (req, res) => {
-  try {
-    const prod = await Product.findByIdAndDelete(req.params.id);
-    if (!prod) return res.status(404).json({ message: "Product not found" });
-
-    console.log("🗑️ Deleted product:", prod.name);
-    res.json({ message: "Product deleted successfully" });
-  } catch (err) {
-    console.error("❌ Delete error:", err);
-    res.status(400).json({ message: "Invalid product ID" });
-  }
-});
-
-/* ------------------------------------------------------------------
-✅ REORDER PRODUCTS
+✅ 6. REORDER PRODUCTS
 ------------------------------------------------------------------ */
 router.put("/reorder", async (req, res) => {
   try {
@@ -232,7 +242,7 @@ router.put("/reorder", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ MOVE PRODUCT UP / DOWN
+✅ 7. MOVE PRODUCT UP / DOWN
 ------------------------------------------------------------------ */
 router.put("/:id/move", async (req, res) => {
   try {
@@ -267,10 +277,10 @@ router.put("/:id/move", async (req, res) => {
       .sort({ order: 1 })
       .populate("category", "name");
 
-    console.log(`✅ Product moved ${direction} within category: ${product.name}`);
+    console.log(`✅ Product moved ${direction}: ${product.name}`);
     res.json({
       ok: true,
-      message: `Product moved ${direction} successfully within category!`,
+      message: `Product moved ${direction} successfully!`,
       updatedCategoryProducts,
     });
   } catch (err) {
@@ -280,24 +290,73 @@ router.put("/:id/move", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✨ AUTO-RELATED PRODUCTS (same category)
+✅ 8. UPDATE product
 ------------------------------------------------------------------ */
-router.get("/:id/related", async (req, res) => {
+router.put("/:id", upload.array("images", 5), async (req, res) => {
   try {
-    const prod = await Product.findById(req.params.id);
+    let updateData = { ...req.body };
+    let newImageUrls = [];
+
+    // 1. Files Upload Logic
+    if (req.files?.length > 0) {
+      for (const file of req.files) {
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "bafnatoys/products" },
+            (error, result) => (error ? reject(error) : resolve(result))
+          );
+          stream.end(file.buffer);
+        });
+        newImageUrls.push(result.secure_url);
+      }
+    }
+
+    // 2. Handle Existing/Body Images
+    if (newImageUrls.length > 0) {
+        let bodyImages = [];
+        if (req.body.images) {
+            bodyImages = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+        }
+        updateData.images = [...bodyImages, ...newImageUrls];
+    } else {
+        // Handle case where no new files, but image array might be updated (reordering/deleting)
+        if (req.body.images !== undefined) {
+           updateData.images = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+        }
+    }
+
+    if (updateData.name) {
+      updateData.slug = slugify(updateData.name, { lower: true, strict: true });
+    }
+
+    const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    const related = await Product.find({
-      category: prod.category,
-      _id: { $ne: prod._id },
-    })
-      .limit(6)
-      .populate("category", "name"); // ✅ show related category name
-
-    res.json(related);
+    console.log("✅ Product updated:", prod.name);
+    res.json(prod);
   } catch (err) {
-    console.error("❌ Related fetch error:", err);
-    res.status(500).json({ message: "Failed to fetch related products" });
+    console.error("❌ Update error:", err);
+    res.status(400).json({ message: err.message || "Failed to update product" });
+  }
+});
+
+/* ------------------------------------------------------------------
+✅ 9. DELETE product
+------------------------------------------------------------------ */
+router.delete("/:id", async (req, res) => {
+  try {
+    const prod = await Product.findByIdAndDelete(req.params.id);
+    if (!prod) return res.status(404).json({ message: "Product not found" });
+
+    console.log("🗑️ Deleted product:", prod.name);
+    res.json({ message: "Product deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete error:", err);
+    res.status(400).json({ message: "Invalid product ID" });
   }
 });
 
