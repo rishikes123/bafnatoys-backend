@@ -2,8 +2,10 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
 const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
+const Product = require("./models/Product");
 
 const app = express();
 
@@ -12,39 +14,26 @@ connectDB();
 
 /* --------------------------- CORS CONFIG ---------------------------- */
 const allowedOrigins = [
-  process.env.FRONTEND_URL,       // https://bafnatoys.com
-  process.env.ADMIN_URL,          // https://admin.bafnatoys.com
+  process.env.FRONTEND_URL,
+  process.env.ADMIN_URL,
   "https://bafnatoys.com",
   "https://admin.bafnatoys.com",
   "http://localhost:3000",
-  "http://localhost:5173",        // Vite
-  "http://localhost:8080",
-  "http://localhost:8081",
-  "http://localhost:8082",
+  "http://localhost:5173",
 ];
-
-const vercelRegex = /\.vercel\.app$/;
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-
-      try {
-        const hostname = new URL(origin).hostname;
-
-        if (
-          allowedOrigins.includes(origin) ||
-          vercelRegex.test(hostname) ||
-          origin.startsWith("http://localhost:")
-        ) {
-          callback(null, true);
-        } else {
-          console.log("❌ CORS blocked:", origin);
-          callback(new Error("Not allowed by CORS"));
-        }
-      } catch (err) {
-        callback(new Error("Invalid Origin"));
+      if (
+        allowedOrigins.some(o => origin.startsWith(o)) ||
+        origin.includes("localhost")
+      ) {
+        callback(null, true);
+      } else {
+        console.log("❌ CORS blocked:", origin);
+        callback(new Error("Not allowed by CORS"));
       }
     },
     credentials: true,
@@ -59,7 +48,59 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
-/* --------------------------- ROUTES --------------------------------- */
+/* ====================================================================
+   ✅ FINAL SEO + WHATSAPP PREVIEW ROUTE (DO NOT CHANGE)
+   ==================================================================== */
+app.get("/product/:id", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+
+  try {
+    const product = await Product.findById(req.params.id);
+    let html = fs.readFileSync(indexPath, "utf8");
+
+    if (product) {
+      const title = `${product.name} | Bafna Toys`;
+      const description = product.description
+        ? product.description.substring(0, 150)
+        : `Buy ${product.name} at wholesale prices`;
+
+      // ✅ IMAGE MUST BE PUBLIC & HTTPS
+      let image = "https://bafnatoys.com/logo.webp";
+
+      if (product.images && product.images.length > 0) {
+        const img = product.images[0];
+        image = img.startsWith("http")
+          ? img
+          : `https://bafnatoys.com/${img.replace(/^\/+/, "")}`;
+      }
+
+      html = html
+        .replace(/<title>.*<\/title>/, `<title>${title}</title>`)
+        .replace(
+          "</head>",
+          `
+<meta property="og:site_name" content="Bafna Toys" />
+<meta property="og:title" content="${title}" />
+<meta property="og:description" content="${description}" />
+<meta property="og:image" content="${image}" />
+<meta property="og:image:width" content="600" />
+<meta property="og:image:height" content="600" />
+<meta property="og:type" content="product" />
+<meta property="og:url" content="https://bafnatoys.com/product/${product._id}" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="${image}" />
+</head>`
+        );
+    }
+
+    res.send(html);
+  } catch (err) {
+    console.error("❌ SEO / OG ERROR:", err);
+    res.sendFile(indexPath);
+  }
+});
+
+/* --------------------------- API ROUTES ------------------------------ */
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
@@ -71,44 +112,29 @@ app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
 app.use("/api/otp", require("./routes/otpRoutes"));
 app.use("/api/addresses", require("./routes/addressRoutes"));
-
-/* ✅ OLD SETTINGS (WhatsApp + COD Advance) */
 app.use("/api/settings", require("./routes/settingsRoutes"));
-
-/* ✅ SHIPPING RULES (Database Settings) */
 app.use("/api/shipping-rules", require("./routes/settings"));
-
-/* ✅ NEW ITHINK LOGISTICS SHIPPING (Integration) */
 app.use("/api/shipping", require("./routes/shippingRoutes"));
-
-/* ✅ RAZORPAY PAYMENT ROUTE */
 app.use("/api/payments", require("./routes/paymentRoutes"));
-
-/* ❌ ABANDONED CART ROUTE REMOVED */
-
-/* ✅ WHATSAPP PRODUCT SHARE (Image Preview Generator) */
-app.use("/api/share", require("./routes/shareRoutes"));
-
-/* ✅ SITEMAP ROUTE */
 app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {
-  res.json({
-    ok: true,
-    message: "✅ Server is working!",
-    timestamp: new Date().toISOString(),
-  });
+  res.json({ ok: true, message: "✅ Server Working" });
 });
 
-/* ----------------------------- ROOT --------------------------------- */
-app.get("/", (_req, res) => res.send("🚀 Bafnatoys API running"));
+/* ------------------------- FRONTEND SERVE ---------------------------- */
+app.use(express.static(path.join(__dirname, "../frontend/dist")));
 
-/* ----------------------- ERROR HANDLERS ----------------------------- */
+app.get("*", (req, res) => {
+  res.sendFile(path.resolve(__dirname, "../frontend/dist/index.html"));
+});
+
+/* ----------------------- ERROR HANDLERS ------------------------------ */
 app.use(notFound);
 app.use(errorHandler);
 
-/* -------------------------- START SERVER ---------------------------- */
+/* -------------------------- START SERVER ----------------------------- */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
