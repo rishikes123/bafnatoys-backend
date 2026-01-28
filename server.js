@@ -26,6 +26,7 @@ app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
+
       if (
         allowedOrigins.some(o => origin.startsWith(o)) ||
         origin.includes("localhost")
@@ -64,7 +65,7 @@ app.get("/product/:id", async (req, res) => {
         ? product.description.substring(0, 150)
         : `Buy ${product.name} at wholesale prices`;
 
-      // ✅ IMAGE MUST BE PUBLIC & HTTPS
+      // ✅ IMAGE MUST BE PUBLIC & HTTPS (FRONTEND DOMAIN)
       let image = "https://bafnatoys.com/logo.webp";
 
       if (product.images && product.images.length > 0) {
