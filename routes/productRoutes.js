@@ -11,7 +11,7 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 /* ------------------------------------------------------------------
-📦 Updated Product Schema (with tagline and packSize)
+📦 Updated Product Schema (with tagline, packSize, STOCK & UNIT)
 ------------------------------------------------------------------ */
 const productSchema = new mongoose.Schema(
   {
@@ -19,6 +19,11 @@ const productSchema = new mongoose.Schema(
     sku: { type: String, required: true, unique: true, trim: true },
     mrp: { type: Number, default: 0 },
     price: { type: Number, default: 0 },
+    
+    // ✅ STOCK & UNIT ADDED
+    stock: { type: Number, default: 0 },
+    unit: { type: String, default: "Piece" }, // ✅ Added Unit
+
     description: { type: String, trim: true },
     tagline: { type: String, trim: true },
     packSize: { type: String, trim: true },
@@ -204,6 +209,8 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       slug,
       tagline: req.body.tagline || "",
       packSize: req.body.packSize || "",
+      stock: req.body.stock || 0, // ✅ Ensure stock is captured
+      unit: req.body.unit || "Piece", // ✅ Ensure unit is captured
       relatedProducts: req.body.relatedProducts || [],
     });
 

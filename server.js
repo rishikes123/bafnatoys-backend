@@ -78,11 +78,16 @@ app.use("/api/settings", require("./routes/settingsRoutes"));
 /* ✅ SHIPPING RULES (Database Settings) */
 app.use("/api/shipping-rules", require("./routes/settings"));
 
-/* ✅ NEW ITHINK LOGISTICS SHIPPING (Integration) - ADDED THIS */
+/* ✅ NEW ITHINK LOGISTICS SHIPPING (Integration) */
 app.use("/api/shipping", require("./routes/shippingRoutes"));
 
 /* ✅ RAZORPAY PAYMENT ROUTE */
 app.use("/api/payments", require("./routes/paymentRoutes"));
+
+/* ❌ ABANDONED CART ROUTE REMOVED */
+
+/* ✅ WHATSAPP PRODUCT SHARE (Image Preview Generator) */
+app.use("/api/share", require("./routes/shareRoutes"));
 
 /* ✅ SITEMAP ROUTE */
 app.use("/", require("./routes/sitemap"));

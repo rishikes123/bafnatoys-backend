@@ -7,9 +7,14 @@ const productSchema = new mongoose.Schema(
     sku: { type: String, required: true, unique: true, trim: true },
     mrp: { type: Number, default: 0 }, // Maximum Retail Price
     price: { type: Number, default: 0 }, // Selling Price
+    
+    // ✅ STOCK AND UNIT
+    stock: { type: Number, default: 0 }, 
+    unit: { type: String, default: "Piece" }, // ✅ Added Unit (Packet/Box/Piece)
+
     description: { type: String, trim: true },
-    tagline: { type: String, trim: true }, // ✅ Tagline field
-    packSize: { type: String, trim: true }, // ✅ Pack Size field
+    tagline: { type: String, trim: true },
+    packSize: { type: String, trim: true },
     images: [String],
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
     bulkPricing: [

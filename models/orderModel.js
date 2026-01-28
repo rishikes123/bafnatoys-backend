@@ -10,6 +10,10 @@ const orderItemSchema = new mongoose.Schema(
     },
     name: { type: String, required: true },
     qty: { type: Number, required: true },
+    
+    // ✅ UNIT ADDED (Display ke liye zaroori hai: Packet/Box/Piece)
+    unit: { type: String, default: "Piece" }, 
+
     innerQty: { type: Number, required: true },
     inners: { type: Number, required: true },
     price: { type: Number, required: true },
@@ -75,7 +79,7 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
     },
 
-    /* ✅ SHIPPING INTEGRATION FIELDS ADDED */
+    /* ✅ SHIPPING INTEGRATION FIELDS */
     isShipped: { type: Boolean, default: false },
     trackingId: { type: String, default: "" },
     courierName: { type: String, default: "" },

@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
-// axios removed as it is no longer needed for shipping API
 const Order = require("../models/orderModel");
 const Setting = require("../models/settingModel");
+const Product = require("../models/Product"); // ✅ IMPORT PRODUCT MODEL (Very Important)
 
 /**
  * @route   GET /api/orders
@@ -140,12 +140,21 @@ router.post("/", async (req, res) => {
 });
 
 /**
+ * @route   PUT /api/orders/:id/status
  * @route   PATCH /api/orders/:id/status
- * @desc    Update order status (Admin)
+ * @desc    Update order status (Admin) & Reduce Stock on Delivery
  */
-router.patch("/:id/status", async (req, res) => {
+const updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
+    
+    // Normalize status (Title Case) e.g., "delivered" -> "Delivered"
+    if (!status) return res.status(400).json({ message: "Status is required" });
+    
+    // Convert to lowercase for comparison, but store as needed (usually lowercase or Title Case in your DB)
+    // Assuming your DB enum is ["pending", "processing", "shipped", "delivered", "cancelled"] (lowercase) based on your model
+    const newStatus = status.toLowerCase(); 
+
     const allowedStatuses = [
       "pending",
       "processing",
@@ -154,29 +163,58 @@ router.patch("/:id/status", async (req, res) => {
       "cancelled",
     ];
 
-    if (!status || !allowedStatuses.includes(status)) {
-      return res.status(400).json({ message: "Invalid or missing status" });
+    if (!allowedStatuses.includes(newStatus)) {
+      return res.status(400).json({ message: "Invalid status value" });
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true }
-    )
-      .populate(
-        "customerId",
-        "firmName shopName otpMobile city state zip visitingCardUrl"
-      )
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // ✅ STOCK REDUCTION LOGIC
+    // Agar Naya Status "delivered" hai aur Purana "delivered" nahi tha
+    if (newStatus === "delivered" && order.status !== "delivered") {
+        if (order.items && Array.isArray(order.items)) {
+            for (const item of order.items) {
+                // Item schema ke hisaab se ID 'productId' field mein hai
+                const productId = item.productId?._id || item.productId;
+                const qty = Number(item.qty) || 0;
+
+                if (productId && qty > 0) {
+                    // 🔻 Stock Minus karo
+                    await Product.findByIdAndUpdate(productId, { 
+                        $inc: { stock: -qty } 
+                    });
+                }
+            }
+        }
+        order.isDelivered = true;
+        order.deliveredAt = Date.now();
+    }
+
+    // Agar Cancelled ho raha hai, to Stock wapas add kar sakte hain (Optional logic)
+    // if (newStatus === "cancelled" && order.status !== "cancelled") { ... increment stock ... }
+
+    // Update Status
+    order.status = newStatus;
+    const updatedOrder = await order.save();
+
+    // Populate for response
+    const populatedOrder = await Order.findById(updatedOrder._id)
+      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
       .lean();
 
-    if (!order) return res.status(404).json({ message: "Order not found" });
-    res.json(order);
+    res.json(populatedOrder);
   } catch (err) {
+    console.error("Status Update Error:", err);
     res.status(500).json({
       message: err.message || "Server error while updating status",
     });
   }
-});
+};
+
+// Apply same handler for both PUT and PATCH
+router.put("/:id/status", updateOrderStatus);
+router.patch("/:id/status", updateOrderStatus);
 
 /**
  * @route   DELETE /api/orders/:id
