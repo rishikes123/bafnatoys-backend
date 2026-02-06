@@ -1,8 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const Order = require("../models/orderModel");
-const Setting = require("../models/settingModel");
-const Product = require("../models/Product"); // ✅ IMPORT PRODUCT MODEL (Very Important)
+// ✅ CORRECTED: Ab ye bina 's' wali file ko point kar raha hai
+const Setting = require("../models/settingModel"); 
+const Product = require("../models/Product"); 
 
 /**
  * @route   GET /api/orders
@@ -151,8 +152,7 @@ const updateOrderStatus = async (req, res) => {
     // Normalize status (Title Case) e.g., "delivered" -> "Delivered"
     if (!status) return res.status(400).json({ message: "Status is required" });
     
-    // Convert to lowercase for comparison, but store as needed (usually lowercase or Title Case in your DB)
-    // Assuming your DB enum is ["pending", "processing", "shipped", "delivered", "cancelled"] (lowercase) based on your model
+    // Convert to lowercase for comparison
     const newStatus = status.toLowerCase(); 
 
     const allowedStatuses = [
@@ -190,9 +190,6 @@ const updateOrderStatus = async (req, res) => {
         order.isDelivered = true;
         order.deliveredAt = Date.now();
     }
-
-    // Agar Cancelled ho raha hai, to Stock wapas add kar sakte hain (Optional logic)
-    // if (newStatus === "cancelled" && order.status !== "cancelled") { ... increment stock ... }
 
     // Update Status
     order.status = newStatus;

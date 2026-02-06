@@ -15,4 +15,5 @@ const settingSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-module.exports = mongoose.model("Setting", settingSchema);
+// ✅ FIXED: Ye check karega agar model pehle se bana hai, taaki crash na ho
+module.exports = mongoose.models.Setting || mongoose.model("Setting", settingSchema);
