@@ -12,30 +12,29 @@ const app = express();
 /* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
 
-/* --------------------------- CORS CONFIG ---------------------------- */
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  process.env.ADMIN_URL,
-  "https://bafnatoys.com",
-  "https://admin.bafnatoys.com",
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
-
+/* --------------------------- CORS CONFIG (FINAL) ---------------------------- */
+/*
+  ✅ Allows:
+  - bafnatoys.com
+  - admin.bafnatoys.com
+  - ALL vercel preview URLs
+  - localhost (dev)
+*/
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
 
       if (
-        allowedOrigins.some((o) => origin && origin.startsWith(o)) ||
-        origin.includes("localhost")
+        origin.includes("localhost") ||
+        origin.endsWith(".vercel.app") ||
+        origin.endsWith("bafnatoys.com")
       ) {
-        callback(null, true);
-      } else {
-        console.log("❌ CORS blocked:", origin);
-        callback(new Error("Not allowed by CORS"));
+        return callback(null, true);
       }
+
+      console.log("❌ CORS blocked:", origin);
+      callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
   })
@@ -50,16 +49,13 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ====================================================================
-   ✅ FINAL SEO + WHATSAPP PREVIEW ROUTE
+   ✅ SEO + WHATSAPP PREVIEW ROUTE
    ==================================================================== */
 app.get("/product/:id", async (req, res) => {
-  // Point to frontend build index.html
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
 
   try {
     const product = await Product.findById(req.params.id);
-    
-    // Read the index.html file
     let html = fs.readFileSync(indexPath, "utf8");
 
     if (product) {
@@ -68,45 +64,39 @@ app.get("/product/:id", async (req, res) => {
         ? product.description.substring(0, 150)
         : `Buy ${product.name} at wholesale prices`;
 
-      // ✅ IMAGE MUST BE PUBLIC & HTTPS
       let image = "https://bafnatoys.com/logo.webp";
-
-      if (product.images && product.images.length > 0) {
+      if (product.images?.length) {
         const img = product.images[0];
         image = img.startsWith("http")
           ? img
           : `https://bafnatoys.com/${img.replace(/^\/+/, "")}`;
       }
 
-      // Inject Meta Tags for SEO/WhatsApp
       html = html
         .replace(/<title>.*<\/title>/, `<title>${title}</title>`)
         .replace(
           "</head>",
           `
-            <meta property="og:site_name" content="Bafna Toys" />
-            <meta property="og:title" content="${title}" />
-            <meta property="og:description" content="${description}" />
-            <meta property="og:image" content="${image}" />
-            <meta property="og:image:width" content="600" />
-            <meta property="og:image:height" content="600" />
-            <meta property="og:type" content="product" />
-            <meta property="og:url" content="https://bafnatoys.com/product/${product._id}" />
-            <meta name="twitter:card" content="summary_large_image" />
-            <meta name="twitter:image" content="${image}" />
-            </head>`
+          <meta property="og:site_name" content="Bafna Toys" />
+          <meta property="og:title" content="${title}" />
+          <meta property="og:description" content="${description}" />
+          <meta property="og:image" content="${image}" />
+          <meta property="og:image:width" content="600" />
+          <meta property="og:image:height" content="600" />
+          <meta property="og:type" content="product" />
+          <meta property="og:url" content="https://bafnatoys.com/product/${product._id}" />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:image" content="${image}" />
+          </head>`
         );
     }
 
     res.send(html);
   } catch (err) {
-    console.error("❌ SEO / OG ERROR:", err);
-    // Fallback to normal index.html if error
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-    } else {
-        res.status(500).send("Server Error: Frontend build not found");
-    }
+    console.error("❌ SEO ERROR:", err);
+    fs.existsSync(indexPath)
+      ? res.sendFile(indexPath)
+      : res.status(500).send("Frontend build not found");
   }
 });
 
@@ -127,10 +117,7 @@ app.use("/api/shipping-rules", require("./routes/settings"));
 app.use("/api/shipping", require("./routes/shippingRoutes"));
 app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/discount-rules", require("./routes/discountRoutes"));
-
-// ✅ NEW: Traffic Analytics Route
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
-
 app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
@@ -139,17 +126,13 @@ app.get("/api/test", (_req, res) => {
 });
 
 /* ------------------------- FRONTEND SERVE ---------------------------- */
-// Serve static assets from frontend build
 app.use(express.static(path.join(__dirname, "../frontend/dist")));
 
-// Handle React Routing, return index.html for all unknown routes
 app.get("*", (req, res) => {
   const indexFile = path.resolve(__dirname, "../frontend/dist/index.html");
-  if (fs.existsSync(indexFile)) {
-      res.sendFile(indexFile);
-  } else {
-      res.status(404).send("Frontend build not found. Please run 'npm run build' in frontend folder.");
-  }
+  fs.existsSync(indexFile)
+    ? res.sendFile(indexFile)
+    : res.status(404).send("Frontend build not found");
 });
 
 /* ----------------------- ERROR HANDLERS ------------------------------ */
