@@ -11,7 +11,7 @@ const orderItemSchema = new mongoose.Schema(
     name: { type: String, required: true },
     qty: { type: Number, required: true },
     
-    // ✅ UNIT ADDED (Display ke liye zaroori hai: Packet/Box/Piece)
+    // ✅ UNIT
     unit: { type: String, default: "Piece" }, 
 
     innerQty: { type: Number, required: true },
@@ -75,8 +75,15 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "processing", "shipped", "delivered", "cancelled"],
+      // Added 'returned' to enum to handle full return lifecycle
+      enum: ["pending", "processing", "shipped", "delivered", "cancelled", "returned"],
       default: "pending",
+    },
+
+    // ✅ FIELD TO TRACK WHO CANCELLED (Customer or Admin)
+    cancelledBy: { 
+      type: String, // Value will be "Customer" or "Admin"
+      default: null 
     },
 
     /* ✅ SHIPPING INTEGRATION FIELDS */
@@ -88,6 +95,32 @@ const orderSchema = new mongoose.Schema(
       type: shippingAddressSchema,
       required: true,
     },
+
+    /* ============================================================
+       ✅ RETURN REQUEST SYSTEM (B2B Rules)
+       Only for Damaged/Wrong Product + Image/Video Uploads
+    ============================================================ */
+    returnRequest: {
+      isRequested: { type: Boolean, default: false }, // Filter karne ke liye easy hoga
+      status: { 
+        type: String, 
+        enum: ['Pending', 'Approved', 'Rejected'], 
+        default: 'Pending' 
+      },
+      reason: { 
+        type: String, 
+        // Sirf ye do reasons allowed hain strict B2B rules ke hisab se
+        enum: ['Damaged Product', 'Wrong Product'] 
+      },
+      description: { type: String }, // User detail me likh sake kya damage hai
+      
+      // Cloudinary URLs store karne ke liye
+      proofImages: [{ type: String }], // Multiple images allowed
+      proofVideo: { type: String },    // Single video URL
+      
+      adminComment: { type: String }, // Admin rejection/approval reason likh sake
+      requestDate: { type: Date }
+    }
   },
   { timestamps: true }
 );
@@ -109,4 +142,5 @@ orderSchema.pre("validate", function (next) {
   next();
 });
 
+// Check if model already exists to prevent overwrite error in some environments
 module.exports = mongoose.models.Order || mongoose.model("Order", orderSchema);
