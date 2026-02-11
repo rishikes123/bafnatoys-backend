@@ -2,12 +2,11 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const slugify = require("slugify");
-const Category = require("../models/categoryModel.js");
 const cloudinary = require("../config/cloudinary");
 const multer = require("multer");
 
-// 👇 IMPORT HOMECONFIG
-const HomeConfig = require("../models/homeConfigModel.js"); 
+// 👇 IMPORT HOMECONFIG + PRODUCT
+const HomeConfig = require("../models/homeConfigModel.js");
 const Product = require("../models/Product.js");
 
 // 🧠 Multer setup
@@ -19,84 +18,74 @@ const upload = multer({ storage });
 ================================================================== */
 async function attachDealsToProducts(productsData) {
   try {
-    // 1. Array check
     const isArray = Array.isArray(productsData);
-    let products = isArray ? productsData : [productsData];
+    const products = isArray ? productsData : [productsData];
 
-    // 2. Fetch Active Deals
+    // ✅ Fetch config once
     const config = await HomeConfig.findOne().lean();
-    const dealMap = {}; 
+    const dealMap = {};
 
-    if (config && config.hotDealsItems) {
+    if (config?.hotDealsItems?.length) {
       const now = new Date();
+
       config.hotDealsItems.forEach((item) => {
-        // Deal must be enabled, have a product ID, and end time must be in the future
-        if (item.enabled && item.productId && item.endsAt) {
+        if (item?.enabled && item?.productId && item?.endsAt) {
           const end = new Date(item.endsAt);
-          if (end > now) {
-             dealMap[item.productId.toString()] = item; 
-          }
+          if (end > now) dealMap[item.productId.toString()] = item;
         }
       });
     }
 
-    // 3. Apply Logic
     const updatedProducts = products.map((prod) => {
-      const p = prod._doc ? prod.toObject() : { ...prod }; 
+      const p = prod?._doc ? prod.toObject() : { ...prod };
+      if (!p?._id) return p;
+
       const prodId = p._id.toString();
       const deal = dealMap[prodId];
 
       if (deal) {
-        // A. Timer Attach
+        // ✅ Timer
         p.sale_end_time = deal.endsAt;
 
-        // B. Discount Logic
-        if (deal.discountType && deal.discountType !== "NONE" && deal.discountValue > 0) {
-           
-           // 🔥 IMPORTANT: Agar Deal Active hai, to Bulk Pricing hata do.
-           // Taaki Frontend sirf Discounted Price dikhaye.
-           p.bulkPricing = [];
+        // ✅ Discount
+        if (
+          deal.discountType &&
+          deal.discountType !== "NONE" &&
+          Number(deal.discountValue) > 0
+        ) {
+          // Deal active => bulk pricing hide (response only)
+          p.bulkPricing = [];
 
-           // Logic: Agar MRP pehle se set nahi hai ya Price se kam hai, 
-           // toh Current Price ko MRP bana do.
-           if (!p.mrp || p.mrp <= p.price) {
-               p.mrp = p.price; 
-           }
+          // mrp set
+          if (!p.mrp || p.mrp <= p.price) {
+            p.mrp = p.price;
+          }
 
-           // 🔥 CALCULATION FIX: Discount 'p.price' (99) par lagega
-           let basePrice = p.price;
-           let newPrice = basePrice;
+          const basePrice = Number(p.price) || 0;
+          let newPrice = basePrice;
 
-           // Handle Case Sensitivity (Just in case)
-           const dType = deal.discountType.toUpperCase();
+          const dType = String(deal.discountType).toUpperCase();
 
-           if (dType === "PERCENT") {
-               // Calculate % Off
-               const discountAmount = (basePrice * deal.discountValue) / 100;
-               newPrice = basePrice - discountAmount;
-           } else if (dType === "FLAT") {
-               // Flat Amount Off
-               newPrice = basePrice - deal.discountValue;
-           }
+          if (dType === "PERCENT") {
+            const discountAmount = (basePrice * Number(deal.discountValue)) / 100;
+            newPrice = basePrice - discountAmount;
+          } else if (dType === "FLAT") {
+            newPrice = basePrice - Number(deal.discountValue);
+          }
 
-           // Price kabhi negative nahi hona chahiye
-           p.price = Math.max(0, Math.round(newPrice));
+          p.price = Math.max(0, Math.round(newPrice));
         }
       }
+
       return p;
     });
 
     return isArray ? updatedProducts : updatedProducts[0];
-
   } catch (err) {
-    console.error("Error attaching deals:", err);
-    return productsData; 
+    console.error("❌ Error attaching deals:", err);
+    return productsData;
   }
 }
-
-/* ==================================================================
-   ROUTES START HERE
-================================================================== */
 
 /* ------------------------------------------------------------------
 🔍 1. SEARCH PRODUCTS
@@ -109,12 +98,12 @@ router.get("/search/all", async (req, res) => {
     const products = await Product.find({
       $or: [
         { name: { $regex: query, $options: "i" } },
-        { sku: { $regex: query, $options: "i" } }, 
+        { sku: { $regex: query, $options: "i" } },
       ],
     })
-    .select("name sku images _id category price mrp stock slug featured") 
-    .limit(20)
-    .lean();
+      .select("name sku images _id category price mrp stock slug featured")
+      .limit(20)
+      .lean();
 
     const finalProducts = await attachDealsToProducts(products);
     res.json(finalProducts);
@@ -150,6 +139,7 @@ router.get("/:id/related", async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: "Invalid ID" });
     }
+
     const prod = await Product.findById(req.params.id);
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
@@ -170,13 +160,14 @@ router.get("/:id/related", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 4. GET SINGLE PRODUCT
+✅ 4. GET SINGLE PRODUCT (slug or id)
 ------------------------------------------------------------------ */
-router.get("/:slugOrId", async (req, res) => {
+router.get("/:slugOrId", async (req, res, next) => {
   try {
     const { slugOrId } = req.params;
-    
-    if (slugOrId === "search" || slugOrId === "reorder") return res.next();
+
+    // ✅ FIX: res.next() nahi hota, next() hota hai
+    if (slugOrId === "search" || slugOrId === "reorder") return next();
 
     const query = mongoose.Types.ObjectId.isValid(slugOrId)
       ? { _id: slugOrId }
@@ -192,12 +183,10 @@ router.get("/:slugOrId", async (req, res) => {
 
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    // 🔥 Timer + Discount Call
     const finalProd = await attachDealsToProducts(prod);
-    
-    // 🔥 Nested: Related Products ke andar bhi Deals lagao
-    if (finalProd.relatedProducts && finalProd.relatedProducts.length > 0) {
-        finalProd.relatedProducts = await attachDealsToProducts(finalProd.relatedProducts);
+
+    if (finalProd.relatedProducts?.length) {
+      finalProd.relatedProducts = await attachDealsToProducts(finalProd.relatedProducts);
     }
 
     res.json(finalProd);
@@ -214,7 +203,7 @@ router.post("/", upload.array("images", 5), async (req, res) => {
   try {
     let imageUrls = [];
 
-    if (req.files && req.files.length > 0) {
+    if (req.files?.length) {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
@@ -229,7 +218,7 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 
     if (req.body.images) {
       const bodyImages = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
-      const validUrls = bodyImages.filter(url => url && typeof url === 'string');
+      const validUrls = bodyImages.filter((url) => url && typeof url === "string");
       imageUrls = [...imageUrls, ...validUrls];
     }
 
@@ -259,10 +248,15 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 router.put("/reorder", async (req, res) => {
   try {
     const { products } = req.body;
-    if (!Array.isArray(products) || products.length === 0) return res.status(400).json({ message: "Invalid" });
+    if (!Array.isArray(products) || !products.length) {
+      return res.status(400).json({ message: "Invalid" });
+    }
 
     const bulkOps = products.map((item) => ({
-      updateOne: { filter: { _id: item._id }, update: { $set: { order: item.order } } },
+      updateOne: {
+        filter: { _id: item._id },
+        update: { $set: { order: item.order } },
+      },
     }));
 
     await Product.bulkWrite(bulkOps);
@@ -280,19 +274,23 @@ router.put("/:id/move", async (req, res) => {
     const { direction } = req.body;
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid ID" });
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid ID" });
+    }
 
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Not found" });
 
     const categoryId = product.category;
-    let products = await Product.find({ category: categoryId }).sort({ order: 1 });
-    const index = products.findIndex((p) => p._id.toString() === id.toString());
+    const products = await Product.find({ category: categoryId }).sort({ order: 1 });
 
+    const index = products.findIndex((p) => p._id.toString() === id.toString());
     if (index === -1) return res.status(400).json({ message: "Not found in category" });
 
     const swapIndex = direction === "up" ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= products.length) return res.status(400).json({ message: "Boundary reached" });
+    if (swapIndex < 0 || swapIndex >= products.length) {
+      return res.status(400).json({ message: "Boundary reached" });
+    }
 
     [products[index], products[swapIndex]] = [products[swapIndex], products[index]];
 
@@ -313,10 +311,10 @@ router.put("/:id/move", async (req, res) => {
 ------------------------------------------------------------------ */
 router.put("/:id", upload.array("images", 5), async (req, res) => {
   try {
-    let updateData = { ...req.body };
-    let newImageUrls = [];
+    const updateData = { ...req.body };
+    const newImageUrls = [];
 
-    if (req.files?.length > 0) {
+    if (req.files?.length) {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
@@ -329,20 +327,26 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
       }
     }
 
-    if (newImageUrls.length > 0) {
-        let bodyImages = req.body.images ? (Array.isArray(req.body.images) ? req.body.images : [req.body.images]) : [];
-        updateData.images = [...bodyImages, ...newImageUrls];
-    } else {
-        if (req.body.images !== undefined) {
-           updateData.images = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
-        }
+    if (newImageUrls.length) {
+      const bodyImages = req.body.images
+        ? Array.isArray(req.body.images)
+          ? req.body.images
+          : [req.body.images]
+        : [];
+      updateData.images = [...bodyImages, ...newImageUrls];
+    } else if (req.body.images !== undefined) {
+      updateData.images = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
     }
 
     if (updateData.name) {
       updateData.slug = slugify(updateData.name, { lower: true, strict: true });
     }
 
-    const prod = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
+    const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
     res.json(prod);
