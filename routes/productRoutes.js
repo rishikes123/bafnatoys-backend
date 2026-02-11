@@ -6,77 +6,100 @@ const Category = require("../models/categoryModel.js");
 const cloudinary = require("../config/cloudinary");
 const multer = require("multer");
 
+// 👇 IMPORT HOMECONFIG
+const HomeConfig = require("../models/homeConfigModel.js"); 
+const Product = require("../models/Product.js");
+
 // 🧠 Multer setup
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-/* ------------------------------------------------------------------
-📦 Updated Product Schema (with tagline, packSize, STOCK & UNIT)
------------------------------------------------------------------- */
-const productSchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true, trim: true },
-    sku: { type: String, required: true, unique: true, trim: true },
-    mrp: { type: Number, default: 0 },
-    price: { type: Number, default: 0 },
-    
-    // ✅ STOCK & UNIT ADDED
-    stock: { type: Number, default: 0 },
-    unit: { type: String, default: "Piece" }, // ✅ Added Unit
-
-    description: { type: String, trim: true },
-    tagline: { type: String, trim: true },
-    packSize: { type: String, trim: true },
-    category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
-    images: [{ type: String }], // Array of image URLs
-    bulkPricing: [
-      {
-        inner: String,
-        qty: { type: Number, min: 1 },
-        price: { type: Number, min: 0 },
-      },
-    ],
-    taxFields: { type: [String], default: [] },
-    order: { type: Number, default: 0 },
-    slug: { type: String, unique: true, trim: true },
-    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
-  },
-  { timestamps: true }
-);
-
-/* ------------------------------------------------------------------
-✨ Auto Slug + Order Before Save
------------------------------------------------------------------- */
-productSchema.pre("save", async function (next) {
+/* ==================================================================
+   🔥 MAGIC FUNCTION: ATTACH DEALS & APPLY DISCOUNT
+================================================================== */
+async function attachDealsToProducts(productsData) {
   try {
-    if (this.isModified("name") || !this.slug) {
-      this.slug = slugify(this.name, { lower: true, strict: true });
+    // 1. Array check
+    const isArray = Array.isArray(productsData);
+    let products = isArray ? productsData : [productsData];
+
+    // 2. Fetch Active Deals
+    const config = await HomeConfig.findOne().lean();
+    const dealMap = {}; 
+
+    if (config && config.hotDealsItems) {
+      const now = new Date();
+      config.hotDealsItems.forEach((item) => {
+        // Deal must be enabled, have a product ID, and end time must be in the future
+        if (item.enabled && item.productId && item.endsAt) {
+          const end = new Date(item.endsAt);
+          if (end > now) {
+             dealMap[item.productId.toString()] = item; 
+          }
+        }
+      });
     }
 
-    if (this.isNew) {
-      const last = await mongoose
-        .model("Product")
-        .findOne({ category: this.category })
-        .sort({ order: -1 });
-      this.order = last ? last.order + 1 : 1;
-    }
+    // 3. Apply Logic
+    const updatedProducts = products.map((prod) => {
+      const p = prod._doc ? prod.toObject() : { ...prod }; 
+      const prodId = p._id.toString();
+      const deal = dealMap[prodId];
 
-    next();
+      if (deal) {
+        // A. Timer Attach
+        p.sale_end_time = deal.endsAt;
+
+        // B. Discount Logic
+        if (deal.discountType && deal.discountType !== "NONE" && deal.discountValue > 0) {
+           
+           // 🔥 IMPORTANT: Agar Deal Active hai, to Bulk Pricing hata do.
+           // Taaki Frontend sirf Discounted Price dikhaye.
+           p.bulkPricing = [];
+
+           // Logic: Agar MRP pehle se set nahi hai ya Price se kam hai, 
+           // toh Current Price ko MRP bana do.
+           if (!p.mrp || p.mrp <= p.price) {
+               p.mrp = p.price; 
+           }
+
+           // 🔥 CALCULATION FIX: Discount 'p.price' (99) par lagega
+           let basePrice = p.price;
+           let newPrice = basePrice;
+
+           // Handle Case Sensitivity (Just in case)
+           const dType = deal.discountType.toUpperCase();
+
+           if (dType === "PERCENT") {
+               // Calculate % Off
+               const discountAmount = (basePrice * deal.discountValue) / 100;
+               newPrice = basePrice - discountAmount;
+           } else if (dType === "FLAT") {
+               // Flat Amount Off
+               newPrice = basePrice - deal.discountValue;
+           }
+
+           // Price kabhi negative nahi hona chahiye
+           p.price = Math.max(0, Math.round(newPrice));
+        }
+      }
+      return p;
+    });
+
+    return isArray ? updatedProducts : updatedProducts[0];
+
   } catch (err) {
-    console.error("Error in pre-save:", err);
-    next(err);
+    console.error("Error attaching deals:", err);
+    return productsData; 
   }
-});
-
-const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
+}
 
 /* ==================================================================
    ROUTES START HERE
 ================================================================== */
 
 /* ------------------------------------------------------------------
-🔍 1. SEARCH PRODUCTS (MUST BE AT THE TOP)
-   URL: /api/products/search/all?query=abc
+🔍 1. SEARCH PRODUCTS
 ------------------------------------------------------------------ */
 router.get("/search/all", async (req, res) => {
   try {
@@ -85,14 +108,16 @@ router.get("/search/all", async (req, res) => {
 
     const products = await Product.find({
       $or: [
-        { name: { $regex: query, $options: "i" } }, // Name match (case-insensitive)
-        { sku: { $regex: query, $options: "i" } },  // SKU match
+        { name: { $regex: query, $options: "i" } },
+        { sku: { $regex: query, $options: "i" } }, 
       ],
     })
-    .select("name sku images _id category") // Return only necessary fields
-    .limit(10);
+    .select("name sku images _id category price mrp stock slug featured") 
+    .limit(20)
+    .lean();
 
-    res.json(products);
+    const finalProducts = await attachDealsToProducts(products);
+    res.json(finalProducts);
   } catch (err) {
     console.error("❌ Search error:", err);
     res.status(500).json({ message: "Search failed" });
@@ -100,14 +125,17 @@ router.get("/search/all", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 2. GET all products
+✅ 2. GET ALL PRODUCTS
 ------------------------------------------------------------------ */
 router.get("/", async (_req, res) => {
   try {
     const products = await Product.find()
       .populate("category", "name")
-      .sort({ order: 1 });
-    res.json(products);
+      .sort({ order: 1 })
+      .lean();
+
+    const finalProducts = await attachDealsToProducts(products);
+    res.json(finalProducts);
   } catch (err) {
     console.error("❌ Fetch error:", err);
     res.status(500).json({ message: "Failed to fetch products" });
@@ -115,7 +143,7 @@ router.get("/", async (_req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 3. GET Related Products (Must be before generic /:slugOrId)
+✅ 3. GET Related Products
 ------------------------------------------------------------------ */
 router.get("/:id/related", async (req, res) => {
   try {
@@ -130,9 +158,11 @@ router.get("/:id/related", async (req, res) => {
       _id: { $ne: prod._id },
     })
       .limit(6)
-      .populate("category", "name");
+      .populate("category", "name")
+      .lean();
 
-    res.json(related);
+    const finalRelated = await attachDealsToProducts(related);
+    res.json(finalRelated);
   } catch (err) {
     console.error("❌ Related fetch error:", err);
     res.status(500).json({ message: "Failed to fetch related products" });
@@ -140,13 +170,12 @@ router.get("/:id/related", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 4. GET single product by slug or ID (GENERIC ROUTE - KEEP LOWER)
+✅ 4. GET SINGLE PRODUCT
 ------------------------------------------------------------------ */
 router.get("/:slugOrId", async (req, res) => {
   try {
     const { slugOrId } = req.params;
     
-    // Prevent "search" or "reorder" from being treated as an ID
     if (slugOrId === "search" || slugOrId === "reorder") return res.next();
 
     const query = mongoose.Types.ObjectId.isValid(slugOrId)
@@ -158,11 +187,20 @@ router.get("/:slugOrId", async (req, res) => {
       .populate({
         path: "relatedProducts",
         populate: { path: "category", select: "name" },
-      });
+      })
+      .lean();
 
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    res.json(prod);
+    // 🔥 Timer + Discount Call
+    const finalProd = await attachDealsToProducts(prod);
+    
+    // 🔥 Nested: Related Products ke andar bhi Deals lagao
+    if (finalProd.relatedProducts && finalProd.relatedProducts.length > 0) {
+        finalProd.relatedProducts = await attachDealsToProducts(finalProd.relatedProducts);
+    }
+
+    res.json(finalProd);
   } catch (err) {
     console.error("❌ Single fetch error:", err);
     res.status(400).json({ message: "Invalid product ID or slug" });
@@ -170,13 +208,12 @@ router.get("/:slugOrId", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 5. CREATE product (🔥 Handles Files AND URLs)
+✅ 5. CREATE product
 ------------------------------------------------------------------ */
 router.post("/", upload.array("images", 5), async (req, res) => {
   try {
     let imageUrls = [];
 
-    // 🔹 1. If Files are present (Direct upload via Multer)
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
@@ -190,13 +227,8 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       }
     }
 
-    // 🔹 2. If URLs are present (Frontend pre-upload)
     if (req.body.images) {
-      const bodyImages = Array.isArray(req.body.images)
-        ? req.body.images
-        : [req.body.images];
-      
-      // Filter out empty strings/nulls
+      const bodyImages = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
       const validUrls = bodyImages.filter(url => url && typeof url === 'string');
       imageUrls = [...imageUrls, ...validUrls];
     }
@@ -205,20 +237,18 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 
     const prod = new Product({
       ...req.body,
-      images: imageUrls, // ✅ Merged Images
+      images: imageUrls,
       slug,
       tagline: req.body.tagline || "",
       packSize: req.body.packSize || "",
-      stock: req.body.stock || 0, // ✅ Ensure stock is captured
-      unit: req.body.unit || "Piece", // ✅ Ensure unit is captured
+      stock: req.body.stock || 0,
+      unit: req.body.unit || "Piece",
       relatedProducts: req.body.relatedProducts || [],
     });
 
     await prod.save();
-    console.log("✅ Product created successfully:", prod.name);
     res.status(201).json(prod);
   } catch (err) {
-    console.error("❌ Create error:", err);
     res.status(400).json({ message: err.message || "Failed to create product" });
   }
 });
@@ -229,49 +259,40 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 router.put("/reorder", async (req, res) => {
   try {
     const { products } = req.body;
-    if (!Array.isArray(products) || products.length === 0)
-      return res.status(400).json({ message: "Invalid data format" });
+    if (!Array.isArray(products) || products.length === 0) return res.status(400).json({ message: "Invalid" });
 
     const bulkOps = products.map((item) => ({
-      updateOne: {
-        filter: { _id: item._id },
-        update: { $set: { order: item.order } },
-      },
+      updateOne: { filter: { _id: item._id }, update: { $set: { order: item.order } } },
     }));
 
     await Product.bulkWrite(bulkOps);
-    console.log("✅ Product order updated successfully!");
-    res.json({ ok: true, message: "Product order updated successfully!" });
+    res.json({ ok: true, message: "Order updated!" });
   } catch (err) {
-    console.error("❌ Reorder error:", err);
-    res.status(500).json({ message: "Failed to reorder products" });
+    res.status(500).json({ message: "Failed to reorder" });
   }
 });
 
 /* ------------------------------------------------------------------
-✅ 7. MOVE PRODUCT UP / DOWN
+✅ 7. MOVE PRODUCT
 ------------------------------------------------------------------ */
 router.put("/:id/move", async (req, res) => {
   try {
     const { direction } = req.body;
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id))
-      return res.status(400).json({ message: "Invalid product ID" });
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid ID" });
 
     const product = await Product.findById(id);
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    if (!product) return res.status(404).json({ message: "Not found" });
 
     const categoryId = product.category;
     let products = await Product.find({ category: categoryId }).sort({ order: 1 });
     const index = products.findIndex((p) => p._id.toString() === id.toString());
 
-    if (index === -1)
-      return res.status(400).json({ message: "Product not found in category" });
+    if (index === -1) return res.status(400).json({ message: "Not found in category" });
 
     const swapIndex = direction === "up" ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= products.length)
-      return res.status(400).json({ message: "Already at boundary" });
+    if (swapIndex < 0 || swapIndex >= products.length) return res.status(400).json({ message: "Boundary reached" });
 
     [products[index], products[swapIndex]] = [products[swapIndex], products[index]];
 
@@ -280,19 +301,10 @@ router.put("/:id/move", async (req, res) => {
       await products[i].save();
     }
 
-    const updatedCategoryProducts = await Product.find({ category: categoryId })
-      .sort({ order: 1 })
-      .populate("category", "name");
-
-    console.log(`✅ Product moved ${direction}: ${product.name}`);
-    res.json({
-      ok: true,
-      message: `Product moved ${direction} successfully!`,
-      updatedCategoryProducts,
-    });
+    const updatedCategoryProducts = await Product.find({ category: categoryId }).sort({ order: 1 });
+    res.json({ ok: true, message: "Moved", updatedCategoryProducts });
   } catch (err) {
-    console.error("❌ Move product error:", err);
-    res.status(500).json({ message: "Failed to move product" });
+    res.status(500).json({ message: "Failed to move" });
   }
 });
 
@@ -304,7 +316,6 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
     let updateData = { ...req.body };
     let newImageUrls = [];
 
-    // 1. Files Upload Logic
     if (req.files?.length > 0) {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
@@ -318,15 +329,10 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
       }
     }
 
-    // 2. Handle Existing/Body Images
     if (newImageUrls.length > 0) {
-        let bodyImages = [];
-        if (req.body.images) {
-            bodyImages = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
-        }
+        let bodyImages = req.body.images ? (Array.isArray(req.body.images) ? req.body.images : [req.body.images]) : [];
         updateData.images = [...bodyImages, ...newImageUrls];
     } else {
-        // Handle case where no new files, but image array might be updated (reordering/deleting)
         if (req.body.images !== undefined) {
            updateData.images = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
         }
@@ -336,18 +342,12 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
       updateData.slug = slugify(updateData.name, { lower: true, strict: true });
     }
 
-    const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-      runValidators: true,
-    });
-
+    const prod = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    console.log("✅ Product updated:", prod.name);
     res.json(prod);
   } catch (err) {
-    console.error("❌ Update error:", err);
-    res.status(400).json({ message: err.message || "Failed to update product" });
+    res.status(400).json({ message: err.message });
   }
 });
 
@@ -358,12 +358,9 @@ router.delete("/:id", async (req, res) => {
   try {
     const prod = await Product.findByIdAndDelete(req.params.id);
     if (!prod) return res.status(404).json({ message: "Product not found" });
-
-    console.log("🗑️ Deleted product:", prod.name);
-    res.json({ message: "Product deleted successfully" });
+    res.json({ message: "Deleted" });
   } catch (err) {
-    console.error("❌ Delete error:", err);
-    res.status(400).json({ message: "Invalid product ID" });
+    res.status(400).json({ message: "Invalid ID" });
   }
 });
 

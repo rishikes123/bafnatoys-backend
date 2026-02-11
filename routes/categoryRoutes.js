@@ -1,9 +1,13 @@
 const express = require("express");
 const router = express.Router();
-const Category = require("../models/categoryModel.js"); // File path check kar lena
+const Category = require("../models/categoryModel.js"); 
 const cloudinary = require("cloudinary").v2;
 const multer = require("multer");
 const streamifier = require("streamifier");
+
+// 👇 YEH 2 LINE ADD KAREIN (Products aur Timer lane ke liye)
+const Product = require("../models/Product.js");
+const HomeConfig = require("../models/homeConfigModel.js");
 
 // 1️⃣ Cloudinary Config
 cloudinary.config({
@@ -19,7 +23,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const uploadToCloudinary = (buffer) => {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "categories" }, // Cloudinary folder name
+      { folder: "categories" },
       (error, result) => {
         if (result) resolve(result);
         else reject(error);
@@ -35,7 +39,11 @@ const getNextOrder = async () => {
   return last ? last.order + 1 : 1;
 };
 
-// ✅ GET All Categories
+// ==========================================
+// ✅ ROUTES START
+// ==========================================
+
+// 1. GET All Categories (Menu ke liye)
 router.get("/", async (req, res) => {
   try {
     const cats = await Category.find().sort({ order: 1 });
@@ -45,26 +53,70 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ✅ CREATE Category (With Image)
+// ⭐ 2. GET SINGLE CATEGORY BY SLUG (WITH PRODUCTS & TIMER) - NEW CODE
+router.get("/:slug", async (req, res) => {
+  try {
+    // A. Category Dhoondo
+    const category = await Category.findOne({ slug: req.params.slug });
+    if (!category) return res.status(404).json({ message: "Category not found" });
+
+    // B. Products Dhoondo jo is Category ke hain
+    const products = await Product.find({ category: category._id })
+      .sort({ order: 1 })
+      .lean();
+
+    // C. Timer/Deals ka Logic (ProductRoutes jaisa same)
+    const config = await HomeConfig.findOne().lean();
+    const dealMap = {};
+    
+    if (config && config.hotDealsItems) {
+      const now = new Date();
+      config.hotDealsItems.forEach(item => {
+        if (item.enabled && item.productId && item.endsAt) {
+          const end = new Date(item.endsAt);
+          if (end > now) {
+            dealMap[item.productId.toString()] = item.endsAt;
+          }
+        }
+      });
+    }
+
+    // D. Products me Timer Merge karo
+    const productsWithTimer = products.map(p => {
+      if (dealMap[p._id.toString()]) {
+        return { ...p, sale_end_time: dealMap[p._id.toString()] };
+      }
+      return p;
+    });
+
+    // Frontend ko Category Info + Products bhejo
+    res.json({ category, products: productsWithTimer });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+// ✅ CREATE Category
 router.post("/", upload.single("image"), async (req, res) => {
   try {
     const { name } = req.body;
-
-    // Validation
     if (!name) return res.status(400).json({ message: "Category name is required" });
     if (!req.file) return res.status(400).json({ message: "Category image is required" });
 
-    // 1. Check duplicate
     const exists = await Category.findOne({ name });
     if (exists) return res.status(400).json({ message: "Category already exists" });
 
-    // 2. Upload Image
     const result = await uploadToCloudinary(req.file.buffer);
-
-    // 3. Create in DB
     const nextOrder = await getNextOrder();
+    
+    // Slugify logic (simple version)
+    const slug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+
     const cat = new Category({
       name,
+      slug, // Slug save karna zaroori hai
       order: nextOrder,
       image: result.secure_url,
       imageId: result.public_id,
@@ -84,17 +136,16 @@ router.put("/:id", upload.single("image"), async (req, res) => {
     const cat = await Category.findById(req.params.id);
     if (!cat) return res.status(404).json({ message: "Category not found" });
 
-    // Name Update
-    if (req.body.name) cat.name = req.body.name;
+    if (req.body.name) {
+        cat.name = req.body.name;
+        // Update slug if name changes
+        cat.slug = req.body.name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+    }
 
-    // Image Update (Agar nayi file aayi hai)
     if (req.file) {
-      // Old image delete karein
       if (cat.imageId) {
         await cloudinary.uploader.destroy(cat.imageId).catch(() => {});
       }
-      
-      // New image upload karein
       const result = await uploadToCloudinary(req.file.buffer);
       cat.image = result.secure_url;
       cat.imageId = result.public_id;
@@ -114,12 +165,10 @@ router.delete("/:id", async (req, res) => {
     const cat = await Category.findById(req.params.id);
     if (!cat) return res.status(404).json({ message: "Category not found" });
 
-    // Cloudinary se image delete karein
     if (cat.imageId) {
       await cloudinary.uploader.destroy(cat.imageId).catch(() => {});
     }
 
-    // Database se delete karein
     await cat.deleteOne();
     res.json({ message: "Category deleted" });
   } catch (error) {
@@ -127,7 +176,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// ✅ MOVE Category (Order Swap)
+// ✅ MOVE Category
 router.put("/:id/move", async (req, res) => {
   try {
     const { direction } = req.body;
@@ -142,7 +191,6 @@ router.put("/:id/move", async (req, res) => {
 
     if (!target) return res.status(400).json({ message: "Already at boundary" });
 
-    // Swap
     const temp = current.order;
     current.order = target.order;
     target.order = temp;

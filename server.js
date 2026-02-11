@@ -1,3 +1,5 @@
+// server.js ✅ FINAL (Home Builder route added)
+
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -105,6 +107,10 @@ app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
+
+/* ✅ NEW: HOME BUILDER CONFIG ROUTE */
+app.use("/api/home-config", require("./routes/homeConfigRoutes"));
+
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/registrations", require("./routes/registrationRoutes"));
