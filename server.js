@@ -47,8 +47,7 @@ app.use(
       ) {
         return callback(null, true);
       }
-      // console.log("❌ CORS blocked:", origin); // Optional logging
-      callback(null, true); // Allow to prevent blocking bots
+      callback(null, true);
     },
     credentials: true,
   })
@@ -63,88 +62,91 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ====================================================================
-   ✅ FINAL SEO ROUTE (Handles IDs + Slugs + Cloudinary)
+   ✅ FINAL SEO ROUTE (The Placeholder Method)
    ==================================================================== */
 app.get("/product/:id", async (req, res) => {
+  // ✅ Path to your BUILT frontend index.html
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
 
   try {
     const param = req.params.id;
     let product;
 
-    // 🔍 STEP 1: Determine if 'id' is a MongoDB ID or a Slug
+    // 1. Find Product (ID or Slug)
     if (param.match(/^[0-9a-fA-F]{24}$/)) {
-      // It looks like an ID, try finding by ID
       product = await Product.findById(param);
     } 
-    
-    // If not found by ID (or it wasn't an ID), try finding by Slug
     if (!product) {
       product = await Product.findOne({ slug: param });
     }
-
-    // Fallback: Try decoded slug (handles %20 spaces)
     if (!product) {
       product = await Product.findOne({ slug: decodeURIComponent(param) });
     }
 
-    // Read index.html
+    // 2. Read the HTML file
     let html = fs.readFileSync(indexPath, "utf8");
+    
+    // 3. Prepare SEO Tags
+    let seoTags = "";
 
     if (product) {
-      // 📝 STEP 2: Prepare Data
       const title = `${product.name} | Bafna Toys`;
-      const rawDesc = product.description || `Buy ${product.name} at wholesale prices from Bafna Toys.`;
-      // Clean HTML tags and limit length
+      const rawDesc = product.description || `Buy ${product.name} at wholesale prices.`;
       const description = rawDesc.replace(/<[^>]*>?/gm, "").substring(0, 150).trim();
 
-      // 🖼️ STEP 3: Image Logic
-      let image = "https://bafnatoys.com/logo.webp"; // Default
-
+      // Image Logic (Cloudinary Optimization for WhatsApp)
+      let image = "https://bafnatoys.com/logo.webp";
       if (product.images && product.images.length > 0) {
         const imgPath = product.images[0];
-
         if (imgPath.startsWith("http")) {
-          image = imgPath;
-          // Cloudinary Optimization for WhatsApp (Square 600px)
-          if (image.includes("res.cloudinary.com")) {
+           image = imgPath;
+           if (image.includes("res.cloudinary.com")) {
+             // WhatsApp needs 600x600 square image
              image = image.replace("/upload/", "/upload/w_600,h_600,c_pad,b_white,q_auto/");
-          }
+           }
         } else {
-          // Local Upload Support
-          const cleanPath = imgPath.replace(/^\/+/, "");
-          image = `https://bafnatoys.com/${cleanPath.startsWith("uploads/") ? cleanPath : "uploads/" + cleanPath}`;
+           const cleanPath = imgPath.replace(/^\/+/, "");
+           image = `https://bafnatoys.com/${cleanPath.startsWith("uploads/") ? cleanPath : "uploads/" + cleanPath}`;
         }
       }
 
-      // 🔄 STEP 4: Replace Meta Tags using Global Regex
-      
-      // Replace Title
-      html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`);
+      // ✅ GENERATE TAGS (Yeh seedha inject honge)
+      seoTags = `
+        <title>${title}</title>
+        <meta name="description" content="${description}" />
+        <meta property="og:title" content="${title}" />
+        <meta property="og:description" content="${description}" />
+        <meta property="og:image" content="${image}" />
+        <meta property="og:url" content="https://bafnatoys.com/product/${product.slug || product._id}" />
+        <meta property="og:type" content="product" />
+        <meta property="og:site_name" content="Bafna Toys" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="${title}" />
+        <meta name="twitter:image" content="${image}" />
+      `;
+    } else {
+      // Fallback Default Tags
+      seoTags = `
+        <title>Bafna Toys - Wholesale Supplier</title>
+        <meta name="description" content="Best Toy Manufacturer in India" />
+        <meta property="og:image" content="https://bafnatoys.com/logo.webp" />
+        <meta property="og:title" content="Bafna Toys" />
+      `;
+    }
 
-      // Replace Description
-      html = html.replace(/name="description" content="[\s\S]*?"/gi, `name="description" content="${description}"`);
-      html = html.replace(/property="og:description" content="[\s\S]*?"/gi, `property="og:description" content="${description}"`);
-      html = html.replace(/name="twitter:description" content="[\s\S]*?"/gi, `name="twitter:description" content="${description}"`);
-
-      // Replace Image
-      html = html.replace(/property="og:image" content="[\s\S]*?"/gi, `property="og:image" content="${image}"`);
-      html = html.replace(/name="twitter:image" content="[\s\S]*?"/gi, `name="twitter:image" content="${image}"`);
-      
-      // Force replace specific default logo URL just in case
-      html = html.replace("https://bafnatoys.com/logo.webp", image);
-
-      // Replace URL & Title Meta
-      html = html.replace(/property="og:url" content="[\s\S]*?"/gi, `property="og:url" content="https://bafnatoys.com/product/${product.slug || product._id}"`);
-      html = html.replace(/property="og:title" content="[\s\S]*?"/gi, `property="og:title" content="${title}"`);
-      html = html.replace(/name="twitter:title" content="[\s\S]*?"/gi, `name="twitter:title" content="${title}"`);
+    // 4. ✅ SWAP THE PLACEHOLDER
+    // Agar index.html mein placeholder hai toh replace karo, nahi toh <head> ke baad laga do
+    if (html.includes("")) {
+      html = html.replace("", seoTags);
+    } else {
+      // Backup plan: Inject after <head>
+      html = html.replace("<head>", `<head>${seoTags}`);
     }
 
     res.send(html);
 
   } catch (err) {
     console.error("❌ SEO Injection Error:", err);
-    // Return default HTML on error so site still loads
     if (fs.existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
