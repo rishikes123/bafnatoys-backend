@@ -1,27 +1,41 @@
-// server.js ✅ FINAL (Home Builder route added)
-
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const http = require("http"); // ✅ Added for Socket
+const { Server } = require("socket.io"); // ✅ Added for Socket
 const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const Product = require("./models/Product");
 
 const app = express();
 
+/* ------------------------- SOCKET.IO SERVER SETUP ------------------------- */
+const server = http.createServer(app); // Create HTTP server for socket
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Allows all origins for real-time connection
+    methods: ["GET", "POST"]
+  }
+});
+
+let onlineUsersCount = 0;
+
+io.on("connection", (socket) => {
+  onlineUsersCount++;
+  io.emit("updateUserCount", onlineUsersCount); // Emit to all connected clients
+
+  socket.on("disconnect", () => {
+    onlineUsersCount = Math.max(0, onlineUsersCount - 1);
+    io.emit("updateUserCount", onlineUsersCount);
+  });
+});
+
 /* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
 
 /* --------------------------- CORS CONFIG (FINAL) ---------------------------- */
-/*
-  ✅ Allows:
-  - bafnatoys.com
-  - admin.bafnatoys.com
-  - ALL vercel preview URLs
-  - localhost (dev)
-*/
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -107,10 +121,7 @@ app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
-
-/* ✅ NEW: HOME BUILDER CONFIG ROUTE */
 app.use("/api/home-config", require("./routes/homeConfigRoutes"));
-
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/registrations", require("./routes/registrationRoutes"));
@@ -147,6 +158,8 @@ app.use(errorHandler);
 
 /* -------------------------- START SERVER ----------------------------- */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+
+// ✅ Changed from app.listen to server.listen to support Socket.io
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT} with Real-time Sockets`);
 });
