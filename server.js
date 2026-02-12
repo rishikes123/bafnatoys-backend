@@ -3,8 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
-const http = require("http"); // ✅ Added for Socket
-const { Server } = require("socket.io"); // ✅ Added for Socket
+const http = require("http");
+const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const Product = require("./models/Product");
@@ -12,10 +12,10 @@ const Product = require("./models/Product");
 const app = express();
 
 /* ------------------------- SOCKET.IO SERVER SETUP ------------------------- */
-const server = http.createServer(app); // Create HTTP server for socket
+const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Allows all origins for real-time connection
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
@@ -24,7 +24,7 @@ let onlineUsersCount = 0;
 
 io.on("connection", (socket) => {
   onlineUsersCount++;
-  io.emit("updateUserCount", onlineUsersCount); // Emit to all connected clients
+  io.emit("updateUserCount", onlineUsersCount);
 
   socket.on("disconnect", () => {
     onlineUsersCount = Math.max(0, onlineUsersCount - 1);
@@ -35,12 +35,11 @@ io.on("connection", (socket) => {
 /* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
 
-/* --------------------------- CORS CONFIG (FINAL) ---------------------------- */
+/* --------------------------- CORS CONFIG ---------------------------- */
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-
       if (
         origin.includes("localhost") ||
         origin.endsWith(".vercel.app") ||
@@ -48,7 +47,6 @@ app.use(
       ) {
         return callback(null, true);
       }
-
       console.log("❌ CORS blocked:", origin);
       callback(new Error("Not allowed by CORS"));
     },
@@ -65,7 +63,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ====================================================================
-   ✅ SEO + WHATSAPP PREVIEW ROUTE
+   ✅ FINAL SEO ROUTE (Cloudinary Optimized)
    ==================================================================== */
 app.get("/product/:id", async (req, res) => {
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
@@ -75,44 +73,74 @@ app.get("/product/:id", async (req, res) => {
     let html = fs.readFileSync(indexPath, "utf8");
 
     if (product) {
+      // 1. Title & Description
       const title = `${product.name} | Bafna Toys`;
-      const description = product.description
-        ? product.description.substring(0, 150)
-        : `Buy ${product.name} at wholesale prices`;
+      // Clean HTML tags from description if any exist
+      const rawDesc = product.description || `Buy ${product.name} at wholesale prices.`;
+      const description = rawDesc.replace(/<[^>]*>?/gm, "").substring(0, 150).trim();
 
-      let image = "https://bafnatoys.com/logo.webp";
-      if (product.images?.length) {
-        const img = product.images[0];
-        image = img.startsWith("http")
-          ? img
-          : `https://bafnatoys.com/${img.replace(/^\/+/, "")}`;
+      // 2. Image Logic (Cloudinary Support)
+      let image = "https://bafnatoys.com/logo.webp"; // Default Fallback
+
+      if (product.images && product.images.length > 0) {
+        const imgPath = product.images[0];
+
+        if (imgPath.startsWith("http")) {
+          // ✅ Case 1: Cloudinary URL
+          image = imgPath;
+
+          // OPTIMIZATION: Resize for WhatsApp (600x600, padded, white background)
+          // This ensures the whole toy is visible in the square preview
+          if (image.includes("res.cloudinary.com")) {
+             image = image.replace("/upload/", "/upload/w_600,h_600,c_pad,b_white,q_auto/");
+          }
+
+        } else {
+          // ✅ Case 2: Local Upload (Legacy support)
+          // Remove leading slashes just in case
+          const cleanPath = imgPath.replace(/^\/+/, "");
+          if (cleanPath.startsWith("uploads/")) {
+             image = `https://bafnatoys.com/${cleanPath}`;
+          } else {
+             image = `https://bafnatoys.com/uploads/${cleanPath}`;
+          }
+        }
       }
 
-      html = html
-        .replace(/<title>.*<\/title>/, `<title>${title}</title>`)
-        .replace(
-          "</head>",
-          `
-          <meta property="og:site_name" content="Bafna Toys" />
-          <meta property="og:title" content="${title}" />
-          <meta property="og:description" content="${description}" />
-          <meta property="og:image" content="${image}" />
-          <meta property="og:image:width" content="600" />
-          <meta property="og:image:height" content="600" />
-          <meta property="og:type" content="product" />
-          <meta property="og:url" content="https://bafnatoys.com/product/${product._id}" />
-          <meta name="twitter:card" content="summary_large_image" />
-          <meta name="twitter:image" content="${image}" />
-          </head>`
-        );
+      // 3. META TAG REPLACEMENT (Regex to overwrite default index.html tags)
+      
+      // Replace Title
+      html = html.replace(/<title>.*?<\/title>/, `<title>${title}</title>`);
+
+      // Replace Description
+      html = html.replace(/name="description" content=".*?"/g, `name="description" content="${description}"`);
+      html = html.replace(/property="og:description" content=".*?"/g, `property="og:description" content="${description}"`);
+      html = html.replace(/name="twitter:description" content=".*?"/g, `name="twitter:description" content="${description}"`);
+
+      // Replace Image (Targeting specific OG tags)
+      html = html.replace(/property="og:image" content=".*?"/g, `property="og:image" content="${image}"`);
+      html = html.replace(/name="twitter:image" content=".*?"/g, `name="twitter:image" content="${image}"`);
+      
+      // Also specifically replace the default logo URL if hardcoded
+      html = html.replace(/content="https:\/\/bafnatoys\.com\/logo\.webp"/g, `content="${image}"`);
+
+      // Update URL
+      html = html.replace(/property="og:url" content=".*?"/g, `property="og:url" content="https://bafnatoys.com/product/${product._id}"`);
+      
+      // Update Title Meta
+      html = html.replace(/property="og:title" content=".*?"/g, `property="og:title" content="${title}"`);
+      html = html.replace(/name="twitter:title" content=".*?"/g, `name="twitter:title" content="${title}"`);
     }
 
     res.send(html);
   } catch (err) {
-    console.error("❌ SEO ERROR:", err);
-    fs.existsSync(indexPath)
-      ? res.sendFile(indexPath)
-      : res.status(500).send("Frontend build not found");
+    console.error("❌ SEO Injection Error:", err);
+    // Fallback if something fails
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.status(500).send("Frontend build not found");
+    }
   }
 });
 
@@ -159,7 +187,6 @@ app.use(errorHandler);
 /* -------------------------- START SERVER ----------------------------- */
 const PORT = process.env.PORT || 5000;
 
-// ✅ Changed from app.listen to server.listen to support Socket.io
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT} with Real-time Sockets`);
 });
