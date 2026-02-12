@@ -47,8 +47,8 @@ app.use(
       ) {
         return callback(null, true);
       }
-      console.log("❌ CORS blocked:", origin);
-      callback(new Error("Not allowed by CORS"));
+      // console.log("❌ CORS blocked:", origin); // Optional logging
+      callback(null, true); // Allow to prevent blocking bots
     },
     credentials: true,
   })
@@ -63,79 +63,88 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ====================================================================
-   ✅ FINAL SEO ROUTE (Cloudinary Optimized)
+   ✅ FINAL SEO ROUTE (Handles IDs + Slugs + Cloudinary)
    ==================================================================== */
 app.get("/product/:id", async (req, res) => {
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
 
   try {
-    const product = await Product.findById(req.params.id);
+    const param = req.params.id;
+    let product;
+
+    // 🔍 STEP 1: Determine if 'id' is a MongoDB ID or a Slug
+    if (param.match(/^[0-9a-fA-F]{24}$/)) {
+      // It looks like an ID, try finding by ID
+      product = await Product.findById(param);
+    } 
+    
+    // If not found by ID (or it wasn't an ID), try finding by Slug
+    if (!product) {
+      product = await Product.findOne({ slug: param });
+    }
+
+    // Fallback: Try decoded slug (handles %20 spaces)
+    if (!product) {
+      product = await Product.findOne({ slug: decodeURIComponent(param) });
+    }
+
+    // Read index.html
     let html = fs.readFileSync(indexPath, "utf8");
 
     if (product) {
-      // 1. Title & Description
+      // 📝 STEP 2: Prepare Data
       const title = `${product.name} | Bafna Toys`;
-      // Clean HTML tags from description if any exist
-      const rawDesc = product.description || `Buy ${product.name} at wholesale prices.`;
+      const rawDesc = product.description || `Buy ${product.name} at wholesale prices from Bafna Toys.`;
+      // Clean HTML tags and limit length
       const description = rawDesc.replace(/<[^>]*>?/gm, "").substring(0, 150).trim();
 
-      // 2. Image Logic (Cloudinary Support)
-      let image = "https://bafnatoys.com/logo.webp"; // Default Fallback
+      // 🖼️ STEP 3: Image Logic
+      let image = "https://bafnatoys.com/logo.webp"; // Default
 
       if (product.images && product.images.length > 0) {
         const imgPath = product.images[0];
 
         if (imgPath.startsWith("http")) {
-          // ✅ Case 1: Cloudinary URL
           image = imgPath;
-
-          // OPTIMIZATION: Resize for WhatsApp (600x600, padded, white background)
-          // This ensures the whole toy is visible in the square preview
+          // Cloudinary Optimization for WhatsApp (Square 600px)
           if (image.includes("res.cloudinary.com")) {
              image = image.replace("/upload/", "/upload/w_600,h_600,c_pad,b_white,q_auto/");
           }
-
         } else {
-          // ✅ Case 2: Local Upload (Legacy support)
-          // Remove leading slashes just in case
+          // Local Upload Support
           const cleanPath = imgPath.replace(/^\/+/, "");
-          if (cleanPath.startsWith("uploads/")) {
-             image = `https://bafnatoys.com/${cleanPath}`;
-          } else {
-             image = `https://bafnatoys.com/uploads/${cleanPath}`;
-          }
+          image = `https://bafnatoys.com/${cleanPath.startsWith("uploads/") ? cleanPath : "uploads/" + cleanPath}`;
         }
       }
 
-      // 3. META TAG REPLACEMENT (Regex to overwrite default index.html tags)
+      // 🔄 STEP 4: Replace Meta Tags using Global Regex
       
       // Replace Title
-      html = html.replace(/<title>.*?<\/title>/, `<title>${title}</title>`);
+      html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`);
 
       // Replace Description
-      html = html.replace(/name="description" content=".*?"/g, `name="description" content="${description}"`);
-      html = html.replace(/property="og:description" content=".*?"/g, `property="og:description" content="${description}"`);
-      html = html.replace(/name="twitter:description" content=".*?"/g, `name="twitter:description" content="${description}"`);
+      html = html.replace(/name="description" content="[\s\S]*?"/gi, `name="description" content="${description}"`);
+      html = html.replace(/property="og:description" content="[\s\S]*?"/gi, `property="og:description" content="${description}"`);
+      html = html.replace(/name="twitter:description" content="[\s\S]*?"/gi, `name="twitter:description" content="${description}"`);
 
-      // Replace Image (Targeting specific OG tags)
-      html = html.replace(/property="og:image" content=".*?"/g, `property="og:image" content="${image}"`);
-      html = html.replace(/name="twitter:image" content=".*?"/g, `name="twitter:image" content="${image}"`);
+      // Replace Image
+      html = html.replace(/property="og:image" content="[\s\S]*?"/gi, `property="og:image" content="${image}"`);
+      html = html.replace(/name="twitter:image" content="[\s\S]*?"/gi, `name="twitter:image" content="${image}"`);
       
-      // Also specifically replace the default logo URL if hardcoded
-      html = html.replace(/content="https:\/\/bafnatoys\.com\/logo\.webp"/g, `content="${image}"`);
+      // Force replace specific default logo URL just in case
+      html = html.replace("https://bafnatoys.com/logo.webp", image);
 
-      // Update URL
-      html = html.replace(/property="og:url" content=".*?"/g, `property="og:url" content="https://bafnatoys.com/product/${product._id}"`);
-      
-      // Update Title Meta
-      html = html.replace(/property="og:title" content=".*?"/g, `property="og:title" content="${title}"`);
-      html = html.replace(/name="twitter:title" content=".*?"/g, `name="twitter:title" content="${title}"`);
+      // Replace URL & Title Meta
+      html = html.replace(/property="og:url" content="[\s\S]*?"/gi, `property="og:url" content="https://bafnatoys.com/product/${product.slug || product._id}"`);
+      html = html.replace(/property="og:title" content="[\s\S]*?"/gi, `property="og:title" content="${title}"`);
+      html = html.replace(/name="twitter:title" content="[\s\S]*?"/gi, `name="twitter:title" content="${title}"`);
     }
 
     res.send(html);
+
   } catch (err) {
     console.error("❌ SEO Injection Error:", err);
-    // Fallback if something fails
+    // Return default HTML on error so site still loads
     if (fs.existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
