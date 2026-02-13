@@ -4,13 +4,13 @@ const sendEmail = async (options) => {
   try {
     const transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
-      port: 465,              // ✅ SSL Port
-      secure: true,           // ✅ True for 465
+      port: 587,              // ✅ Port change kiya (465 -> 587)
+      secure: false,          // ✅ Port 587 ke liye ye FALSE hona chahiye
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
-      // 👇 YE LINE PHIR SE ADD KAREIN (Ye delete ho gayi thi)
+      // ✅ Network fix (IPv4 only)
       family: 4, 
     });
 
