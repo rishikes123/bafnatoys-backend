@@ -6,7 +6,7 @@ const Product = require("../models/Product"); // Ensure path is correct
 const sendEmail = require("../utils/sendEmail"); // ✅ Import Email Helper
 
 // Note: Agar aapke paas auth middleware hai (isAuth, isAdmin), toh unhe import karke routes me use karein.
-// const { isAuth, isAdmin } = require("../utils/utils"); 
+// const { isAuth, isAdmin } = require("../utils/utils");
 
 /* ============================================================
    ✅ ANALYTICS ROUTES (Must be before /:id)
@@ -19,13 +19,8 @@ const sendEmail = require("../utils/sendEmail"); // ✅ Import Email Helper
 router.get("/analytics/top-selling", async (req, res) => {
   try {
     const topProducts = await Order.aggregate([
-      // 1. Sirf 'Confirmed' orders lo (Cancelled/Returned hata do)
       { $match: { status: { $nin: ["cancelled", "returned"] } } },
-      
-      // 2. Items array ko kholo (Har item ko alag document banao)
       { $unwind: "$items" },
-      
-      // 3. Product ID ke hisab se group karo aur quantity sum karo
       {
         $group: {
           _id: "$items.productId",
@@ -33,15 +28,11 @@ router.get("/analytics/top-selling", async (req, res) => {
           image: { $first: "$items.image" },
           price: { $first: "$items.price" },
           totalSold: { $sum: "$items.qty" },
-          totalRevenue: { $sum: { $multiply: ["$items.qty", "$items.price"] } }
-        }
+          totalRevenue: { $sum: { $multiply: ["$items.qty", "$items.price"] } },
+        },
       },
-      
-      // 4. Sabse zyada bikne wale upar rakho
       { $sort: { totalSold: -1 } },
-      
-      // 5. Sirf Top 5 dikhao
-      { $limit: 5 }
+      { $limit: 5 },
     ]);
 
     res.json(topProducts);
@@ -111,18 +102,18 @@ router.post("/", async (req, res) => {
     const {
       customerId,
       items,
-      total,              // Grand Total
-      paymentMode,        // Frontend usually sends this
-      paymentMethod,      // Fallback
+      total, // Grand Total
+      paymentMode, // Frontend usually sends this
+      paymentMethod, // Fallback
       shippingAddress,
-      
+
       // ✅ COD fields
-      codAdvancePaid, 
+      codAdvancePaid,
       codRemainingAmount,
 
       // ✅ Price Breakdown
       itemsPrice,
-      shippingPrice
+      shippingPrice,
     } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
@@ -142,7 +133,7 @@ router.post("/", async (req, res) => {
 
       // ✅ CORRECT MAPPING
       itemsPrice: itemsPrice || 0,
-      shippingPrice: shippingPrice || 0, 
+      shippingPrice: shippingPrice || 0,
       total: total,
 
       paymentMode: finalPaymentMethod,
@@ -161,7 +152,8 @@ router.post("/", async (req, res) => {
         break;
       } catch (e) {
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
-          order.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
+          order.orderNumber =
+            "ODR" + Math.floor(100000 + Math.random() * 900000);
           continue;
         }
         throw e;
@@ -181,32 +173,46 @@ router.post("/", async (req, res) => {
       )
       .lean();
 
+    // ✅ RESPONSE PEHLE BHEJO (Processing stuck fix)
+    res.status(201).json({ order: populatedOrder });
+
     // ============================================================
-    // ✅ SEND EMAIL NOTIFICATION TO ADMIN
+    // ✅ SEND EMAIL NOTIFICATION TO ADMIN (background, no await)
     // ============================================================
-    try {
+    (async () => {
+      try {
         const adminEmail = process.env.ADMIN_EMAIL; // .env se email lega
-        
+
         if (adminEmail) {
-            const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
-            
-            const emailMessage = `
+          const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
+
+          const emailMessage = `
                 <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; max-width: 600px;">
                     <h2 style="color: #27ae60;">New Order Received! 🎉</h2>
                     <p><strong>Order ID:</strong> ${populatedOrder.orderNumber}</p>
-                    <p><strong>Customer:</strong> ${populatedOrder.customerId?.shopName || 'Guest'} (${populatedOrder.customerId?.city || ''})</p>
-                    <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || 'N/A'}</p>
+                    <p><strong>Customer:</strong> ${
+                      populatedOrder.customerId?.shopName || "Guest"
+                    } (${populatedOrder.customerId?.city || ""})</p>
+                    <p><strong>Mobile:</strong> ${
+                      populatedOrder.customerId?.otpMobile || "N/A"
+                    }</p>
                     <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
-                    <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
+                    <p><strong>Payment Mode:</strong> ${
+                      populatedOrder.paymentMode
+                    }</p>
                     
                     <hr/>
                     <h3>Items Ordered:</h3>
                     <ul style="padding-left: 20px;">
-                        ${populatedOrder.items.map(item => `
+                        ${populatedOrder.items
+                          .map(
+                            (item) => `
                             <li style="margin-bottom: 5px;">
                                 <strong>${item.name}</strong> - Qty: ${item.qty}
                             </li>
-                        `).join('')}
+                        `
+                          )
+                          .join("")}
                     </ul>
                     <hr/>
                     
@@ -214,19 +220,18 @@ router.post("/", async (req, res) => {
                 </div>
             `;
 
-            // Send Email (Async - does not block response)
-            await sendEmail({
-                to: adminEmail,
-                subject: emailSubject,
-                html: emailMessage
-            });
-            console.log("Admin notification email sent.");
+          // ✅ Send Email (non-blocking)
+          await sendEmail({
+            to: adminEmail,
+            subject: emailSubject,
+            html: emailMessage,
+          });
+          console.log("Admin notification email sent.");
         }
-    } catch (emailError) {
+      } catch (emailError) {
         console.error("Failed to send admin email:", emailError.message);
-    }
-
-    res.status(201).json({ order: populatedOrder });
+      }
+    })();
   } catch (err) {
     console.error("Order Creation Error:", err);
     res.status(500).json({
@@ -243,30 +248,32 @@ router.post("/", async (req, res) => {
  * @route   PUT /api/orders/return/:id
  * @desc    User requests a return (Images/Video URLs req body me aayenge)
  */
-router.put('/return/:id', async (req, res) => {
+router.put("/return/:id", async (req, res) => {
   try {
     const { reason, description, images, video } = req.body;
     const order = await Order.findById(req.params.id);
 
     if (order) {
-      if (order.status !== 'delivered') {
-        return res.status(400).send({ message: 'Order must be delivered to request return.' });
+      if (order.status !== "delivered") {
+        return res
+          .status(400)
+          .send({ message: "Order must be delivered to request return." });
       }
 
       order.returnRequest = {
         isRequested: true,
-        status: 'Pending',
+        status: "Pending",
         reason: reason,
         description: description,
-        proofImages: images || [], 
-        proofVideo: video || "",   
-        requestDate: Date.now()
+        proofImages: images || [],
+        proofVideo: video || "",
+        requestDate: Date.now(),
       };
 
       const updatedOrder = await order.save();
-      res.send({ message: 'Return Requested Successfully', order: updatedOrder });
+      res.send({ message: "Return Requested Successfully", order: updatedOrder });
     } else {
-      res.status(404).send({ message: 'Order Not Found' });
+      res.status(404).send({ message: "Order Not Found" });
     }
   } catch (error) {
     res.status(500).send({ message: error.message });
@@ -277,23 +284,23 @@ router.put('/return/:id', async (req, res) => {
  * @route   PUT /api/orders/admin/return-action/:id
  * @desc    Admin Approves or Rejects Return
  */
-router.put('/admin/return-action/:id', async (req, res) => {
+router.put("/admin/return-action/:id", async (req, res) => {
   try {
-    const { status, comment } = req.body; 
+    const { status, comment } = req.body;
     const order = await Order.findById(req.params.id);
 
     if (order) {
       order.returnRequest.status = status;
       order.returnRequest.adminComment = comment;
-      
-      if (status === 'Approved') {
-        order.status = 'returned'; 
+
+      if (status === "Approved") {
+        order.status = "returned";
       }
 
       await order.save();
-      res.send({ message: 'Return Status Updated' });
+      res.send({ message: "Return Status Updated" });
     } else {
-      res.status(404).send({ message: 'Order Not Found' });
+      res.status(404).send({ message: "Order Not Found" });
     }
   } catch (error) {
     res.status(500).send({ message: error.message });
@@ -307,10 +314,10 @@ router.put('/admin/return-action/:id', async (req, res) => {
 const updateOrderStatus = async (req, res) => {
   try {
     const { status, trackingId, courierName, cancelledBy } = req.body;
-    
+
     if (!status) return res.status(400).json({ message: "Status is required" });
-    
-    const newStatus = status.toLowerCase(); 
+
+    const newStatus = status.toLowerCase();
 
     const allowedStatuses = [
       "pending",
@@ -318,7 +325,7 @@ const updateOrderStatus = async (req, res) => {
       "shipped",
       "delivered",
       "cancelled",
-      "returned" 
+      "returned",
     ];
 
     if (!allowedStatuses.includes(newStatus)) {
@@ -330,41 +337,44 @@ const updateOrderStatus = async (req, res) => {
 
     // ✅ STOCK REDUCTION LOGIC
     if (newStatus === "delivered" && order.status !== "delivered") {
-        if (order.items && Array.isArray(order.items)) {
-            for (const item of order.items) {
-                const productId = item.productId?._id || item.productId;
-                const qty = Number(item.qty) || 0;
+      if (order.items && Array.isArray(order.items)) {
+        for (const item of order.items) {
+          const productId = item.productId?._id || item.productId;
+          const qty = Number(item.qty) || 0;
 
-                if (productId && qty > 0) {
-                    await Product.findByIdAndUpdate(productId, { 
-                        $inc: { stock: -qty } 
-                    });
-                }
-            }
+          if (productId && qty > 0) {
+            await Product.findByIdAndUpdate(productId, {
+              $inc: { stock: -qty },
+            });
+          }
         }
-        order.isDelivered = true;
-        order.deliveredAt = Date.now();
+      }
+      order.isDelivered = true;
+      order.deliveredAt = Date.now();
     }
 
     // ✅ UPDATE TRACKING DETAILS
     if (newStatus === "shipped") {
-        if (trackingId) order.trackingId = trackingId;
-        if (courierName) order.courierName = courierName;
-        order.isShipped = true;
+      if (trackingId) order.trackingId = trackingId;
+      if (courierName) order.courierName = courierName;
+      order.isShipped = true;
     }
 
     // Update Status
     order.status = newStatus;
 
     // ✅ SAVE WHO CANCELLED THE ORDER
-    if (newStatus === 'cancelled' && cancelledBy) {
-        order.cancelledBy = cancelledBy;
+    if (newStatus === "cancelled" && cancelledBy) {
+      order.cancelledBy = cancelledBy;
     }
 
     const updatedOrder = await order.save();
 
     const populatedOrder = await Order.findById(updatedOrder._id)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
+      .populate(
+        "customerId",
+        "firmName shopName otpMobile city state zip visitingCardUrl"
+      )
       .lean();
 
     res.json(populatedOrder);
