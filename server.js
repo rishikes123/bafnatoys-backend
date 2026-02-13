@@ -9,15 +9,21 @@ const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const Product = require("./models/Product");
 
+// ✅ India-only middleware
+const indiaOnly = require("./middleware/indiaOnly");
+
 const app = express();
+
+// ✅ IMPORTANT: correct IP when behind proxy/CDN
+app.set("trust proxy", true);
 
 /* ------------------------- SOCKET.IO SERVER SETUP ------------------------- */
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
 let onlineUsersCount = 0;
@@ -62,20 +68,23 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ====================================================================
+   ✅ INDIA ONLY (Apply after parsers/static, before routes)
+   ==================================================================== */
+app.use(indiaOnly);
+
+/* ====================================================================
    ✅ FINAL SEO ROUTE (The Placeholder Method)
    ==================================================================== */
 app.get("/product/:id", async (req, res) => {
-  // ✅ Path to your BUILT frontend index.html
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
 
   try {
     const param = req.params.id;
     let product;
 
-    // 1. Find Product (ID or Slug)
     if (param.match(/^[0-9a-fA-F]{24}$/)) {
       product = await Product.findById(param);
-    } 
+    }
     if (!product) {
       product = await Product.findOne({ slug: param });
     }
@@ -83,34 +92,38 @@ app.get("/product/:id", async (req, res) => {
       product = await Product.findOne({ slug: decodeURIComponent(param) });
     }
 
-    // 2. Read the HTML file
     let html = fs.readFileSync(indexPath, "utf8");
-    
-    // 3. Prepare SEO Tags
+
     let seoTags = "";
 
     if (product) {
       const title = `${product.name} | Bafna Toys`;
-      const rawDesc = product.description || `Buy ${product.name} at wholesale prices.`;
-      const description = rawDesc.replace(/<[^>]*>?/gm, "").substring(0, 150).trim();
+      const rawDesc =
+        product.description || `Buy ${product.name} at wholesale prices.`;
+      const description = rawDesc
+        .replace(/<[^>]*>?/gm, "")
+        .substring(0, 150)
+        .trim();
 
-      // Image Logic (Cloudinary Optimization for WhatsApp)
       let image = "https://bafnatoys.com/logo.webp";
       if (product.images && product.images.length > 0) {
         const imgPath = product.images[0];
         if (imgPath.startsWith("http")) {
-           image = imgPath;
-           if (image.includes("res.cloudinary.com")) {
-             // WhatsApp needs 600x600 square image
-             image = image.replace("/upload/", "/upload/w_600,h_600,c_pad,b_white,q_auto/");
-           }
+          image = imgPath;
+          if (image.includes("res.cloudinary.com")) {
+            image = image.replace(
+              "/upload/",
+              "/upload/w_600,h_600,c_pad,b_white,q_auto/"
+            );
+          }
         } else {
-           const cleanPath = imgPath.replace(/^\/+/, "");
-           image = `https://bafnatoys.com/${cleanPath.startsWith("uploads/") ? cleanPath : "uploads/" + cleanPath}`;
+          const cleanPath = imgPath.replace(/^\/+/, "");
+          image = `https://bafnatoys.com/${
+            cleanPath.startsWith("uploads/") ? cleanPath : "uploads/" + cleanPath
+          }`;
         }
       }
 
-      // ✅ GENERATE TAGS (Yeh seedha inject honge)
       seoTags = `
         <title>${title}</title>
         <meta name="description" content="${description}" />
@@ -125,7 +138,6 @@ app.get("/product/:id", async (req, res) => {
         <meta name="twitter:image" content="${image}" />
       `;
     } else {
-      // Fallback Default Tags
       seoTags = `
         <title>Bafna Toys - Wholesale Supplier</title>
         <meta name="description" content="Best Toy Manufacturer in India" />
@@ -134,17 +146,15 @@ app.get("/product/:id", async (req, res) => {
       `;
     }
 
-    // 4. ✅ SWAP THE PLACEHOLDER
-    // Agar index.html mein placeholder hai toh replace karo, nahi toh <head> ke baad laga do
-    if (html.includes("")) {
-      html = html.replace("", seoTags);
+    // NOTE: aapke code me placeholder empty string tha, wo practically always true hota
+    // Isliye safe injection:
+    if (html.includes("</head>")) {
+      html = html.replace("</head>", `${seoTags}\n</head>`);
     } else {
-      // Backup plan: Inject after <head>
       html = html.replace("<head>", `<head>${seoTags}`);
     }
 
     res.send(html);
-
   } catch (err) {
     console.error("❌ SEO Injection Error:", err);
     if (fs.existsSync(indexPath)) {
