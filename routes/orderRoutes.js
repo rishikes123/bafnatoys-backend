@@ -173,11 +173,11 @@ router.post("/", async (req, res) => {
       )
       .lean();
 
-    // ✅ RESPONSE PEHLE BHEJO (Processing stuck fix)
+    // ✅ RESPONSE PEHLE (lag/processing fix)
     res.status(201).json({ order: populatedOrder });
 
     // ============================================================
-    // ✅ SEND EMAIL NOTIFICATION TO ADMIN (background, no await)
+    // ✅ SEND EMAIL NOTIFICATION TO ADMIN (background)
     // ============================================================
     (async () => {
       try {
@@ -220,7 +220,7 @@ router.post("/", async (req, res) => {
                 </div>
             `;
 
-          // ✅ Send Email (non-blocking)
+          // ✅ Send Email (Async - does not block response)
           sendEmail({
             to: adminEmail,
             subject: emailSubject,
