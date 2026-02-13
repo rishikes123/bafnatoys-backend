@@ -3,13 +3,16 @@ const nodemailer = require("nodemailer");
 const sendEmail = async (options) => {
   try {
     const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com", // ✅ Explicit Host (Zaroori hai)
-      port: 465,              // ✅ Port 465 (SSL) Cloud servers par best chalta hai
-      secure: true,           // ✅ True for 465
+      host: "smtp.gmail.com",
+      port: 465,              // SSL Port
+      secure: true,           // True for 465
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // App Password
+        pass: process.env.EMAIL_PASS,
       },
+      // 👇 YE LINE ADD KARNA ZAROORI HAI (IPv6 Error Fix)
+      // Ye server ko force karega ki wo IPv4 network use kare
+      family: 4, 
     });
 
     const mailOptions = {
@@ -20,10 +23,12 @@ const sendEmail = async (options) => {
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent: ${info.messageId}`);
+    console.log(`✅ Email sent successfully: ${info.messageId}`);
+    return info;
+
   } catch (error) {
-    // Ye error console me dikhega agar email fail hua
-    console.error("❌ Email Error (Server Logs Check Karein):", error);
+    console.error("❌ Email Send Failed:", error.message);
+    // Error throw nahi kar rahe taaki order cancel na ho
   }
 };
 
