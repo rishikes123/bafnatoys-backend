@@ -1,17 +1,34 @@
 const nodemailer = require("nodemailer");
+const dns = require("dns");
 
 const sendEmail = async (options) => {
   try {
+    // Step 1: Zabardasti IPv4 Address dhoondo (System DNS bypass)
+    const gmailIp = await new Promise((resolve, reject) => {
+      dns.resolve4('smtp.gmail.com', (err, addresses) => {
+        if (err || !addresses.length) {
+          reject(new Error("Failed to resolve Gmail IPv4"));
+        } else {
+          resolve(addresses[0]); // Pehla IPv4 address utha lo
+        }
+      });
+    });
+
+    console.log(`🔍 Resolved Gmail IP: ${gmailIp}`); // Log me IP dikhega
+
+    // Step 2: Usi IP ko use karke connect karo
     const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,              // ✅ Port change kiya (465 -> 587)
-      secure: false,          // ✅ Port 587 ke liye ye FALSE hona chahiye
+      host: gmailIp,          // ✅ Direct IP use kar rahe hain
+      port: 587,
+      secure: false,
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
-      // ✅ Network fix (IPv4 only)
-      family: 4, 
+      tls: {
+        servername: 'smtp.gmail.com', // ✅ Server ko asli naam batana zaroori hai
+        rejectUnauthorized: false     // ✅ Strict SSL check disable (Timeout fix)
+      }
     });
 
     const mailOptions = {
