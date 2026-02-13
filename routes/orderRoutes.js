@@ -182,56 +182,61 @@ router.post("/", async (req, res) => {
       .lean();
 
     // ============================================================
-    // ✅ SEND EMAIL NOTIFICATION TO ADMIN
+    // ✅ 1. SEND RESPONSE IMMEDIATELY (Fixes "Processing..." delay)
     // ============================================================
-    try {
-        const adminEmail = process.env.ADMIN_EMAIL; // .env se email lega
-        
-        if (adminEmail) {
-            const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
-            
-            const emailMessage = `
-                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; max-width: 600px;">
-                    <h2 style="color: #27ae60;">New Order Received! 🎉</h2>
-                    <p><strong>Order ID:</strong> ${populatedOrder.orderNumber}</p>
-                    <p><strong>Customer:</strong> ${populatedOrder.customerId?.shopName || 'Guest'} (${populatedOrder.customerId?.city || ''})</p>
-                    <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || 'N/A'}</p>
-                    <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
-                    <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
-                    
-                    <hr/>
-                    <h3>Items Ordered:</h3>
-                    <ul style="padding-left: 20px;">
-                        ${populatedOrder.items.map(item => `
-                            <li style="margin-bottom: 5px;">
-                                <strong>${item.name}</strong> - Qty: ${item.qty}
-                            </li>
-                        `).join('')}
-                    </ul>
-                    <hr/>
-                    
-                    <p>Please check the admin panel for more details.</p>
-                </div>
-            `;
+    res.status(201).json({ order: populatedOrder });
 
-            // Send Email (Async - does not block response)
-            await sendEmail({
-                to: adminEmail,
-                subject: emailSubject,
-                html: emailMessage
-            });
-            console.log("Admin notification email sent.");
-        }
-    } catch (emailError) {
-        console.error("Failed to send admin email:", emailError.message);
+    // ============================================================
+    // ✅ 2. SEND EMAIL IN BACKGROUND (Non-Blocking)
+    // ============================================================
+    const adminEmail = process.env.ADMIN_EMAIL; 
+    
+    if (adminEmail) {
+        const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
+        
+        const emailMessage = `
+            <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; max-width: 600px;">
+                <h2 style="color: #27ae60;">New Order Received! 🎉</h2>
+                <p><strong>Order ID:</strong> ${populatedOrder.orderNumber}</p>
+                <p><strong>Customer:</strong> ${populatedOrder.customerId?.shopName || 'Guest'} (${populatedOrder.customerId?.city || ''})</p>
+                <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || 'N/A'}</p>
+                <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
+                <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
+                
+                <hr/>
+                <h3>Items Ordered:</h3>
+                <ul style="padding-left: 20px;">
+                    ${populatedOrder.items.map(item => `
+                        <li style="margin-bottom: 5px;">
+                            <strong>${item.name}</strong> - Qty: ${item.qty}
+                        </li>
+                    `).join('')}
+                </ul>
+                <hr/>
+                
+                <p>Please check the admin panel for more details.</p>
+            </div>
+        `;
+
+        // Note: No 'await' here. This runs in background.
+        sendEmail({
+            to: adminEmail,
+            subject: emailSubject,
+            html: emailMessage
+        }).catch(err => {
+             // Sirf log karo, user ko error mat dikhao kyunki order ho chuka hai
+             console.error("Background Email Error:", err.message);
+        });
     }
 
-    res.status(201).json({ order: populatedOrder });
   } catch (err) {
     console.error("Order Creation Error:", err);
-    res.status(500).json({
-      message: err.message || "Server error while creating order",
-    });
+    // Ensure we haven't sent a response yet
+    if (!res.headersSent) {
+        res.status(500).json({
+          message: err.message || "Server error while creating order",
+        });
+    }
   }
 });
 
@@ -259,7 +264,7 @@ router.put('/return/:id', async (req, res) => {
         reason: reason,
         description: description,
         proofImages: images || [], 
-        proofVideo: video || "",   
+        proofVideo: video || "",    
         requestDate: Date.now()
       };
 
