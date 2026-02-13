@@ -221,15 +221,16 @@ router.post("/", async (req, res) => {
             `;
 
           // ✅ Send Email (non-blocking)
-          await sendEmail({
+          sendEmail({
             to: adminEmail,
             subject: emailSubject,
             html: emailMessage,
-          });
-          console.log("Admin notification email sent.");
+          })
+            .then(() => console.log("Admin notification email sent."))
+            .catch((e) => console.error("Failed to send admin email:", e));
         }
       } catch (emailError) {
-        console.error("Failed to send admin email:", emailError.message);
+        console.error("Failed to send admin email:", emailError);
       }
     })();
   } catch (err) {
