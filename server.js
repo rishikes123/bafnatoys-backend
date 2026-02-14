@@ -9,9 +9,6 @@ const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const Product = require("./models/Product");
 
-// ✅ India-only middleware
-const indiaOnly = require("./middleware/indiaOnly");
-
 const app = express();
 
 // ✅ IMPORTANT: correct IP when behind proxy/CDN
@@ -53,7 +50,7 @@ app.use(
       ) {
         return callback(null, true);
       }
-      callback(null, true);
+      callback(null, true); // allow all (same as your current)
     },
     credentials: true,
   })
@@ -68,9 +65,8 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ====================================================================
-   ✅ INDIA ONLY (Apply after parsers/static, before routes)
+   ✅ INDIA ONLY REMOVED (Now Global Access Enabled)
    ==================================================================== */
-app.use(indiaOnly);
 
 /* ====================================================================
    ✅ FINAL SEO ROUTE (The Placeholder Method)
@@ -130,7 +126,9 @@ app.get("/product/:id", async (req, res) => {
         <meta property="og:title" content="${title}" />
         <meta property="og:description" content="${description}" />
         <meta property="og:image" content="${image}" />
-        <meta property="og:url" content="https://bafnatoys.com/product/${product.slug || product._id}" />
+        <meta property="og:url" content="https://bafnatoys.com/product/${
+          product.slug || product._id
+        }" />
         <meta property="og:type" content="product" />
         <meta property="og:site_name" content="Bafna Toys" />
         <meta name="twitter:card" content="summary_large_image" />
@@ -146,8 +144,7 @@ app.get("/product/:id", async (req, res) => {
       `;
     }
 
-    // NOTE: aapke code me placeholder empty string tha, wo practically always true hota
-    // Isliye safe injection:
+    // Safe injection:
     if (html.includes("</head>")) {
       html = html.replace("</head>", `${seoTags}\n</head>`);
     } else {
