@@ -181,6 +181,7 @@ app.use("/api/shipping", require("./routes/shippingRoutes"));
 app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/discount-rules", require("./routes/discountRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
+app.use("/api/reviews", require("./routes/reviewRoutes")); // ✅ NEW: Review Route Added
 app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
