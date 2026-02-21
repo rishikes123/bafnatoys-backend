@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 
 /* ================= ORDER ITEMS ================= */
 const orderItemSchema = new mongoose.Schema(
@@ -10,9 +11,9 @@ const orderItemSchema = new mongoose.Schema(
     },
     name: { type: String, required: true },
     qty: { type: Number, required: true },
-    
+
     // ✅ UNIT
-    unit: { type: String, default: "Piece" }, 
+    unit: { type: String, default: "Piece" },
 
     innerQty: { type: Number, required: true },
     inners: { type: Number, required: true },
@@ -75,21 +76,31 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      // Added 'returned' to enum to handle full return lifecycle
       enum: ["pending", "processing", "shipped", "delivered", "cancelled", "returned"],
       default: "pending",
     },
 
     // ✅ FIELD TO TRACK WHO CANCELLED (Customer or Admin)
-    cancelledBy: { 
-      type: String, // Value will be "Customer" or "Admin"
-      default: null 
+    cancelledBy: {
+      type: String, // "Customer" or "Admin"
+      default: null,
     },
 
     /* ✅ SHIPPING INTEGRATION FIELDS */
     isShipped: { type: Boolean, default: false },
     trackingId: { type: String, default: "" },
     courierName: { type: String, default: "" },
+
+    /* ✅ PUBLIC TRACKING TOKEN (secure tracking link) */
+    trackingToken: { type: String, default: "" },
+
+    /* ✅ WHATSAPP LOGS */
+    wa: {
+      orderConfirmedSent: { type: Boolean, default: false },
+      trackingSent: { type: Boolean, default: false },
+      lastError: { type: String, default: "" },
+      lastSentAt: { type: Date, default: null },
+    },
 
     shippingAddress: {
       type: shippingAddressSchema,
@@ -101,26 +112,24 @@ const orderSchema = new mongoose.Schema(
        Only for Damaged/Wrong Product + Image/Video Uploads
     ============================================================ */
     returnRequest: {
-      isRequested: { type: Boolean, default: false }, // Filter karne ke liye easy hoga
-      status: { 
-        type: String, 
-        enum: ['Pending', 'Approved', 'Rejected'], 
-        default: 'Pending' 
+      isRequested: { type: Boolean, default: false },
+      status: {
+        type: String,
+        enum: ["Pending", "Approved", "Rejected"],
+        default: "Pending",
       },
-      reason: { 
-        type: String, 
-        // Sirf ye do reasons allowed hain strict B2B rules ke hisab se
-        enum: ['Damaged Product', 'Wrong Product'] 
+      reason: {
+        type: String,
+        enum: ["Damaged Product", "Wrong Product"],
       },
-      description: { type: String }, // User detail me likh sake kya damage hai
-      
-      // Cloudinary URLs store karne ke liye
-      proofImages: [{ type: String }], // Multiple images allowed
-      proofVideo: { type: String },    // Single video URL
-      
-      adminComment: { type: String }, // Admin rejection/approval reason likh sake
-      requestDate: { type: Date }
-    }
+      description: { type: String },
+
+      proofImages: [{ type: String }],
+      proofVideo: { type: String },
+
+      adminComment: { type: String },
+      requestDate: { type: Date },
+    },
   },
   { timestamps: true }
 );
@@ -128,16 +137,18 @@ const orderSchema = new mongoose.Schema(
 /* ================= INDEX ================= */
 orderSchema.index({ orderNumber: 1 }, { unique: true });
 
-/* ================= AUTO ORDER NUMBER ================= */
+/* ================= AUTO ORDER NUMBER + TOKEN + AMOUNT ================= */
 orderSchema.pre("validate", function (next) {
   if (!this.orderNumber) {
     this.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
   }
 
-  this.remainingAmount = Math.max(
-    (this.total || 0) - (this.advancePaid || 0),
-    0
-  );
+  // ✅ generate tracking token once (for customer tracking link)
+  if (!this.trackingToken) {
+    this.trackingToken = crypto.randomBytes(16).toString("hex");
+  }
+
+  this.remainingAmount = Math.max((this.total || 0) - (this.advancePaid || 0), 0);
 
   next();
 });

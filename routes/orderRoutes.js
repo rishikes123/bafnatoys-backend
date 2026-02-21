@@ -1,12 +1,65 @@
 const express = require("express");
 const router = express.Router();
+const axios = require("axios");
+
 const Order = require("../models/orderModel"); // Ensure path is correct
 const Setting = require("../models/settingModel"); // Ensure path is correct
 const Product = require("../models/Product"); // Ensure path is correct
 const sendEmail = require("../utils/sendEmail"); // ✅ Import Email Helper
 
 // Note: Agar aapke paas auth middleware hai (isAuth, isAdmin), toh unhe import karke routes me use karein.
-// const { isAuth, isAdmin } = require("../utils/utils"); 
+// const { isAuth, isAdmin } = require("../utils/utils");
+
+/* ============================================================
+   ✅ WHATSAPP HELPERS (Meta Cloud API)
+============================================================ */
+const WA_API_VERSION = process.env.WA_API_VERSION || "v20.0";
+const WA_PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID;
+const WA_ACCESS_TOKEN = process.env.WA_ACCESS_TOKEN;
+
+function sanitizePhone(phone) {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+async function sendWhatsAppTemplate({ to, templateName, languageCode = "en_US", params = [] }) {
+  if (!to) return;
+
+  if (!WA_PHONE_NUMBER_ID || !WA_ACCESS_TOKEN) {
+    console.error("WhatsApp ENV missing: WA_PHONE_NUMBER_ID / WA_ACCESS_TOKEN");
+    return;
+  }
+
+  try {
+    await axios.post(
+      `https://graph.facebook.com/${WA_API_VERSION}/${WA_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          components: [
+            {
+              type: "body",
+              parameters: params.map((t) => ({ type: "text", text: String(t ?? "") })),
+            },
+          ],
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WA_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 15000,
+      }
+    );
+  } catch (err) {
+    console.error("WhatsApp Send Error:", err.response?.data || err.message);
+    throw err;
+  }
+}
 
 /* ============================================================
    ✅ ANALYTICS ROUTES (Must be before /:id)
@@ -19,13 +72,8 @@ const sendEmail = require("../utils/sendEmail"); // ✅ Import Email Helper
 router.get("/analytics/top-selling", async (req, res) => {
   try {
     const topProducts = await Order.aggregate([
-      // 1. Sirf 'Confirmed' orders lo (Cancelled/Returned hata do)
       { $match: { status: { $nin: ["cancelled", "returned"] } } },
-      
-      // 2. Items array ko kholo (Har item ko alag document banao)
       { $unwind: "$items" },
-      
-      // 3. Product ID ke hisab se group karo aur quantity sum karo
       {
         $group: {
           _id: "$items.productId",
@@ -33,15 +81,11 @@ router.get("/analytics/top-selling", async (req, res) => {
           image: { $first: "$items.image" },
           price: { $first: "$items.price" },
           totalSold: { $sum: "$items.qty" },
-          totalRevenue: { $sum: { $multiply: ["$items.qty", "$items.price"] } }
-        }
+          totalRevenue: { $sum: { $multiply: ["$items.qty", "$items.price"] } },
+        },
       },
-      
-      // 4. Sabse zyada bikne wale upar rakho
       { $sort: { totalSold: -1 } },
-      
-      // 5. Sirf Top 5 dikhao
-      { $limit: 5 }
+      { $limit: 5 },
     ]);
 
     res.json(topProducts);
@@ -65,10 +109,7 @@ router.get("/", async (req, res) => {
     const filter = customerId ? { customerId } : {};
 
     const orders = await Order.find(filter)
-      .populate(
-        "customerId",
-        "firmName shopName otpMobile city state zip visitingCardUrl address"
-      )
+      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl address")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -87,10 +128,7 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate(
-        "customerId",
-        "firmName shopName otpMobile city state zip visitingCardUrl address"
-      )
+      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl address")
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -111,18 +149,18 @@ router.post("/", async (req, res) => {
     const {
       customerId,
       items,
-      total,              // Grand Total
-      paymentMode,        // Frontend usually sends this
-      paymentMethod,      // Fallback
+      total,
+      paymentMode,
+      paymentMethod,
       shippingAddress,
-      
+
       // ✅ COD fields
-      codAdvancePaid, 
+      codAdvancePaid,
       codRemainingAmount,
 
       // ✅ Price Breakdown
       itemsPrice,
-      shippingPrice
+      shippingPrice,
     } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
@@ -131,18 +169,15 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Determine Payment Mode
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
 
-    /* ================= CREATE ORDER ================= */
     let order = new Order({
       customerId,
       items,
       shippingAddress: shippingAddress || {},
 
-      // ✅ CORRECT MAPPING
       itemsPrice: itemsPrice || 0,
-      shippingPrice: shippingPrice || 0, 
+      shippingPrice: shippingPrice || 0,
       total: total,
 
       paymentMode: finalPaymentMethod,
@@ -154,7 +189,6 @@ router.post("/", async (req, res) => {
     const MAX_TRIES = 5;
     let savedOrder = null;
 
-    // Order number collision retry
     for (let i = 0; i < MAX_TRIES; i++) {
       try {
         savedOrder = await order.save();
@@ -175,67 +209,60 @@ router.post("/", async (req, res) => {
     }
 
     const populatedOrder = await Order.findById(savedOrder._id)
-      .populate(
-        "customerId",
-        "firmName shopName otpMobile city state zip visitingCardUrl"
-      )
+      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
       .lean();
 
-    // ============================================================
-    // ✅ 1. SEND RESPONSE IMMEDIATELY (Fixes "Processing..." delay)
-    // ============================================================
+    // ✅ 1) response fast
     res.status(201).json({ order: populatedOrder });
 
-    // ============================================================
-    // ✅ 2. SEND EMAIL IN BACKGROUND (Non-Blocking)
-    // ============================================================
-    const adminEmail = process.env.ADMIN_EMAIL; 
-    
+    // ✅ 2) email background
+    const adminEmail = process.env.ADMIN_EMAIL;
+
     if (adminEmail) {
-        const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
-        
-        const emailMessage = `
-            <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; max-width: 600px;">
-                <h2 style="color: #27ae60;">New Order Received! 🎉</h2>
-                <p><strong>Order ID:</strong> ${populatedOrder.orderNumber}</p>
-                <p><strong>Customer:</strong> ${populatedOrder.customerId?.shopName || 'Guest'} (${populatedOrder.customerId?.city || ''})</p>
-                <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || 'N/A'}</p>
-                <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
-                <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
-                
-                <hr/>
-                <h3>Items Ordered:</h3>
-                <ul style="padding-left: 20px;">
-                    ${populatedOrder.items.map(item => `
-                        <li style="margin-bottom: 5px;">
-                            <strong>${item.name}</strong> - Qty: ${item.qty}
-                        </li>
-                    `).join('')}
-                </ul>
-                <hr/>
-                
-                <p>Please check the admin panel for more details.</p>
-            </div>
-        `;
+      const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
 
-        // Note: No 'await' here. This runs in background.
-        sendEmail({
-            to: adminEmail,
-            subject: emailSubject,
-            html: emailMessage
-        }).catch(err => {
-             // Sirf log karo, user ko error mat dikhao kyunki order ho chuka hai
-             console.error("Background Email Error:", err.message);
-        });
+      const emailMessage = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; max-width: 600px;">
+          <h2 style="color: #27ae60;">New Order Received! 🎉</h2>
+          <p><strong>Order ID:</strong> ${populatedOrder.orderNumber}</p>
+          <p><strong>Customer:</strong> ${populatedOrder.customerId?.shopName || "Guest"} (${populatedOrder.customerId?.city || ""})</p>
+          <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || "N/A"}</p>
+          <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
+          <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
+
+          <hr/>
+          <h3>Items Ordered:</h3>
+          <ul style="padding-left: 20px;">
+            ${populatedOrder.items
+              .map(
+                (item) => `
+              <li style="margin-bottom: 5px;">
+                <strong>${item.name}</strong> - Qty: ${item.qty}
+              </li>
+            `
+              )
+              .join("")}
+          </ul>
+          <hr/>
+
+          <p>Please check the admin panel for more details.</p>
+        </div>
+      `;
+
+      sendEmail({
+        to: adminEmail,
+        subject: emailSubject,
+        html: emailMessage,
+      }).catch((err) => {
+        console.error("Background Email Error:", err.message);
+      });
     }
-
   } catch (err) {
     console.error("Order Creation Error:", err);
-    // Ensure we haven't sent a response yet
     if (!res.headersSent) {
-        res.status(500).json({
-          message: err.message || "Server error while creating order",
-        });
+      res.status(500).json({
+        message: err.message || "Server error while creating order",
+      });
     }
   }
 });
@@ -244,61 +271,53 @@ router.post("/", async (req, res) => {
    ✅ RETURN REQUEST ROUTES
 ============================================================ */
 
-/**
- * @route   PUT /api/orders/return/:id
- * @desc    User requests a return (Images/Video URLs req body me aayenge)
- */
-router.put('/return/:id', async (req, res) => {
+router.put("/return/:id", async (req, res) => {
   try {
     const { reason, description, images, video } = req.body;
     const order = await Order.findById(req.params.id);
 
     if (order) {
-      if (order.status !== 'delivered') {
-        return res.status(400).send({ message: 'Order must be delivered to request return.' });
+      if (order.status !== "delivered") {
+        return res.status(400).send({ message: "Order must be delivered to request return." });
       }
 
       order.returnRequest = {
         isRequested: true,
-        status: 'Pending',
+        status: "Pending",
         reason: reason,
         description: description,
-        proofImages: images || [], 
-        proofVideo: video || "",    
-        requestDate: Date.now()
+        proofImages: images || [],
+        proofVideo: video || "",
+        requestDate: Date.now(),
       };
 
       const updatedOrder = await order.save();
-      res.send({ message: 'Return Requested Successfully', order: updatedOrder });
+      res.send({ message: "Return Requested Successfully", order: updatedOrder });
     } else {
-      res.status(404).send({ message: 'Order Not Found' });
+      res.status(404).send({ message: "Order Not Found" });
     }
   } catch (error) {
     res.status(500).send({ message: error.message });
   }
 });
 
-/**
- * @route   PUT /api/orders/admin/return-action/:id
- * @desc    Admin Approves or Rejects Return
- */
-router.put('/admin/return-action/:id', async (req, res) => {
+router.put("/admin/return-action/:id", async (req, res) => {
   try {
-    const { status, comment } = req.body; 
+    const { status, comment } = req.body;
     const order = await Order.findById(req.params.id);
 
     if (order) {
       order.returnRequest.status = status;
       order.returnRequest.adminComment = comment;
-      
-      if (status === 'Approved') {
-        order.status = 'returned'; 
+
+      if (status === "Approved") {
+        order.status = "returned";
       }
 
       await order.save();
-      res.send({ message: 'Return Status Updated' });
+      res.send({ message: "Return Status Updated" });
     } else {
-      res.status(404).send({ message: 'Order Not Found' });
+      res.status(404).send({ message: "Order Not Found" });
     }
   } catch (error) {
     res.status(500).send({ message: error.message });
@@ -312,19 +331,12 @@ router.put('/admin/return-action/:id', async (req, res) => {
 const updateOrderStatus = async (req, res) => {
   try {
     const { status, trackingId, courierName, cancelledBy } = req.body;
-    
-    if (!status) return res.status(400).json({ message: "Status is required" });
-    
-    const newStatus = status.toLowerCase(); 
 
-    const allowedStatuses = [
-      "pending",
-      "processing",
-      "shipped",
-      "delivered",
-      "cancelled",
-      "returned" 
-    ];
+    if (!status) return res.status(400).json({ message: "Status is required" });
+
+    const newStatus = status.toLowerCase();
+
+    const allowedStatuses = ["pending", "processing", "shipped", "delivered", "cancelled", "returned"];
 
     if (!allowedStatuses.includes(newStatus)) {
       return res.status(400).json({ message: "Invalid status value" });
@@ -335,38 +347,109 @@ const updateOrderStatus = async (req, res) => {
 
     // ✅ STOCK REDUCTION LOGIC
     if (newStatus === "delivered" && order.status !== "delivered") {
-        if (order.items && Array.isArray(order.items)) {
-            for (const item of order.items) {
-                const productId = item.productId?._id || item.productId;
-                const qty = Number(item.qty) || 0;
+      if (order.items && Array.isArray(order.items)) {
+        for (const item of order.items) {
+          const productId = item.productId?._id || item.productId;
+          const qty = Number(item.qty) || 0;
 
-                if (productId && qty > 0) {
-                    await Product.findByIdAndUpdate(productId, { 
-                        $inc: { stock: -qty } 
-                    });
-                }
-            }
+          if (productId && qty > 0) {
+            await Product.findByIdAndUpdate(productId, {
+              $inc: { stock: -qty },
+            });
+          }
         }
-        order.isDelivered = true;
-        order.deliveredAt = Date.now();
+      }
+      order.isDelivered = true;
+      order.deliveredAt = Date.now();
     }
 
     // ✅ UPDATE TRACKING DETAILS
     if (newStatus === "shipped") {
-        if (trackingId) order.trackingId = trackingId;
-        if (courierName) order.courierName = courierName;
-        order.isShipped = true;
+      if (trackingId) order.trackingId = trackingId;
+      if (courierName) order.courierName = courierName;
+      order.isShipped = true;
     }
 
     // Update Status
     order.status = newStatus;
 
     // ✅ SAVE WHO CANCELLED THE ORDER
-    if (newStatus === 'cancelled' && cancelledBy) {
-        order.cancelledBy = cancelledBy;
+    if (newStatus === "cancelled" && cancelledBy) {
+      order.cancelledBy = cancelledBy;
     }
 
+    // ensure wa object exists (requires model updates)
+    if (!order.wa) {
+      order.wa = {
+        orderConfirmedSent: false,
+        trackingSent: false,
+        lastError: "",
+        lastSentAt: null,
+      };
+    }
+
+    const prevStatus = String(order.status); // note: after assignment, keep for logic if needed
+
     const updatedOrder = await order.save();
+
+    /* ===========================
+       ✅ WHATSAPP SEND LOGIC
+       1) processing => order confirmed
+       2) shipped + tracking => tracking update
+    ============================ */
+    const customerPhoneRaw = order.shippingAddress?.phone;
+    const to = sanitizePhone(customerPhoneRaw);
+
+    // Only if phone present
+    if (to) {
+      // ✅ Order Confirmed (processing)
+      if (newStatus === "processing" && !order.wa.orderConfirmedSent) {
+        try {
+          await sendWhatsAppTemplate({
+            to,
+            templateName: process.env.WA_ORDER_TEMPLATE || "order_confirmed_v1",
+            params: [order.shippingAddress?.fullName || "Customer", order.orderNumber, order.total],
+          });
+
+          order.wa.orderConfirmedSent = true;
+          order.wa.lastSentAt = new Date();
+          order.wa.lastError = "";
+          await order.save();
+        } catch (e) {
+          order.wa.lastError = e?.message || "WhatsApp confirm failed";
+          await order.save();
+        }
+      }
+
+      // ✅ Tracking message (shipped)
+      if (
+        newStatus === "shipped" &&
+        order.trackingId &&
+        order.courierName &&
+        !order.wa.trackingSent
+      ) {
+        try {
+          await sendWhatsAppTemplate({
+            to,
+            templateName: process.env.WA_TRACKING_TEMPLATE || "tracking_update_v1",
+            params: [
+              order.shippingAddress?.fullName || "Customer",
+              order.orderNumber,
+              order.courierName,
+              order.trackingId,
+            ],
+          });
+
+          order.wa.trackingSent = true;
+          order.wa.lastSentAt = new Date();
+          order.wa.lastError = "";
+          await order.save();
+        } catch (e) {
+          order.wa.lastError = e?.message || "WhatsApp tracking failed";
+          await order.save();
+        }
+      }
+    }
 
     const populatedOrder = await Order.findById(updatedOrder._id)
       .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")

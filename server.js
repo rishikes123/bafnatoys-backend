@@ -16,9 +16,28 @@ app.set("trust proxy", true);
 
 /* ------------------------- SOCKET.IO SERVER SETUP ------------------------- */
 const server = http.createServer(app);
+
+const allowedOrigins = [
+  "https://bafnatoys.com",
+  "https://www.bafnatoys.com",
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // curl/postman/server-to-server
+  if (allowedOrigins.includes(origin)) return true;
+  if (origin.endsWith(".vercel.app")) return true; // ✅ allow vercel previews
+  return false;
+};
+
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: (origin, cb) => {
+      if (isAllowedOrigin(origin)) return cb(null, origin || true);
+      return cb(new Error("Not allowed by CORS (socket): " + origin));
+    },
+    credentials: true,
     methods: ["GET", "POST"],
   },
 });
@@ -38,23 +57,23 @@ io.on("connection", (socket) => {
 /* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
 
-/* --------------------------- CORS CONFIG ---------------------------- */
+/* --------------------------- CORS CONFIG (FIXED) ---------------------------- */
+// ✅ Must be BEFORE routes
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (
-        origin.includes("localhost") ||
-        origin.endsWith(".vercel.app") ||
-        origin.endsWith("bafnatoys.com")
-      ) {
-        return callback(null, true);
-      }
-      callback(null, true); // allow all (same as your current)
+    origin: (origin, cb) => {
+      if (isAllowedOrigin(origin)) return cb(null, origin || true); // reflect exact origin
+      return cb(new Error("Not allowed by CORS: " + origin));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 204,
   })
 );
+
+// ✅ Explicit preflight handler (helps Railway/Proxies)
+app.options("*", cors());
 
 /* ------------------------ BODY PARSERS ------------------------------ */
 app.use(express.json({ limit: "10mb" }));
@@ -63,10 +82,6 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 /* ------------------------ STATIC FILES ------------------------------- */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/images", express.static(path.join(__dirname, "images")));
-
-/* ====================================================================
-   ✅ INDIA ONLY REMOVED (Now Global Access Enabled)
-   ==================================================================== */
 
 /* ====================================================================
    ✅ FINAL SEO ROUTE (The Placeholder Method)
@@ -181,7 +196,7 @@ app.use("/api/shipping", require("./routes/shippingRoutes"));
 app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/discount-rules", require("./routes/discountRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
-app.use("/api/reviews", require("./routes/reviewRoutes")); // ✅ NEW: Review Route Added
+app.use("/api/reviews", require("./routes/reviewRoutes"));
 app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
