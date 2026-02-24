@@ -323,13 +323,10 @@ const updateOrderStatus = async (req, res) => {
 
     /* ============================================================
         ✅ WhatsApp Trigger
-        NOTE:
-        - order_confirmed_new : numeric vars {{1}} {{2}} {{3}} => NO parameter_name
-        - order_dispatch_v1   : named vars => parameter_name REQUIRED
     ============================================================ */
     const to = sanitizePhone(order.customerId?.whatsapp || order.customerId?.otpMobile || order.shippingAddress?.phone);
 
-    // ✅ ORDER CONFIRMED (processing) -> Template: order_confirmed_new (numeric placeholders)
+    // ✅ ORDER CONFIRMED (processing) -> Template: order_confirmed_new
     if (to && newStatus === "processing" && !order.wa.orderConfirmedSent) {
       try {
         await sendWhatsAppTemplate({
@@ -358,7 +355,7 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED -> Template: order_dispatch_v1 (named placeholders)
+    // ✅ ORDER SHIPPED -> Template: order_shipped_new (MAPPED EXACTLY TO YOUR NEW TEMPLATE)
     if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
       try {
         // 🔗 SMART TRACKING LINK LOGIC
@@ -373,17 +370,18 @@ const updateOrderStatus = async (req, res) => {
 
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_dispatch_v1",
+          templateName: "order_shipped_new", // ✅ Sahi naya naam dal diya!
           languageCode: "en_US",
           components: [
             {
               type: "body",
               parameters: [
-                { type: "text", parameter_name: "shop_name", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") },
-                { type: "text", parameter_name: "order_id", text: String(order.orderNumber || "") },
-                { type: "text", parameter_name: "courier_name", text: String(order.courierName || "") },
-                { type: "text", parameter_name: "tracking_id", text: String(order.trackingId || "") },
-                { type: "text", parameter_name: "tracking_link", text: String(dynamicTrackingLink || "") },
+                // ✅ Exactly 5 variables match kiye hain aapke naye template ke hisaab se
+                { type: "text", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") }, // {{1}}
+                { type: "text", text: String(order.orderNumber || "") }, // {{2}}
+                { type: "text", text: String(order.courierName || "") }, // {{3}}
+                { type: "text", text: String(order.trackingId || "") },  // {{4}}
+                { type: "text", text: String(dynamicTrackingLink || "") }, // {{5}}
               ],
             },
           ],

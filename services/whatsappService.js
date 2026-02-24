@@ -1,3 +1,4 @@
+// services/whatsappService.js
 const axios = require("axios");
 
 function normalizeComponents(components = []) {
@@ -7,8 +8,7 @@ function normalizeComponents(components = []) {
     return {
       ...comp,
       parameters: comp.parameters.map((p) => {
-        // Meta expects ONLY { type, text } (for text params)
-        // If your route sends parameter_name, we ignore it safely.
+        // Meta expects ONLY { type, text } for normal text params
         const type = p?.type || "text";
 
         if (type === "text") {
@@ -18,8 +18,7 @@ function normalizeComponents(components = []) {
           };
         }
 
-        // In case you ever send other param types later (image, currency, date_time)
-        // we pass through only allowed keys.
+        // In case you ever send other param types later (currency, image, etc.)
         const cleaned = { type };
         if (p?.text != null) cleaned.text = String(p.text);
         if (p?.currency != null) cleaned.currency = p.currency;
@@ -49,7 +48,7 @@ async function sendWhatsAppTemplate({
 
   const url = `https://graph.facebook.com/${WA_API_VERSION}/${WA_PHONE_NUMBER_ID}/messages`;
 
-  // ✅ Normalize here (no change needed in your routes)
+  // ✅ Normalize here to prevent Meta API errors
   const safeComponents = normalizeComponents(components);
 
   const payload = {
