@@ -3,10 +3,19 @@ const router = express.Router();
 const upload = require("../middleware/upload"); // multer middleware
 const Registration = require("../models/Registration");
 
-// Helper to normalize phone
+// Helper to normalize phone (10 digits only)
 const normalizePhone = (v = "") => {
   const digits = String(v).replace(/\D/g, "");
   return digits.length > 10 ? digits.slice(-10) : digits;
+};
+
+// ✅ NEW: WhatsApp ko always 91 + 10 digits me convert karo
+const normalizeWhatsApp91 = (v = "") => {
+  const digits = String(v).replace(/\D/g, ""); // only numbers
+  const without91 = digits.startsWith("91") ? digits.slice(2) : digits; // remove 91 if present
+  const last10 = without91.length > 10 ? without91.slice(-10) : without91; // take last 10
+  if (last10.length !== 10) return ""; // invalid
+  return "91" + last10; // ✅ final 91XXXXXXXXXX
 };
 
 /* ------------------------------ REGISTER ----------------------------- */
@@ -15,12 +24,18 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
   try {
     const { shopName, address, otpMobile, whatsapp, password } = req.body;
 
-    if (!shopName || !otpMobile || !address) {
-      return res.status(400).json({ message: "Please fill Shop Name, Mobile, and Address." });
+    // ✅ WhatsApp compulsory
+    if (!shopName || !otpMobile || !address || !whatsapp) {
+      return res.status(400).json({ message: "Please fill Shop Name, Mobile, WhatsApp, and Address." });
     }
 
     const nMobile = normalizePhone(otpMobile);
-    const nWhats = whatsapp ? normalizePhone(whatsapp) : "";
+
+    // ✅ WhatsApp always with 91
+    const nWhats = normalizeWhatsApp91(whatsapp);
+    if (!nWhats) {
+      return res.status(400).json({ message: "Invalid WhatsApp number. Enter 10 digit WhatsApp number." });
+    }
 
     // Duplicate Check
     const dup = await Registration.findOne({ otpMobile: nMobile });
@@ -35,17 +50,16 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       shopName,
       address,
       otpMobile: nMobile,
-      whatsapp: nWhats,
+      whatsapp: nWhats, // ✅ saved as 91XXXXXXXXXX
       password,
       visitingCardUrl,
-      
-      // ✅ CHANGE: Auto-Approve (Approval System Removed)
-      isApproved: true, 
+
+      // ✅ Auto-Approve
+      isApproved: true,
     });
 
     res.status(201).json({
       success: true,
-      // ✅ Message updated
       message: "✅ Registration successful! You can login now.",
       user: doc,
     });
@@ -92,7 +106,13 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
     }
 
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
-    if (update.whatsapp) update.whatsapp = normalizePhone(update.whatsapp);
+
+    // ✅ Update WhatsApp bhi always 91 format me
+    if (update.whatsapp !== undefined) {
+      const w = normalizeWhatsApp91(update.whatsapp);
+      if (!w) return res.status(400).json({ message: "Invalid WhatsApp number." });
+      update.whatsapp = w;
+    }
 
     if (req.file) update.visitingCardUrl = req.file.path;
 

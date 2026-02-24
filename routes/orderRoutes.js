@@ -1,74 +1,30 @@
+// routes/orderRoutes.js
 const express = require("express");
 const router = express.Router();
-const axios = require("axios");
 
-const Order = require("../models/orderModel"); // Ensure path is correct
-const Setting = require("../models/settingModel"); // Ensure path is correct
-const Product = require("../models/Product"); // Ensure path is correct
-const sendEmail = require("../utils/sendEmail"); // ✅ Import Email Helper
+const Order = require("../models/orderModel");
+const Product = require("../models/Product");
+const sendEmail = require("../utils/sendEmail");
 
-// Note: Agar aapke paas auth middleware hai (isAuth, isAdmin), toh unhe import karke routes me use karein.
-// const { isAuth, isAdmin } = require("../utils/utils");
+// ✅ WhatsApp Service (Meta Cloud API)
+const { sendWhatsAppTemplate } = require("../services/whatsappService");
 
-/* ============================================================
-   ✅ WHATSAPP HELPERS (Meta Cloud API)
-============================================================ */
-const WA_API_VERSION = process.env.WA_API_VERSION || "v20.0";
-const WA_PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID;
-const WA_ACCESS_TOKEN = process.env.WA_ACCESS_TOKEN;
-
+// ✅ Phone sanitizer (India)
 function sanitizePhone(phone) {
-  return String(phone || "").replace(/\D/g, "");
-}
+  let digits = String(phone || "").replace(/\D/g, "");
 
-async function sendWhatsAppTemplate({ to, templateName, languageCode = "en_US", params = [] }) {
-  if (!to) return;
+  // remove leading 0 (0987... => 987...)
+  if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
 
-  if (!WA_PHONE_NUMBER_ID || !WA_ACCESS_TOKEN) {
-    console.error("WhatsApp ENV missing: WA_PHONE_NUMBER_ID / WA_ACCESS_TOKEN");
-    return;
-  }
+  // if 10 digits => add 91
+  if (digits.length === 10) digits = "91" + digits;
 
-  try {
-    await axios.post(
-      `https://graph.facebook.com/${WA_API_VERSION}/${WA_PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: "whatsapp",
-        to,
-        type: "template",
-        template: {
-          name: templateName,
-          language: { code: languageCode },
-          components: [
-            {
-              type: "body",
-              parameters: params.map((t) => ({ type: "text", text: String(t ?? "") })),
-            },
-          ],
-        },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${WA_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 15000,
-      }
-    );
-  } catch (err) {
-    console.error("WhatsApp Send Error:", err.response?.data || err.message);
-    throw err;
-  }
+  return digits; // final: 9198xxxxxxxx
 }
 
 /* ============================================================
-   ✅ ANALYTICS ROUTES (Must be before /:id)
+    ✅ ANALYTICS ROUTES (Must be before /:id)
 ============================================================ */
-
-/**
- * @route   GET /api/orders/analytics/top-selling
- * @desc    Get top 5 selling products based on quantity
- */
 router.get("/analytics/top-selling", async (req, res) => {
   try {
     const topProducts = await Order.aggregate([
@@ -96,20 +52,15 @@ router.get("/analytics/top-selling", async (req, res) => {
 });
 
 /* ============================================================
-   ✅ STANDARD ORDER ROUTES
+    ✅ STANDARD ORDER ROUTES
 ============================================================ */
-
-/**
- * @route   GET /api/orders
- * @desc    Get all orders (optionally filter by customerId)
- */
 router.get("/", async (req, res) => {
   try {
     const { customerId } = req.query;
     const filter = customerId ? { customerId } : {};
 
     const orders = await Order.find(filter)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl address")
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -121,14 +72,10 @@ router.get("/", async (req, res) => {
   }
 });
 
-/**
- * @route   GET /api/orders/:id
- * @desc    Get a single order by ID
- */
 router.get("/:id", async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl address")
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -141,8 +88,8 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
- * @route   POST /api/orders
- * @desc    Create a new order & Notify Admin via Email
+ * @route    POST /api/orders
+ * @desc     Create a new order & Notify Admin via Email
  */
 router.post("/", async (req, res) => {
   try {
@@ -154,11 +101,9 @@ router.post("/", async (req, res) => {
       paymentMethod,
       shippingAddress,
 
-      // ✅ COD fields
       codAdvancePaid,
       codRemainingAmount,
 
-      // ✅ Price Breakdown
       itemsPrice,
       shippingPrice,
     } = req.body;
@@ -171,7 +116,7 @@ router.post("/", async (req, res) => {
 
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
 
-    let order = new Order({
+    const order = new Order({
       customerId,
       items,
       shippingAddress: shippingAddress || {},
@@ -181,7 +126,6 @@ router.post("/", async (req, res) => {
       total: total,
 
       paymentMode: finalPaymentMethod,
-
       advancePaid: codAdvancePaid || 0,
       remainingAmount: codRemainingAmount || 0,
     });
@@ -209,15 +153,14 @@ router.post("/", async (req, res) => {
     }
 
     const populatedOrder = await Order.findById(savedOrder._id)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
       .lean();
 
-    // ✅ 1) response fast
+    // ✅ respond fast
     res.status(201).json({ order: populatedOrder });
 
-    // ✅ 2) email background
+    // ✅ email in background
     const adminEmail = process.env.ADMIN_EMAIL;
-
     if (adminEmail) {
       const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
 
@@ -236,10 +179,10 @@ router.post("/", async (req, res) => {
             ${populatedOrder.items
               .map(
                 (item) => `
-              <li style="margin-bottom: 5px;">
-                <strong>${item.name}</strong> - Qty: ${item.qty}
-              </li>
-            `
+                  <li style="margin-bottom: 5px;">
+                    <strong>${item.name}</strong> - Qty: ${item.qty}
+                  </li>
+                `
               )
               .join("")}
           </ul>
@@ -249,11 +192,7 @@ router.post("/", async (req, res) => {
         </div>
       `;
 
-      sendEmail({
-        to: adminEmail,
-        subject: emailSubject,
-        html: emailMessage,
-      }).catch((err) => {
+      sendEmail({ to: adminEmail, subject: emailSubject, html: emailMessage }).catch((err) => {
         console.error("Background Email Error:", err.message);
       });
     }
@@ -268,9 +207,8 @@ router.post("/", async (req, res) => {
 });
 
 /* ============================================================
-   ✅ RETURN REQUEST ROUTES
+    ✅ RETURN REQUEST ROUTES
 ============================================================ */
-
 router.put("/return/:id", async (req, res) => {
   try {
     const { reason, description, images, video } = req.body;
@@ -284,8 +222,8 @@ router.put("/return/:id", async (req, res) => {
       order.returnRequest = {
         isRequested: true,
         status: "Pending",
-        reason: reason,
-        description: description,
+        reason,
+        description,
         proofImages: images || [],
         proofVideo: video || "",
         requestDate: Date.now(),
@@ -325,37 +263,31 @@ router.put("/admin/return-action/:id", async (req, res) => {
 });
 
 /* ============================================================
-   ✅ STATUS & TRACKING UPDATE & CANCELLATION
+    ✅ STATUS & TRACKING UPDATE + WHATSAPP TRIGGERS
 ============================================================ */
-
 const updateOrderStatus = async (req, res) => {
   try {
     const { status, trackingId, courierName, cancelledBy } = req.body;
-
     if (!status) return res.status(400).json({ message: "Status is required" });
 
-    const newStatus = status.toLowerCase();
-
+    const newStatus = String(status).toLowerCase();
     const allowedStatuses = ["pending", "processing", "shipped", "delivered", "cancelled", "returned"];
-
     if (!allowedStatuses.includes(newStatus)) {
       return res.status(400).json({ message: "Invalid status value" });
     }
 
-    const order = await Order.findById(req.params.id);
+    // ✅ populate customer for WhatsApp
+    const order = await Order.findById(req.params.id).populate("customerId");
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // ✅ STOCK REDUCTION LOGIC
+    /* ✅ STOCK REDUCTION (on delivered) */
     if (newStatus === "delivered" && order.status !== "delivered") {
-      if (order.items && Array.isArray(order.items)) {
+      if (Array.isArray(order.items)) {
         for (const item of order.items) {
           const productId = item.productId?._id || item.productId;
           const qty = Number(item.qty) || 0;
-
           if (productId && qty > 0) {
-            await Product.findByIdAndUpdate(productId, {
-              $inc: { stock: -qty },
-            });
+            await Product.findByIdAndUpdate(productId, { $inc: { stock: -qty } });
           }
         }
       }
@@ -363,22 +295,19 @@ const updateOrderStatus = async (req, res) => {
       order.deliveredAt = Date.now();
     }
 
-    // ✅ UPDATE TRACKING DETAILS
+    /* ✅ TRACKING FIELDS (on shipped) */
     if (newStatus === "shipped") {
       if (trackingId) order.trackingId = trackingId;
       if (courierName) order.courierName = courierName;
       order.isShipped = true;
     }
 
-    // Update Status
-    order.status = newStatus;
-
-    // ✅ SAVE WHO CANCELLED THE ORDER
+    /* ✅ CANCEL INFO */
     if (newStatus === "cancelled" && cancelledBy) {
       order.cancelledBy = cancelledBy;
     }
 
-    // ensure wa object exists (requires model updates)
+    // Ensure wa object exists
     if (!order.wa) {
       order.wa = {
         orderConfirmedSent: false,
@@ -388,90 +317,102 @@ const updateOrderStatus = async (req, res) => {
       };
     }
 
-    const prevStatus = String(order.status); // note: after assignment, keep for logic if needed
+    // Save status
+    order.status = newStatus;
+    await order.save();
 
-    const updatedOrder = await order.save();
+    /* ============================================================
+        ✅ WhatsApp Trigger
+        NOTE:
+        - order_confirmed_new : numeric vars {{1}} {{2}} {{3}} => NO parameter_name
+        - order_dispatch_v1   : named vars => parameter_name REQUIRED
+    ============================================================ */
+    const to = sanitizePhone(order.customerId?.whatsapp || order.customerId?.otpMobile || order.shippingAddress?.phone);
 
-    /* ===========================
-       ✅ WHATSAPP SEND LOGIC
-       1) processing => order confirmed
-       2) shipped + tracking => tracking update
-    ============================ */
-    const customerPhoneRaw = order.shippingAddress?.phone;
-    const to = sanitizePhone(customerPhoneRaw);
+    // ✅ ORDER CONFIRMED (processing) -> Template: order_confirmed_new (numeric placeholders)
+    if (to && newStatus === "processing" && !order.wa.orderConfirmedSent) {
+      try {
+        await sendWhatsAppTemplate({
+          to,
+          templateName: "order_confirmed_new",
+          languageCode: "en_US",
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") },
+                { type: "text", text: String(order.orderNumber || "") },
+                { type: "text", text: String(order.total ?? "") },
+              ],
+            },
+          ],
+        });
 
-    // Only if phone present
-    if (to) {
-      // ✅ Order Confirmed (processing)
-      if (newStatus === "processing" && !order.wa.orderConfirmedSent) {
-        try {
-          await sendWhatsAppTemplate({
-            to,
-            templateName: process.env.WA_ORDER_TEMPLATE || "order_confirmed_v1",
-            params: [order.shippingAddress?.fullName || "Customer", order.orderNumber, order.total],
-          });
-
-          order.wa.orderConfirmedSent = true;
-          order.wa.lastSentAt = new Date();
-          order.wa.lastError = "";
-          await order.save();
-        } catch (e) {
-          order.wa.lastError = e?.message || "WhatsApp confirm failed";
-          await order.save();
-        }
-      }
-
-      // ✅ Tracking message (shipped)
-      if (
-        newStatus === "shipped" &&
-        order.trackingId &&
-        order.courierName &&
-        !order.wa.trackingSent
-      ) {
-        try {
-          await sendWhatsAppTemplate({
-            to,
-            templateName: process.env.WA_TRACKING_TEMPLATE || "tracking_update_v1",
-            params: [
-              order.shippingAddress?.fullName || "Customer",
-              order.orderNumber,
-              order.courierName,
-              order.trackingId,
-            ],
-          });
-
-          order.wa.trackingSent = true;
-          order.wa.lastSentAt = new Date();
-          order.wa.lastError = "";
-          await order.save();
-        } catch (e) {
-          order.wa.lastError = e?.message || "WhatsApp tracking failed";
-          await order.save();
-        }
+        order.wa.orderConfirmedSent = true;
+        order.wa.lastSentAt = new Date();
+        order.wa.lastError = "";
+        await order.save();
+      } catch (e) {
+        order.wa.lastError = e?.response?.data ? JSON.stringify(e.response.data) : e?.message || "WhatsApp confirm failed";
+        await order.save();
       }
     }
 
-    const populatedOrder = await Order.findById(updatedOrder._id)
-      .populate("customerId", "firmName shopName otpMobile city state zip visitingCardUrl")
+    // ✅ ORDER SHIPPED -> Template: order_dispatch_v1 (named placeholders)
+    if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
+      try {
+        // 🔗 SMART TRACKING LINK LOGIC
+        let dynamicTrackingLink = "https://google.com";
+        const cName = String(order.courierName).toLowerCase().trim();
+
+        if (cName.includes("delhivery")) {
+          dynamicTrackingLink = "https://www.delhivery.com/tracking";
+        } else if (cName.includes("vxpress") || cName.includes("v-xpress") || cName.includes("v xpress")) {
+          dynamicTrackingLink = "https://vxpress.in/track-result/";
+        }
+
+        await sendWhatsAppTemplate({
+          to,
+          templateName: "order_dispatch_v1",
+          languageCode: "en_US",
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", parameter_name: "shop_name", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") },
+                { type: "text", parameter_name: "order_id", text: String(order.orderNumber || "") },
+                { type: "text", parameter_name: "courier_name", text: String(order.courierName || "") },
+                { type: "text", parameter_name: "tracking_id", text: String(order.trackingId || "") },
+                { type: "text", parameter_name: "tracking_link", text: String(dynamicTrackingLink || "") },
+              ],
+            },
+          ],
+        });
+
+        order.wa.trackingSent = true;
+        order.wa.lastSentAt = new Date();
+        order.wa.lastError = "";
+        await order.save();
+      } catch (e) {
+        order.wa.lastError = e?.response?.data ? JSON.stringify(e.response.data) : e?.message || "WhatsApp shipped failed";
+        await order.save();
+      }
+    }
+
+    const populatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
       .lean();
 
     res.json(populatedOrder);
   } catch (err) {
     console.error("Status Update Error:", err);
-    res.status(500).json({
-      message: err.message || "Server error while updating status",
-    });
+    res.status(500).json({ message: err.message || "Server error while updating status" });
   }
 };
 
-// Apply same handler for both PUT and PATCH
 router.put("/:id/status", updateOrderStatus);
 router.patch("/:id/status", updateOrderStatus);
 
-/**
- * @route   DELETE /api/orders/:id
- * @desc    Delete an order
- */
 router.delete("/:id", async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id).lean();
@@ -479,9 +420,7 @@ router.delete("/:id", async (req, res) => {
 
     res.json({ ok: true, message: "Order deleted successfully" });
   } catch (err) {
-    res.status(500).json({
-      message: err.message || "Server error while deleting order",
-    });
+    res.status(500).json({ message: err.message || "Server error while deleting order" });
   }
 });
 
