@@ -89,7 +89,7 @@ router.get("/:id", async (req, res) => {
 
 /**
  * @route    POST /api/orders
- * @desc     Create a new order & Notify Admin via Email
+ * @desc     Create a new order & Notify Admin via Email + Customer via WhatsApp
  */
 router.post("/", async (req, res) => {
   try {
@@ -128,6 +128,14 @@ router.post("/", async (req, res) => {
       paymentMode: finalPaymentMethod,
       advancePaid: codAdvancePaid || 0,
       remainingAmount: codRemainingAmount || 0,
+
+      // ✅ Initialize WA Tracking State
+      wa: {
+        orderConfirmedSent: false,
+        trackingSent: false,
+        lastError: "",
+        lastSentAt: null,
+      }
     });
 
     const MAX_TRIES = 5;
@@ -156,10 +164,10 @@ router.post("/", async (req, res) => {
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
       .lean();
 
-    // ✅ respond fast
+    // ✅ 1. Respond fast to frontend
     res.status(201).json({ order: populatedOrder });
 
-    // ✅ email in background
+    // ✅ 2. Email admin in background
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail) {
       const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
@@ -196,6 +204,42 @@ router.post("/", async (req, res) => {
         console.error("Background Email Error:", err.message);
       });
     }
+
+    // ✅ 3. IMMEDIATE WHATSAPP TO CUSTOMER (Smart feature)
+    const to = sanitizePhone(populatedOrder.customerId?.whatsapp || populatedOrder.customerId?.otpMobile || populatedOrder.shippingAddress?.phone);
+
+    if (to) {
+      try {
+        await sendWhatsAppTemplate({
+          to,
+          templateName: "order_confirmed_new", // Using the same confirmation template
+          languageCode: "en_US",
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: String(populatedOrder.customerId?.shopName || populatedOrder.customerId?.firmName || "Customer") },
+                { type: "text", text: String(populatedOrder.orderNumber || "") },
+                { type: "text", text: String(populatedOrder.total ?? "") },
+              ],
+            },
+          ],
+        });
+
+        // Update DB silently so Admin Panel dropdown doesn't send duplicate message later
+        await Order.findByIdAndUpdate(savedOrder._id, {
+          "wa.orderConfirmedSent": true,
+          "wa.lastSentAt": new Date(),
+          "wa.lastError": ""
+        });
+      } catch (waErr) {
+        console.error("Immediate WhatsApp Error:", waErr?.response?.data || waErr.message);
+        await Order.findByIdAndUpdate(savedOrder._id, {
+          "wa.lastError": "Immediate WhatsApp failed"
+        });
+      }
+    }
+
   } catch (err) {
     console.error("Order Creation Error:", err);
     if (!res.headersSent) {
@@ -326,7 +370,8 @@ const updateOrderStatus = async (req, res) => {
     ============================================================ */
     const to = sanitizePhone(order.customerId?.whatsapp || order.customerId?.otpMobile || order.shippingAddress?.phone);
 
-    // ✅ ORDER CONFIRMED (processing) -> Template: order_confirmed_new
+    // ✅ ORDER CONFIRMED (processing)
+    // NOTE: This will mostly skip now if the message was sent at Order Placement, preventing duplicates!
     if (to && newStatus === "processing" && !order.wa.orderConfirmedSent) {
       try {
         await sendWhatsAppTemplate({
@@ -355,7 +400,7 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED -> Template: order_shipped_new (MAPPED EXACTLY TO YOUR NEW TEMPLATE)
+    // ✅ ORDER SHIPPED -> Template: order_shipped_new
     if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
       try {
         // 🔗 SMART TRACKING LINK LOGIC
