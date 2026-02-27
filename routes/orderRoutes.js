@@ -400,7 +400,7 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED -> Template: order_shipped_new
+    // ✅ ORDER SHIPPED -> Template: order_shipped_neya
     if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
       try {
         // 🔗 SMART TRACKING LINK LOGIC
@@ -415,13 +415,12 @@ const updateOrderStatus = async (req, res) => {
 
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_shipped_new", // ✅ Sahi naya naam dal diya!
+          templateName: "order_shipped_neya", 
           languageCode: "en_US",
           components: [
             {
               type: "body",
               parameters: [
-                // ✅ Exactly 5 variables match kiye hain aapke naye template ke hisaab se
                 { type: "text", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") }, // {{1}}
                 { type: "text", text: String(order.orderNumber || "") }, // {{2}}
                 { type: "text", text: String(order.courierName || "") }, // {{3}}
@@ -429,6 +428,18 @@ const updateOrderStatus = async (req, res) => {
                 { type: "text", text: String(dynamicTrackingLink || "") }, // {{5}}
               ],
             },
+            // ✅ Yahan Button Variable pass kar diya taaki Meta error na de
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [
+                {
+                  type: "text",
+                  text: "orders" // Ye append hokar 'bafnatoys.com/orders' ban jayega
+                }
+              ]
+            }
           ],
         });
 
