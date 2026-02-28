@@ -400,7 +400,7 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED -> Template: order_shipped_neya
+    // ✅ ORDER SHIPPED -> Template: order_shipped_neya_hai
     if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
       try {
         // 🔗 SMART TRACKING LINK LOGIC
@@ -415,7 +415,8 @@ const updateOrderStatus = async (req, res) => {
 
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_shipped_neya", 
+          // 🚀 UPDATED HERE: Pointing to exact template name or env variable
+          templateName: process.env.WA_TRACKING_TEMPLATE || "order_shipped_neya_hai", 
           languageCode: "en_US",
           components: [
             {
