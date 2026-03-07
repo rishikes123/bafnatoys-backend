@@ -368,4 +368,70 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------
+✅ 10. GOOGLE MERCHANT CENTER PRODUCT FEED (XML)
+------------------------------------------------------------------ */
+router.get("/feed/google-shopping", async (req, res) => {
+  try {
+    // 1. Saare products fetch karein
+    const products = await Product.find()
+      .populate("category", "name")
+      .lean();
+
+    // 2. Deals aur discounts apply karein
+    const finalProducts = await attachDealsToProducts(products);
+
+    // 3. XML Structure shuru karein
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
+  <channel>
+    <title>Bafna Toys</title>
+    <link>https://bafnatoys.com</link>
+    <description>Best wholesale toys for kids</description>
+`;
+
+    // 4. Har product ke liye ek <item> banayein
+    finalProducts.forEach((product) => {
+      const availability = product.stock > 0 ? "in_stock" : "out_of_stock";
+      
+      const imageUrl = (product.images && product.images.length > 0) 
+        ? product.images[0] 
+        : "https://bafnatoys.com/default-image.jpg"; 
+        
+      const description = product.description || product.tagline || product.name;
+
+      xml += `
+    <item>
+      <g:id>${product.sku || product._id.toString()}</g:id>
+      <g:title><![CDATA[${product.name}]]></g:title>
+      <g:description><![CDATA[${description}]]></g:description>
+      <g:link>https://bafnatoys.com/product/${product.slug}</g:link>
+      <g:image_link><![CDATA[${imageUrl}]]></g:image_link>
+      <g:condition>new</g:condition>
+      <g:availability>${availability}</g:availability>
+      <g:price>${product.price}.00 INR</g:price>`;
+      
+      if (product.category && product.category.name) {
+          xml += `\n      <g:product_type><![CDATA[${product.category.name}]]></g:product_type>`;
+      }
+
+      xml += `
+      <g:brand>Bafna Toys</g:brand>
+    </item>`;
+    });
+
+    // 5. XML close karein
+    xml += `
+  </channel>
+</rss>`;
+
+    // 6. Response bhejein text/xml type me
+    res.set("Content-Type", "text/xml");
+    res.send(xml);
+  } catch (err) {
+    console.error("❌ Google Feed generation error:", err);
+    res.status(500).json({ message: "Failed to generate Google Feed" });
+  }
+});
+
 module.exports = router;
