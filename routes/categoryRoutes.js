@@ -5,7 +5,6 @@ const cloudinary = require("cloudinary").v2;
 const multer = require("multer");
 const streamifier = require("streamifier");
 
-// 👇 YEH 2 LINE ADD KAREIN (Products aur Timer lane ke liye)
 const Product = require("../models/Product.js");
 const HomeConfig = require("../models/homeConfigModel.js");
 
@@ -53,19 +52,16 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ⭐ 2. GET SINGLE CATEGORY BY SLUG (WITH PRODUCTS & TIMER) - NEW CODE
+// ⭐ 2. GET SINGLE CATEGORY BY SLUG (WITH PRODUCTS & TIMER)
 router.get("/:slug", async (req, res) => {
   try {
-    // A. Category Dhoondo
     const category = await Category.findOne({ slug: req.params.slug });
     if (!category) return res.status(404).json({ message: "Category not found" });
 
-    // B. Products Dhoondo jo is Category ke hain
     const products = await Product.find({ category: category._id })
       .sort({ order: 1 })
       .lean();
 
-    // C. Timer/Deals ka Logic (ProductRoutes jaisa same)
     const config = await HomeConfig.findOne().lean();
     const dealMap = {};
     
@@ -81,7 +77,6 @@ router.get("/:slug", async (req, res) => {
       });
     }
 
-    // D. Products me Timer Merge karo
     const productsWithTimer = products.map(p => {
       if (dealMap[p._id.toString()]) {
         return { ...p, sale_end_time: dealMap[p._id.toString()] };
@@ -89,7 +84,6 @@ router.get("/:slug", async (req, res) => {
       return p;
     });
 
-    // Frontend ko Category Info + Products bhejo
     res.json({ category, products: productsWithTimer });
 
   } catch (error) {
@@ -97,11 +91,11 @@ router.get("/:slug", async (req, res) => {
   }
 });
 
-
 // ✅ CREATE Category
 router.post("/", upload.single("image"), async (req, res) => {
   try {
-    const { name } = req.body;
+    // 👇 Yahan 'link' ko req.body se nikalna zaroori hai
+    const { name, link } = req.body;
     if (!name) return res.status(400).json({ message: "Category name is required" });
     if (!req.file) return res.status(400).json({ message: "Category image is required" });
 
@@ -111,12 +105,12 @@ router.post("/", upload.single("image"), async (req, res) => {
     const result = await uploadToCloudinary(req.file.buffer);
     const nextOrder = await getNextOrder();
     
-    // Slugify logic (simple version)
     const slug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
 
     const cat = new Category({
       name,
-      slug, // Slug save karna zaroori hai
+      slug,
+      link: link || "", // 👇 Naya: Link database me save hoga
       order: nextOrder,
       image: result.secure_url,
       imageId: result.public_id,
@@ -138,8 +132,12 @@ router.put("/:id", upload.single("image"), async (req, res) => {
 
     if (req.body.name) {
         cat.name = req.body.name;
-        // Update slug if name changes
         cat.slug = req.body.name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+    }
+
+    // 👇 Naya: Update karte time Link ko set karna
+    if (req.body.link !== undefined) {
+        cat.link = req.body.link;
     }
 
     if (req.file) {
