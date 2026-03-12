@@ -5,9 +5,10 @@ const slugify = require("slugify");
 const cloudinary = require("../config/cloudinary");
 const multer = require("multer");
 
-// 👇 IMPORT HOMECONFIG + PRODUCT
+// 👇 IMPORT HOMECONFIG, PRODUCT + REVIEWS (✅ NEW)
 const HomeConfig = require("../models/homeConfigModel.js");
 const Product = require("../models/Product.js");
+const Review = require("../models/Review.js"); // ✅ Added Review Model
 
 // 🧠 Multer setup
 const storage = multer.memoryStorage();
@@ -87,6 +88,50 @@ async function attachDealsToProducts(productsData) {
   }
 }
 
+/* ==================================================================
+   ⭐ HELPER: ATTACH RATINGS TO PRODUCTS (✅ NEW)
+================================================================== */
+async function attachRatingsToProducts(products) {
+  try {
+    // 1. Get all product IDs
+    const productIds = products.map(p => p._id);
+    
+    // 2. Fetch all reviews for these products, grouped by Product ID
+    const ratingsData = await Review.aggregate([
+      { $match: { productId: { $in: productIds } } },
+      { 
+        $group: { 
+          _id: "$productId", 
+          avgRating: { $avg: "$rating" }, 
+          totalReviews: { $sum: 1 } 
+        } 
+      }
+    ]);
+
+    // 3. Create a map for quick lookup
+    const ratingMap = {};
+    ratingsData.forEach(r => {
+      ratingMap[r._id.toString()] = {
+        rating: r.avgRating,
+        reviews: r.totalReviews
+      };
+    });
+
+    // 4. Attach to products
+    return products.map(p => {
+      const stats = ratingMap[p._id.toString()];
+      return {
+        ...p,
+        rating: stats ? Number(stats.rating.toFixed(1)) : 0, // ✅ Ensure it's a number
+        reviews: stats ? stats.reviews : 0
+      };
+    });
+  } catch (error) {
+    console.error("❌ Error calculating ratings:", error);
+    return products; // Return original if fails
+  }
+}
+
 /* ------------------------------------------------------------------
 🔍 1. SEARCH PRODUCTS
 ------------------------------------------------------------------ */
@@ -95,7 +140,7 @@ router.get("/search/all", async (req, res) => {
     const { query } = req.query;
     if (!query) return res.json([]);
 
-    const products = await Product.find({
+    let products = await Product.find({
       $or: [
         { name: { $regex: query, $options: "i" } },
         { sku: { $regex: query, $options: "i" } },
@@ -105,6 +150,7 @@ router.get("/search/all", async (req, res) => {
       .limit(20)
       .lean();
 
+    products = await attachRatingsToProducts(products); // ✅ Attach Ratings
     const finalProducts = await attachDealsToProducts(products);
     res.json(finalProducts);
   } catch (err) {
@@ -118,11 +164,12 @@ router.get("/search/all", async (req, res) => {
 ------------------------------------------------------------------ */
 router.get("/", async (_req, res) => {
   try {
-    const products = await Product.find()
+    let products = await Product.find()
       .populate("category", "name")
       .sort({ order: 1 })
       .lean();
 
+    products = await attachRatingsToProducts(products); // ✅ Attach Ratings
     const finalProducts = await attachDealsToProducts(products);
     res.json(finalProducts);
   } catch (err) {
@@ -143,7 +190,7 @@ router.get("/:id/related", async (req, res) => {
     const prod = await Product.findById(req.params.id);
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    const related = await Product.find({
+    let related = await Product.find({
       category: prod.category,
       _id: { $ne: prod._id },
     })
@@ -151,6 +198,7 @@ router.get("/:id/related", async (req, res) => {
       .populate("category", "name")
       .lean();
 
+    related = await attachRatingsToProducts(related); // ✅ Attach Ratings
     const finalRelated = await attachDealsToProducts(related);
     res.json(finalRelated);
   } catch (err) {
@@ -166,14 +214,13 @@ router.get("/:slugOrId", async (req, res, next) => {
   try {
     const { slugOrId } = req.params;
 
-    // ✅ FIX: res.next() nahi hota, next() hota hai
     if (slugOrId === "search" || slugOrId === "reorder") return next();
 
     const query = mongoose.Types.ObjectId.isValid(slugOrId)
       ? { _id: slugOrId }
       : { slug: slugOrId };
 
-    const prod = await Product.findOne(query)
+    let prod = await Product.findOne(query)
       .populate("category", "name")
       .populate({
         path: "relatedProducts",
@@ -183,9 +230,24 @@ router.get("/:slugOrId", async (req, res, next) => {
 
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    const finalProd = await attachDealsToProducts(prod);
+    // ✅ Attach Rating for single product
+    const ratingData = await Review.aggregate([
+      { $match: { productId: prod._id } },
+      { $group: { _id: null, avgRating: { $avg: "$rating" }, totalReviews: { $sum: 1 } } }
+    ]);
+    
+    if (ratingData.length > 0) {
+      prod.rating = Number(ratingData[0].avgRating.toFixed(1));
+      prod.reviews = ratingData[0].totalReviews;
+    } else {
+      prod.rating = 0;
+      prod.reviews = 0;
+    }
+
+    let finalProd = await attachDealsToProducts(prod);
 
     if (finalProd.relatedProducts?.length) {
+      finalProd.relatedProducts = await attachRatingsToProducts(finalProd.relatedProducts); // ✅ Attach ratings to related
       finalProd.relatedProducts = await attachDealsToProducts(finalProd.relatedProducts);
     }
 
@@ -373,15 +435,12 @@ router.delete("/:id", async (req, res) => {
 ------------------------------------------------------------------ */
 router.get("/feed/google-shopping", async (req, res) => {
   try {
-    // 1. Saare products fetch karein
     const products = await Product.find()
       .populate("category", "name")
       .lean();
 
-    // 2. Deals aur discounts apply karein
     const finalProducts = await attachDealsToProducts(products);
 
-    // 3. XML Structure shuru karein
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
   <channel>
@@ -390,7 +449,6 @@ router.get("/feed/google-shopping", async (req, res) => {
     <description>Best wholesale toys for kids</description>
 `;
 
-    // 4. Har product ke liye ek <item> banayein
     finalProducts.forEach((product) => {
       const availability = product.stock > 0 ? "in_stock" : "out_of_stock";
       
@@ -420,12 +478,10 @@ router.get("/feed/google-shopping", async (req, res) => {
     </item>`;
     });
 
-    // 5. XML close karein
     xml += `
   </channel>
 </rss>`;
 
-    // 6. Response bhejein text/xml type me
     res.set("Content-Type", "text/xml");
     res.send(xml);
   } catch (err) {

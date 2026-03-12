@@ -50,7 +50,8 @@ router.delete('/:id', async (req, res) => {
 // Admin Route to list all
 router.get('/all/list', async (req, res) => {
   try {
-    const reviews = await Review.find().populate('productId', 'name').sort({ createdAt: -1 });
+    // ✅ FINAL FIX: 'name' ke baad 'images' add kar diya hai
+    const reviews = await Review.find().populate('productId', 'name images').sort({ createdAt: -1 });
     res.json(reviews);
   } catch (error) { res.status(500).json({ message: 'Error fetching reviews' }); }
 });
