@@ -1,19 +1,37 @@
 const mongoose = require('mongoose');
 
 const trustSettingsSchema = new mongoose.Schema({
-  badge1: { type: String, default: '' },
-  badge2: { type: String, default: '' },
-  badge3: { type: String, default: '' },
-  badge4: { type: String, default: '' },
+  retailerCount: { type: String, default: '49,000+' },
   factoryImage: { type: String, default: '' },
-  
   manufacturingUnit: { type: String, default: '' },
   packingDispatch: { type: String, default: '' },
   warehouseStorage: { type: String, default: '' },
-  starterBoxImage: { type: String, default: '' },
-  
-  // ✅ NAYA FIELD: Factory Slider ke multiple images ke liye
-  factorySliderImages: { type: [String], default: [] }, 
+  factorySliderImages: { type: [String], default: [] },
+
+  customerReviews: [{
+    image: { type: String, default: '' },
+    reviewText: { type: String, default: '' },
+    reviewerName: { type: String, default: '' },
+    rating: { type: Number, default: 5 }
+  }],
+
+  // Social Media Links
+  youtubeLink: { type: String, default: '' },
+  instagramLink: { type: String, default: '' },
+  facebookLink: { type: String, default: '' },
+  linkedinLink: { type: String, default: '' },
+
+  // Marketplace Links
+  amazonLink: { type: String, default: '' },
+  flipkartLink: { type: String, default: '' },
+  meeshoLink: { type: String, default: '' },
+
+  // ✅ NAYA: Logos ke liye Image Fields
+  amazonLogo: { type: String, default: '' },
+  flipkartLogo: { type: String, default: '' },
+  meeshoLogo: { type: String, default: '' },
+  makeInIndiaLogo: { type: String, default: '' }
+
 }, { timestamps: true });
 
 module.exports = mongoose.model('TrustSettings', trustSettingsSchema);
