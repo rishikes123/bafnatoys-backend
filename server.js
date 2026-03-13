@@ -180,8 +180,8 @@ app.use("/api/shipping-rules", require("./routes/settings"));
 app.use("/api/shipping", require("./routes/shippingRoutes"));
 app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/discount-rules", require("./routes/discountRoutes"));
-app.use("/api/analytics", require("./routes/analyticsRoutes"));
-app.use("/api/reviews", require("./routes/reviewRoutes")); // ✅ NEW: Review Route Added
+app.use("/api/reviews", require("./routes/reviewRoutes")); // ✅ EXISTING: Review Route
+app.use("/api/trust-settings", require("./routes/trustSettingsRoutes")); // ✅ NEW: Trust Settings Route added here
 app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
