@@ -1,23 +1,21 @@
 const router = require("express").Router();
 const Setting = require("../models/settingModel");
 
-/* ================= COD SETTINGS (EXISTING) ================= */
+/* ================= COD SETTINGS ================= */
 
 // GET COD Settings
 router.get("/cod", async (req, res) => {
   try {
-    // console.log("📥 GET Request received for /cod");
     let setting = await Setting.findOne({ key: "cod" });
 
     if (!setting) {
-      // console.log("⚠️ No setting found, creating default...");
       setting = await Setting.create({
         key: "cod",
-        data: { advanceAmount: 0 },
+        // ✅ Default me COD chalu (enabled: true) aur advanceAmount 0 rahega
+        data: { advanceAmount: 0, enabled: true },
       });
     }
 
-    // console.log("📤 Sending Data:", setting.data);
     res.json(setting.data);
   } catch (err) {
     console.error("❌ GET Error:", err);
@@ -28,10 +26,14 @@ router.get("/cod", async (req, res) => {
 // UPDATE COD Settings
 router.put("/cod", async (req, res) => {
   try {
-    // console.log("📥 PUT Request received. Body:", req.body);
+    const { advanceAmount, enabled } = req.body;
     
-    const { advanceAmount } = req.body;
-    // console.log("🔢 Parsed Advance Amount:", advanceAmount);
+    // ✅ FIX: Strict True/False checking
+    let isEnabled = true;
+    // Agar frontend strictly false, ya string "false", ya 0 bhejta hai, toh isko false maan lo
+    if (enabled === false || String(enabled).toLowerCase() === "false" || enabled === 0) {
+      isEnabled = false;
+    }
 
     const setting = await Setting.findOneAndUpdate(
       { key: "cod" },
@@ -40,13 +42,13 @@ router.put("/cod", async (req, res) => {
           key: "cod", // Ensure key exists
           data: {
             advanceAmount: Number(advanceAmount) || 0,
+            enabled: isEnabled, // ✅ Ab yahan theek se boolean save hoga
           },
         },
       },
       { upsert: true, new: true }
     );
 
-    // console.log("✅ Database Updated. New Doc:", setting);
     res.json(setting.data);
   } catch (err) {
     console.error("❌ PUT Error:", err);
@@ -54,7 +56,7 @@ router.put("/cod", async (req, res) => {
   }
 });
 
-/* ================= ✅ NEW: MAINTENANCE MODE ================= */
+/* ================= MAINTENANCE MODE ================= */
 
 // GET Maintenance Status
 router.get("/maintenance", async (req, res) => {
@@ -100,5 +102,55 @@ router.put("/maintenance", async (req, res) => {
   }
 });
 
+/* ================= PRODUCT REVIEWS SETTINGS (ON/OFF) ================= */
+
+// GET Review Settings
+router.get("/reviews", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "reviews" });
+
+    if (!setting) {
+      // Default: Reviews chalu (enabled: true) rahenge
+      setting = await Setting.create({
+        key: "reviews",
+        data: { enabled: true },
+      });
+    }
+
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ GET Reviews Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// UPDATE Review Settings
+router.put("/reviews", async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    
+    // Strict True/False checking
+    let isEnabled = true;
+    if (enabled === false || String(enabled).toLowerCase() === "false" || enabled === 0) {
+      isEnabled = false;
+    }
+
+    const setting = await Setting.findOneAndUpdate(
+      { key: "reviews" },
+      {
+        $set: {
+          key: "reviews",
+          data: { enabled: isEnabled },
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ PUT Reviews Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
 
 module.exports = router;
