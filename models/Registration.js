@@ -13,6 +13,12 @@ const RegistrationSchema = new mongoose.Schema(
     // ✅ YAHAN 'default: ""' HONA ZAROORI HAI
     visitingCardUrl: { type: String, required: false, default: "" }, 
 
+    // ✅ GST Number field
+    gstNumber: { type: String, required: false, default: "" },
+
+    // ✅ ADDED: GST Document URL field to save the Cloudinary link
+    gstDocumentUrl: { type: String, required: false, default: "" },
+
     isApproved: { type: Boolean, default: null },
   },
   { timestamps: true }

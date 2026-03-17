@@ -6,8 +6,11 @@ const cloudinary = require("../config/cloudinary");
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder: "bafnatoys", // Cloudinary folder
-    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
+    folder: "bafnatoys", 
+    // ✅ Added "pdf" to allowed formats
+    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp", "pdf"], 
+    // ✅ Added resource_type: "auto" so Cloudinary accepts both images and documents
+    resource_type: "auto", 
   },
 });
 

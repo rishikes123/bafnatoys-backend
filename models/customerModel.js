@@ -11,6 +11,13 @@ const customerSchema = new mongoose.Schema({
   zip: { type: String, default: "" },
   whatsapp: { type: String, default: "" },
   visitingCardUrl: { type: String, default: "" },
+  
+  // ✅ GST Number field 
+  gstNumber: { type: String, default: "" },
+
+  // ✅ ADDED: GST Document URL field
+  gstDocumentUrl: { type: String, default: "" },
+
   status: {
     type: String,
     enum: ["Pending", "Approved", "Rejected"],

@@ -9,30 +9,30 @@ const normalizePhone = (v = "") => {
   return digits.length > 10 ? digits.slice(-10) : digits;
 };
 
-// ✅ NEW: WhatsApp ko always 91 + 10 digits me convert karo
+// WhatsApp format always 91 + 10 digits
 const normalizeWhatsApp91 = (v = "") => {
-  const digits = String(v).replace(/\D/g, ""); // only numbers
-  const without91 = digits.startsWith("91") ? digits.slice(2) : digits; // remove 91 if present
-  const last10 = without91.length > 10 ? without91.slice(-10) : without91; // take last 10
-  if (last10.length !== 10) return ""; // invalid
-  return "91" + last10; // ✅ final 91XXXXXXXXXX
+  const digits = String(v).replace(/\D/g, ""); 
+  const without91 = digits.startsWith("91") ? digits.slice(2) : digits; 
+  const last10 = without91.length > 10 ? without91.slice(-10) : without91; 
+  if (last10.length !== 10) return ""; 
+  return "91" + last10; 
 };
 
 /* ------------------------------ REGISTER ----------------------------- */
 // POST /api/registrations/register
-router.post("/register", upload.single("visitingCard"), async (req, res) => {
+// ✅ UPDATED: Accept both visitingCard and gstDocument fields via multer
+router.post("/register", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name: 'gstDocument', maxCount: 1 }]), async (req, res) => {
   try {
     const { shopName, address, otpMobile, whatsapp, password } = req.body;
 
-    // ✅ WhatsApp compulsory
+    // Validation
     if (!shopName || !otpMobile || !address || !whatsapp) {
       return res.status(400).json({ message: "Please fill Shop Name, Mobile, WhatsApp, and Address." });
     }
 
     const nMobile = normalizePhone(otpMobile);
-
-    // ✅ WhatsApp always with 91
     const nWhats = normalizeWhatsApp91(whatsapp);
+    
     if (!nWhats) {
       return res.status(400).json({ message: "Invalid WhatsApp number. Enter 10 digit WhatsApp number." });
     }
@@ -43,18 +43,27 @@ router.post("/register", upload.single("visitingCard"), async (req, res) => {
       return res.status(409).json({ message: "Mobile number already registered." });
     }
 
-    // Handle Optional Visiting Card
-    const visitingCardUrl = req.file ? req.file.path : "";
+    // ✅ Handle Multiple Optional File Uploads 
+    let visitingCardUrl = "";
+    let gstDocumentUrl = "";
+
+    if (req.files) {
+      if (req.files['visitingCard']) {
+        visitingCardUrl = req.files['visitingCard'][0].path;
+      }
+      if (req.files['gstDocument']) {
+        gstDocumentUrl = req.files['gstDocument'][0].path;
+      }
+    }
 
     const doc = await Registration.create({
       shopName,
       address,
       otpMobile: nMobile,
-      whatsapp: nWhats, // ✅ saved as 91XXXXXXXXXX
+      whatsapp: nWhats, 
       password,
       visitingCardUrl,
-
-      // ✅ Auto-Approve
+      gstDocumentUrl, // ✅ Saved GST Document to database
       isApproved: true,
     });
 
@@ -93,11 +102,13 @@ router.get("/phone/:otpMobile", async (req, res) => {
 });
 
 /* ------------------------------- UPDATE ------------------------------ */
-router.put("/:id", upload.single("visitingCard"), async (req, res) => {
+// ✅ UPDATED: Use upload.fields() here as well if updating files
+router.put("/:id", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name: 'gstDocument', maxCount: 1 }]), async (req, res) => {
   try {
     const id = req.params.id;
+    // ✅ Replaced gstNumber with gstDocumentUrl in allowed updates list
     const allowed = [
-      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password",
+      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password", "gstDocumentUrl"
     ];
 
     const update = {};
@@ -107,14 +118,21 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
 
     if (update.otpMobile) update.otpMobile = normalizePhone(update.otpMobile);
 
-    // ✅ Update WhatsApp bhi always 91 format me
     if (update.whatsapp !== undefined) {
       const w = normalizeWhatsApp91(update.whatsapp);
       if (!w) return res.status(400).json({ message: "Invalid WhatsApp number." });
       update.whatsapp = w;
     }
 
-    if (req.file) update.visitingCardUrl = req.file.path;
+    // ✅ Extract and assign files properly
+    if (req.files) {
+      if (req.files['visitingCard']) {
+        update.visitingCardUrl = req.files['visitingCard'][0].path;
+      }
+      if (req.files['gstDocument']) {
+        update.gstDocumentUrl = req.files['gstDocument'][0].path;
+      }
+    }
 
     const doc = await Registration.findByIdAndUpdate(id, update, { new: true });
     if (!doc) return res.status(404).json({ message: "Registration not found" });
@@ -126,7 +144,7 @@ router.put("/:id", upload.single("visitingCard"), async (req, res) => {
   }
 });
 
-/* -------------------------- APPROVE / REJECT (Optional Now) ------------------------- */
+/* -------------------------- APPROVE / REJECT ------------------------- */
 router.post("/:id/approve", async (req, res) => {
   try {
     await Registration.findByIdAndUpdate(req.params.id, { isApproved: true });
