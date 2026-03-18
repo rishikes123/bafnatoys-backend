@@ -3,9 +3,18 @@ const mongoose = require('mongoose');
 const trustSettingsSchema = new mongoose.Schema({
   retailerCount: { type: String, default: '49,000+' },
   factoryImage: { type: String, default: '' },
+  
+  // Legacy fields (Pehle wale fields safety/fallback ke liye rakhe hain)
   manufacturingUnit: { type: String, default: '' },
   packingDispatch: { type: String, default: '' },
   warehouseStorage: { type: String, default: '' },
+  
+  // ✅ NAYA: Dynamic Factory Visuals Array
+  factoryVisuals: [{
+    image: { type: String, default: '' },
+    label: { type: String, default: '' }
+  }],
+
   factorySliderImages: { type: [String], default: [] },
 
   customerReviews: [{
@@ -26,7 +35,7 @@ const trustSettingsSchema = new mongoose.Schema({
   flipkartLink: { type: String, default: '' },
   meeshoLink: { type: String, default: '' },
 
-  // ✅ NAYA: Logos ke liye Image Fields
+  // Logos ke liye Image Fields
   amazonLogo: { type: String, default: '' },
   flipkartLogo: { type: String, default: '' },
   meeshoLogo: { type: String, default: '' },

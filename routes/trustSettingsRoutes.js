@@ -20,11 +20,13 @@ router.put('/', upload.fields([
   { name: 'warehouseStorage', maxCount: 1 },
   { name: 'factorySliderImages', maxCount: 20 },
   { name: 'reviewImages', maxCount: 10 },
-  // ✅ Logo files accept karne ke liye
+  // ✅ Logos files accept karne ke liye
   { name: 'amazonLogo', maxCount: 1 },
   { name: 'flipkartLogo', maxCount: 1 },
   { name: 'meeshoLogo', maxCount: 1 },
-  { name: 'makeInIndiaLogo', maxCount: 1 }
+  { name: 'makeInIndiaLogo', maxCount: 1 },
+  // ✅ NAYA: Dynamic factory visuals ke images ke liye
+  { name: 'factoryVisualImages', maxCount: 10 } 
 ]), async (req, res) => {
   try {
     let settings = await TrustSettings.findOne();
@@ -52,7 +54,23 @@ router.put('/', upload.fields([
     if (req.files && req.files['meeshoLogo']) settings.meeshoLogo = req.files['meeshoLogo'][0].path;
     if (req.files && req.files['makeInIndiaLogo']) settings.makeInIndiaLogo = req.files['makeInIndiaLogo'][0].path;
 
-    // ✅ NAYA: Slider Images (Retained + New Handle karna)
+    // ✅ NAYA: Dynamic Factory Visuals Handle Karna
+    if (req.body.factoryVisualsData) {
+        const parsedVisuals = JSON.parse(req.body.factoryVisualsData);
+        let imageIndex = 0;
+        const visualFiles = req.files['factoryVisualImages'] || [];
+        
+        settings.factoryVisuals = parsedVisuals.map(vis => {
+            let imgPath = vis.existingImage || '';
+            if (vis.hasNewImage && imageIndex < visualFiles.length) {
+                imgPath = visualFiles[imageIndex].path;
+                imageIndex++;
+            }
+            return { image: imgPath, label: vis.label };
+        });
+    }
+
+    // Slider Images (Retained + New Handle karna)
     if (req.body.clearSlider === 'true') {
         settings.factorySliderImages = [];
     } else if (req.body.retainedSliderImages) {
