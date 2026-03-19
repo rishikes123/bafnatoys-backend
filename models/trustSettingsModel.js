@@ -15,8 +15,6 @@ const trustSettingsSchema = new mongoose.Schema({
     label: { type: String, default: '' }
   }],
 
-  factorySliderImages: { type: [String], default: [] },
-
   customerReviews: [{
     image: { type: String, default: '' },
     reviewText: { type: String, default: '' },
@@ -30,15 +28,7 @@ const trustSettingsSchema = new mongoose.Schema({
   facebookLink: { type: String, default: '' },
   linkedinLink: { type: String, default: '' },
 
-  // Marketplace Links
-  amazonLink: { type: String, default: '' },
-  flipkartLink: { type: String, default: '' },
-  meeshoLink: { type: String, default: '' },
-
   // Logos ke liye Image Fields
-  amazonLogo: { type: String, default: '' },
-  flipkartLogo: { type: String, default: '' },
-  meeshoLogo: { type: String, default: '' },
   makeInIndiaLogo: { type: String, default: '' }
 
 }, { timestamps: true });
