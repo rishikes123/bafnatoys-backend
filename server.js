@@ -186,6 +186,9 @@ app.use("/api/trust-settings", require("./routes/trustSettingsRoutes"));
 // ✅ NEW ANALYTICS ROUTE ADDED BELOW
 app.use("/api/analytics", require("./routes/analytics")); 
 
+// ✅ NEW GRID LAYOUT ROUTE ADDED HERE
+app.use("/api/grid-layout", require("./routes/gridLayoutRoutes"));
+
 app.use("/", require("./routes/sitemap"));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
