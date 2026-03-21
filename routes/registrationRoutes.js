@@ -20,10 +20,10 @@ const normalizeWhatsApp91 = (v = "") => {
 
 /* ------------------------------ REGISTER ----------------------------- */
 // POST /api/registrations/register
-// ✅ UPDATED: Accept both visitingCard and gstDocument fields via multer
 router.post("/register", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name: 'gstDocument', maxCount: 1 }]), async (req, res) => {
   try {
-    const { shopName, address, otpMobile, whatsapp, password } = req.body;
+    // ✅ ADDED: req.body se gstNumber bhi extract kiya
+    const { shopName, address, otpMobile, whatsapp, password, gstNumber } = req.body;
 
     // Validation
     if (!shopName || !otpMobile || !address || !whatsapp) {
@@ -43,7 +43,7 @@ router.post("/register", upload.fields([{ name: 'visitingCard', maxCount: 1 }, {
       return res.status(409).json({ message: "Mobile number already registered." });
     }
 
-    // ✅ Handle Multiple Optional File Uploads 
+    // Handle Multiple Optional File Uploads 
     let visitingCardUrl = "";
     let gstDocumentUrl = "";
 
@@ -62,9 +62,10 @@ router.post("/register", upload.fields([{ name: 'visitingCard', maxCount: 1 }, {
       otpMobile: nMobile,
       whatsapp: nWhats, 
       password,
+      gstNumber,      // ✅ ADDED: Database me gstNumber save kiya
       visitingCardUrl,
-      gstDocumentUrl, // ✅ Saved GST Document to database
-      isApproved: true,
+      gstDocumentUrl, 
+      isApproved: true, // Auto-approve for now
     });
 
     res.status(201).json({
@@ -102,13 +103,13 @@ router.get("/phone/:otpMobile", async (req, res) => {
 });
 
 /* ------------------------------- UPDATE ------------------------------ */
-// ✅ UPDATED: Use upload.fields() here as well if updating files
 router.put("/:id", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name: 'gstDocument', maxCount: 1 }]), async (req, res) => {
   try {
     const id = req.params.id;
-    // ✅ Replaced gstNumber with gstDocumentUrl in allowed updates list
+    
+    // ✅ ADDED: "gstNumber" ko allowed updates array me daala taaki edit ho sake
     const allowed = [
-      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password", "gstDocumentUrl"
+      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password", "gstDocumentUrl", "gstNumber"
     ];
 
     const update = {};
@@ -124,7 +125,6 @@ router.put("/:id", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name:
       update.whatsapp = w;
     }
 
-    // ✅ Extract and assign files properly
     if (req.files) {
       if (req.files['visitingCard']) {
         update.visitingCardUrl = req.files['visitingCard'][0].path;

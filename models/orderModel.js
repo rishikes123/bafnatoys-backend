@@ -26,6 +26,7 @@ const orderItemSchema = new mongoose.Schema(
 /* ================= SHIPPING ADDRESS ================= */
 const shippingAddressSchema = new mongoose.Schema(
   {
+    shopName: { type: String, default: "" }, // ✅ Added Shop Name
     fullName: { type: String, required: true },
     phone: { type: String, required: true },
     street: { type: String, required: true },
@@ -34,6 +35,15 @@ const shippingAddressSchema = new mongoose.Schema(
     state: { type: String, required: true },
     pincode: { type: String, required: true },
     type: { type: String, default: "Home" },
+    
+    gstNumber: { type: String, default: "" }, // ✅ Added GST Number
+    
+    isDifferentShipping: { type: Boolean, default: false }, // ✅ Added Different Shipping fields
+    shippingStreet: { type: String, default: "" },
+    shippingArea: { type: String, default: "" },
+    shippingPincode: { type: String, default: "" },
+    shippingCity: { type: String, default: "" },
+    shippingState: { type: String, default: "" },
   },
   { _id: false }
 );

@@ -116,10 +116,28 @@ router.post("/", async (req, res) => {
 
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
 
+    // ✅ UPDATED: Ab hum frontend se aane wale saare new fields mapping kar rahe hain
     const order = new Order({
       customerId,
       items,
-      shippingAddress: shippingAddress || {},
+      shippingAddress: {
+        shopName: shippingAddress?.shopName || "",
+        fullName: shippingAddress?.fullName || "",
+        phone: shippingAddress?.phone || "",
+        street: shippingAddress?.street || "",
+        area: shippingAddress?.area || "",
+        city: shippingAddress?.city || "",
+        state: shippingAddress?.state || "",
+        pincode: shippingAddress?.pincode || "",
+        type: shippingAddress?.type || "Home",
+        gstNumber: shippingAddress?.gstNumber || "",
+        isDifferentShipping: shippingAddress?.isDifferentShipping || false,
+        shippingStreet: shippingAddress?.shippingStreet || "",
+        shippingArea: shippingAddress?.shippingArea || "",
+        shippingPincode: shippingAddress?.shippingPincode || "",
+        shippingCity: shippingAddress?.shippingCity || "",
+        shippingState: shippingAddress?.shippingState || "",
+      },
 
       itemsPrice: itemsPrice || 0,
       shippingPrice: shippingPrice || 0,
