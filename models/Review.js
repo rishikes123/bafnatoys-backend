@@ -6,9 +6,13 @@ const reviewSchema = new mongoose.Schema({
     ref: 'Product', 
     required: true 
   },
-  shopName: { type: String, required: true }, // ✅ customerName replaced by shopName
+  userId: { // ✅ Added to track which customer is giving the rating
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Registration' // Aapke orderModel ke hisaab se ref 'Registration' hai
+  },
+  shopName: { type: String, required: true }, 
   rating: { type: Number, required: true, min: 1, max: 5 },
-  comment: { type: String, required: true },
+  // ❌ Comment field is completely removed
   createdAt: { type: Date, default: Date.now }
 });
 
