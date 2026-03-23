@@ -490,4 +490,45 @@ router.get("/feed/google-shopping", async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------
+✅ 11. FACEBOOK CATALOG FEED (CSV)
+------------------------------------------------------------------ */
+router.get("/feed/facebook-catalog", async (req, res) => {
+  try {
+    const products = await Product.find().lean();
+    const finalProducts = await attachDealsToProducts(products);
+
+    let csv = 'id,title,description,availability,condition,price,link,image_link,brand\n';
+
+    finalProducts.forEach((product) => {
+      const id = product.sku || product._id.toString();
+      
+      // Quotes handle karna zaruri hai CSV format ke liye
+      const rawTitle = (product.name || 'Bafna Toy').replace(/"/g, '""');
+      const title = `"${rawTitle}"`;
+      
+      const rawDesc = (product.description || product.tagline || product.name || 'Best quality toy').replace(/"/g, '""');
+      const description = `"${rawDesc}"`;
+      
+      const availability = (product.stock && product.stock > 0) ? 'in stock' : 'out of stock';
+      const condition = 'new';
+      const price = `${product.price} INR`;
+      const link = `https://bafnatoys.com/product/${product.slug || product._id.toString()}`;
+      const image_link = (product.images && product.images.length > 0) ? product.images[0] : 'https://bafnatoys.com/default-image.jpg';
+      const brand = 'Bafna Toys';
+
+      csv += `${id},${title},${description},${availability},${condition},${price},${link},${image_link},${brand}\n`;
+    });
+
+    // ✅ FIXED: Added UTF-8 charset and BOM for correct Excel rendering
+    res.header('Content-Type', 'text/csv; charset=utf-8');
+    res.attachment('facebook_catalog.csv');
+    return res.send('\uFEFF' + csv);
+
+  } catch (error) {
+    console.error("❌ Facebook feed error:", error);
+    res.status(500).send('Server Error in generating feed');
+  }
+});
+
 module.exports = router;
