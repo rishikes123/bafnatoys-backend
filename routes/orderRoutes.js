@@ -211,7 +211,7 @@ router.post("/", async (req, res) => {
       try {
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_confirmed_new", 
+          templateName: "order_confirmed_new",
           languageCode: "en_US",
           components: [
             {
@@ -338,14 +338,31 @@ const updateOrderStatus = async (req, res) => {
     }
 
     /* ============================================================
-        🚚 SHIPPING & AUTO-AWB GENERATION
+        🚚 SHIPPING & EXCLUSIVE DELHIVERY AUTO-AWB GENERATION
     ============================================================ */
     if (newStatus === "shipped") {
       // ✅ 1. Check if Delhivery and no AWB exists
       if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0 && !order.trackingId) {
         try {
           let totalWeightKg = 0;
-          packingDetails.forEach(box => { totalWeightKg += Number(box.totalWeight) || 0; });
+          
+          // ✅ NAYA LOGIC: Box Dimensions Setup
+          let finalLength = 33;  // Default L
+          let finalBreadth = 22; // Default B
+          let finalHeight = 21;  // Default H
+
+          packingDetails.forEach(box => { 
+            totalWeightKg += Number(box.totalWeight) || 0; 
+            
+            // Abhi SMALL ka add kiya hai. 
+            // Baad mein yahin 'else if (box.boxType === "MEDIUM")' karke add kar sakte ho
+            if (box.boxType === "SMALL") {
+                finalLength = 33;
+                finalBreadth = 22;
+                finalHeight = 21;
+            }
+          });
+          
           const totalWeightGrams = totalWeightKg * 1000;
 
           const addr = order.shippingAddress;
@@ -373,7 +390,12 @@ const updateOrderStatus = async (req, res) => {
                 seller_name: "Bafna Toys", 
                 total_amount: order.total,
                 weight: totalWeightGrams,
-                shipping_mode: "Surface" 
+                shipping_mode: "Surface",
+                
+                // ✅ YAHAN DIMENSIONS ADD KIYE GAYE HAIN (Delhivery ko ye data jayega)
+                length: finalLength,
+                breadth: finalBreadth,
+                height: finalHeight
               }],
               pickup_location: { name: process.env.DELHIVERY_PICKUP_LOCATION_NAME || "BAFNATOYS" }
             }
@@ -389,17 +411,23 @@ const updateOrderStatus = async (req, res) => {
             order.courierName = "Delhivery";
             order.packingDetails = packingDetails;
             order.isShipped = true;
+          } else {
+             // ❌ Agar API fail hui, toh error feko, WhatsApp block mat karo
+             console.error("Delhivery API Rejected:", response.data);
+             return res.status(400).json({ message: "Delhivery API Error: " + JSON.stringify(response.data.error || response.data.rmk) });
           }
         } catch (apiErr) {
-          console.error("Delhivery API Error:", apiErr.message);
+          console.error("Delhivery API Failed:", apiErr.message);
+          return res.status(500).json({ message: "Failed to connect to Delhivery API." });
         }
       } 
       
-      // ✅ 2. V-Xpress ya any Manual Courier Flow
-      // Agar manual tracking Id bheja hai (ya Delhivery API bypass ho rahi hai)
-      if (trackingId && !order.trackingId) order.trackingId = trackingId;
-      if (courierName && !order.courierName) order.courierName = courierName;
-      order.isShipped = true;
+      // ✅ 2. Fallback (If AWB provided manually through frontend override)
+      if (trackingId && !order.trackingId) {
+        order.trackingId = trackingId;
+        order.courierName = courierName || "Delhivery";
+        order.isShipped = true;
+      }
     }
 
     /* ✅ CANCEL INFO */
@@ -454,22 +482,16 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED (With Dynamic Tracking Link)
-    if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
+    // ✅ ORDER SHIPPED (Direct Delhivery tracking set with the new "shipped" template)
+    if (to && newStatus === "shipped" && order.trackingId && !order.wa.trackingSent) {
       try {
-        let dynamicTrackingLink = "https://bafnatoys.com/orders"; // Default Fallback
-        const cName = String(order.courierName).toLowerCase().trim();
-
-        // 🔗 URL Logic
-        if (cName.includes("delhivery")) {
-          dynamicTrackingLink = `https://www.delhivery.com/track/package/?waybill=${order.trackingId}`;
-        } else if (cName.includes("vxpress") || cName.includes("v-xpress") || cName.includes("v xpress")) {
-          dynamicTrackingLink = "https://vxpress.in/track-result/";
-        }
+        // ✅ FIXED: Direct tracking link for Delhivery without ?waybill
+        let dynamicTrackingLink = `https://www.delhivery.com/track-v2/package/${order.trackingId}`;
 
         await sendWhatsAppTemplate({
           to,
-          templateName: process.env.WA_TRACKING_TEMPLATE || "order_shipped_neya_hai", 
+          // ✅ Tumhara naya active template jiska naam "shipped" hai
+          templateName: process.env.WA_TRACKING_TEMPLATE || "shipped", 
           languageCode: "en_US",
           components: [
             {
@@ -477,9 +499,9 @@ const updateOrderStatus = async (req, res) => {
               parameters: [
                 { type: "text", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") }, // {{1}}
                 { type: "text", text: String(order.orderNumber || "") }, // {{2}}
-                { type: "text", text: String(order.courierName || "") }, // {{3}}
+                { type: "text", text: "Delhivery" }, // {{3}} Hardcoded Delhivery
                 { type: "text", text: String(order.trackingId || "") },  // {{4}}
-                { type: "text", text: String(dynamicTrackingLink || "") }, // {{5}}
+                { type: "text", text: String(dynamicTrackingLink) }, // {{5}} Direct link
               ],
             },
             {
@@ -489,7 +511,8 @@ const updateOrderStatus = async (req, res) => {
               parameters: [
                 {
                   type: "text",
-                  text: String(order._id) // ✅ UPDATED: Bheje gaye screenshot ke anusar button dynamic hai
+                  // ✅ FIXED: Tumhare template ke parameter me 'orders' appended tha screenshot me
+                  text: "orders" 
                 }
               ]
             }
@@ -501,6 +524,7 @@ const updateOrderStatus = async (req, res) => {
         order.wa.lastError = "";
         await order.save();
       } catch (e) {
+        console.error("WhatsApp shipped Error Data: ", e.response?.data);
         order.wa.lastError = e?.response?.data ? JSON.stringify(e.response.data) : e?.message || "WhatsApp shipped failed";
         await order.save();
       }
