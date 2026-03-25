@@ -309,7 +309,6 @@ router.put("/admin/return-action/:id", async (req, res) => {
 ============================================================ */
 const updateOrderStatus = async (req, res) => {
   try {
-    // ✅ Extract packingDetails from frontend for Delhivery
     const { status, trackingId, courierName, cancelledBy, packingDetails } = req.body;
     if (!status) return res.status(400).json({ message: "Status is required" });
 
@@ -341,21 +340,18 @@ const updateOrderStatus = async (req, res) => {
         🚚 SHIPPING & EXCLUSIVE DELHIVERY AUTO-AWB GENERATION
     ============================================================ */
     if (newStatus === "shipped") {
-      // ✅ 1. Check if Delhivery and no AWB exists
       if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0 && !order.trackingId) {
         try {
           let totalWeightKg = 0;
           
-          // ✅ NAYA LOGIC: Box Dimensions Setup
-          let finalLength = 33;  // Default L
-          let finalBreadth = 22; // Default B
-          let finalHeight = 21;  // Default H
+          // ✅ Box Dimensions Setup
+          let finalLength = 33;  
+          let finalBreadth = 22; 
+          let finalHeight = 21;  
 
           packingDetails.forEach(box => { 
             totalWeightKg += Number(box.totalWeight) || 0; 
             
-            // Abhi SMALL ka add kiya hai. 
-            // Baad mein yahin 'else if (box.boxType === "MEDIUM")' karke add kar sakte ho
             if (box.boxType === "SMALL") {
                 finalLength = 33;
                 finalBreadth = 22;
@@ -392,7 +388,7 @@ const updateOrderStatus = async (req, res) => {
                 weight: totalWeightGrams,
                 shipping_mode: "Surface",
                 
-                // ✅ YAHAN DIMENSIONS ADD KIYE GAYE HAIN (Delhivery ko ye data jayega)
+                // ✅ DIMENSIONS SENT TO DELHIVERY
                 length: finalLength,
                 breadth: finalBreadth,
                 height: finalHeight
@@ -412,7 +408,6 @@ const updateOrderStatus = async (req, res) => {
             order.packingDetails = packingDetails;
             order.isShipped = true;
           } else {
-             // ❌ Agar API fail hui, toh error feko, WhatsApp block mat karo
              console.error("Delhivery API Rejected:", response.data);
              return res.status(400).json({ message: "Delhivery API Error: " + JSON.stringify(response.data.error || response.data.rmk) });
           }
@@ -422,7 +417,7 @@ const updateOrderStatus = async (req, res) => {
         }
       } 
       
-      // ✅ 2. Fallback (If AWB provided manually through frontend override)
+      // Fallback
       if (trackingId && !order.trackingId) {
         order.trackingId = trackingId;
         order.courierName = courierName || "Delhivery";
@@ -430,7 +425,6 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    /* ✅ CANCEL INFO */
     if (newStatus === "cancelled" && cancelledBy) {
       order.cancelledBy = cancelledBy;
     }
@@ -444,8 +438,6 @@ const updateOrderStatus = async (req, res) => {
       };
     }
 
-    // Save status
-    order.status = newStatus;
     await order.save();
 
     /* ============================================================
@@ -482,15 +474,13 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED (Direct Delhivery tracking set with the new "shipped" template)
+    // ✅ ORDER SHIPPED
     if (to && newStatus === "shipped" && order.trackingId && !order.wa.trackingSent) {
       try {
-        // ✅ FIXED: Direct tracking link for Delhivery without ?waybill
         let dynamicTrackingLink = `https://www.delhivery.com/track-v2/package/${order.trackingId}`;
 
         await sendWhatsAppTemplate({
           to,
-          // ✅ Tumhara naya active template jiska naam "shipped" hai
           templateName: process.env.WA_TRACKING_TEMPLATE || "shipped", 
           languageCode: "en_US",
           components: [
@@ -499,9 +489,9 @@ const updateOrderStatus = async (req, res) => {
               parameters: [
                 { type: "text", text: String(order.customerId?.shopName || order.customerId?.firmName || "Customer") }, // {{1}}
                 { type: "text", text: String(order.orderNumber || "") }, // {{2}}
-                { type: "text", text: "Delhivery" }, // {{3}} Hardcoded Delhivery
+                { type: "text", text: "Delhivery" }, // {{3}} 
                 { type: "text", text: String(order.trackingId || "") },  // {{4}}
-                { type: "text", text: String(dynamicTrackingLink) }, // {{5}} Direct link
+                { type: "text", text: String(dynamicTrackingLink) }, // {{5}} 
               ],
             },
             {
@@ -511,8 +501,7 @@ const updateOrderStatus = async (req, res) => {
               parameters: [
                 {
                   type: "text",
-                  // ✅ FIXED: Tumhare template ke parameter me 'orders' appended tha screenshot me
-                  text: "orders" 
+                  text: String(order._id) // ✅ CORRECTED: URL parameter will be the actual Order ID
                 }
               ]
             }
