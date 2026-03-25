@@ -68,6 +68,41 @@ app.use("/images", express.static(path.join(__dirname, "images")));
    ✅ INDIA ONLY REMOVED (Now Global Access Enabled)
    ==================================================================== */
 
+/* ------------------------- HEALTH CHECK ----------------------------- */
+app.get("/api/test", (_req, res) => {
+  res.json({ ok: true, message: "✅ Server Working" });
+});
+
+/* --------------------------- API ROUTES ------------------------------ */
+// 🔥 IMPORTANT FIX: API Routes MUST come BEFORE the SEO/HTML Catch-all routes
+app.use("/api/categories", require("./routes/categoryRoutes"));
+app.use("/api/upload", require("./routes/uploadRoutes"));
+app.use("/api/products", require("./routes/productRoutes"));
+app.use("/api/banners", require("./routes/bannerRoutes"));
+app.use("/api/home-config", require("./routes/homeConfigRoutes"));
+app.use("/api/auth", require("./routes/auth"));
+app.use("/api/admin", require("./routes/adminRoutes"));
+app.use("/api/registrations", require("./routes/registrationRoutes"));
+app.use("/api/orders", require("./routes/orderRoutes"));
+app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
+app.use("/api/otp", require("./routes/otpRoutes"));
+app.use("/api/addresses", require("./routes/addressRoutes"));
+app.use("/api/settings", require("./routes/settingsRoutes"));
+app.use("/api/shipping-rules", require("./routes/settings"));
+app.use("/api/shipping", require("./routes/shippingRoutes"));
+app.use("/api/payments", require("./routes/paymentRoutes"));
+app.use("/api/discount-rules", require("./routes/discountRoutes"));
+app.use("/api/reviews", require("./routes/reviewRoutes")); 
+app.use("/api/trust-settings", require("./routes/trustSettingsRoutes")); 
+
+// ✅ NEW ANALYTICS ROUTE ADDED BELOW
+app.use("/api/analytics", require("./routes/analytics")); 
+
+// ✅ NEW GRID LAYOUT ROUTE ADDED HERE
+app.use("/api/grid-layout", require("./routes/gridLayoutRoutes"));
+
+app.use("/", require("./routes/sitemap"));
+
 /* ====================================================================
    ✅ FINAL SEO ROUTE (The Placeholder Method)
    ==================================================================== */
@@ -148,7 +183,7 @@ app.get("/product/:id", async (req, res) => {
     if (html.includes("</head>")) {
       html = html.replace("</head>", `${seoTags}\n</head>`);
     } else {
-      html = html.replace("<head>", `<head>${seoTags}`);
+      html = html.replace("<head>", `<head>\n${seoTags}`);
     }
 
     res.send(html);
@@ -160,40 +195,6 @@ app.get("/product/:id", async (req, res) => {
       res.status(500).send("Frontend build not found");
     }
   }
-});
-
-/* --------------------------- API ROUTES ------------------------------ */
-app.use("/api/categories", require("./routes/categoryRoutes"));
-app.use("/api/upload", require("./routes/uploadRoutes"));
-app.use("/api/products", require("./routes/productRoutes"));
-app.use("/api/banners", require("./routes/bannerRoutes"));
-app.use("/api/home-config", require("./routes/homeConfigRoutes"));
-app.use("/api/auth", require("./routes/auth"));
-app.use("/api/admin", require("./routes/adminRoutes"));
-app.use("/api/registrations", require("./routes/registrationRoutes"));
-app.use("/api/orders", require("./routes/orderRoutes"));
-app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
-app.use("/api/otp", require("./routes/otpRoutes"));
-app.use("/api/addresses", require("./routes/addressRoutes"));
-app.use("/api/settings", require("./routes/settingsRoutes"));
-app.use("/api/shipping-rules", require("./routes/settings"));
-app.use("/api/shipping", require("./routes/shippingRoutes"));
-app.use("/api/payments", require("./routes/paymentRoutes"));
-app.use("/api/discount-rules", require("./routes/discountRoutes"));
-app.use("/api/reviews", require("./routes/reviewRoutes")); 
-app.use("/api/trust-settings", require("./routes/trustSettingsRoutes")); 
-
-// ✅ NEW ANALYTICS ROUTE ADDED BELOW
-app.use("/api/analytics", require("./routes/analytics")); 
-
-// ✅ NEW GRID LAYOUT ROUTE ADDED HERE
-app.use("/api/grid-layout", require("./routes/gridLayoutRoutes"));
-
-app.use("/", require("./routes/sitemap"));
-
-/* ------------------------- HEALTH CHECK ----------------------------- */
-app.get("/api/test", (_req, res) => {
-  res.json({ ok: true, message: "✅ Server Working" });
 });
 
 /* ------------------------- FRONTEND SERVE ---------------------------- */
