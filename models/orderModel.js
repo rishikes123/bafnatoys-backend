@@ -101,6 +101,20 @@ const orderSchema = new mongoose.Schema(
     trackingId: { type: String, default: "" },
     courierName: { type: String, default: "" },
 
+    /* ============================================================
+       ✅ NEW: ADDED FOR DELHIVERY BOX SIZES (PACKING DETAILS)
+    ============================================================ */
+    packingDetails: {
+      type: [
+        {
+          boxType: { type: String, enum: ["SMALL", "MEDIUM", "LARGE"] },
+          quantity: { type: Number, default: 0 },
+          totalWeight: { type: Number, default: 0 }, // in KG
+        }
+      ],
+      default: []
+    },
+
     /* ✅ PUBLIC TRACKING TOKEN (secure tracking link) */
     trackingToken: { type: String, default: "" },
 

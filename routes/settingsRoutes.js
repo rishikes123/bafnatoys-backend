@@ -11,8 +11,8 @@ router.get("/cod", async (req, res) => {
     if (!setting) {
       setting = await Setting.create({
         key: "cod",
-        // ✅ Default me COD chalu (enabled: true) aur advanceAmount 0 rahega
-        data: { advanceAmount: 0, enabled: true },
+        // ✅ Default me COD chalu, advanceAmount 0 aur advanceType 'flat' rahega
+        data: { advanceAmount: 0, advanceType: "flat", enabled: true },
       });
     }
 
@@ -26,11 +26,11 @@ router.get("/cod", async (req, res) => {
 // UPDATE COD Settings
 router.put("/cod", async (req, res) => {
   try {
-    const { advanceAmount, enabled } = req.body;
+    // ✅ advanceType ko request body se receive kar rahe hain
+    const { advanceAmount, advanceType, enabled } = req.body;
     
-    // ✅ FIX: Strict True/False checking
+    // Strict True/False checking
     let isEnabled = true;
-    // Agar frontend strictly false, ya string "false", ya 0 bhejta hai, toh isko false maan lo
     if (enabled === false || String(enabled).toLowerCase() === "false" || enabled === 0) {
       isEnabled = false;
     }
@@ -42,7 +42,9 @@ router.put("/cod", async (req, res) => {
           key: "cod", // Ensure key exists
           data: {
             advanceAmount: Number(advanceAmount) || 0,
-            enabled: isEnabled, // ✅ Ab yahan theek se boolean save hoga
+            // ✅ Yahan theek se check karke percentage ya flat save hoga
+            advanceType: advanceType === "percentage" ? "percentage" : "flat", 
+            enabled: isEnabled, 
           },
         },
       },

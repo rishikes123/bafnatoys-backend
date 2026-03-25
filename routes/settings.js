@@ -22,7 +22,11 @@ router.put('/', async (req, res) => {
     
     const settings = await ShippingSettings.findOneAndUpdate(
       {}, 
-      { shippingCharge, freeShippingThreshold },
+      { 
+        // ✅ Ensure fields are saved as Numbers to prevent calculation bugs during checkout
+        shippingCharge: Number(shippingCharge) || 0, 
+        freeShippingThreshold: Number(freeShippingThreshold) || 0 
+      },
       { new: true, upsert: true }
     );
     res.json(settings);

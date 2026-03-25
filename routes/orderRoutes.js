@@ -1,6 +1,7 @@
 // routes/orderRoutes.js
 const express = require("express");
 const router = express.Router();
+const axios = require("axios"); // ✅ Delhivery API integration ke liye
 
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
@@ -116,7 +117,6 @@ router.post("/", async (req, res) => {
 
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
 
-    // ✅ UPDATED: Ab hum frontend se aane wale saare new fields mapping kar rahe hain
     const order = new Order({
       customerId,
       items,
@@ -147,7 +147,6 @@ router.post("/", async (req, res) => {
       advancePaid: codAdvancePaid || 0,
       remainingAmount: codRemainingAmount || 0,
 
-      // ✅ Initialize WA Tracking State
       wa: {
         orderConfirmedSent: false,
         trackingSent: false,
@@ -182,10 +181,8 @@ router.post("/", async (req, res) => {
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
       .lean();
 
-    // ✅ 1. Respond fast to frontend
     res.status(201).json({ order: populatedOrder });
 
-    // ✅ 2. Email admin in background
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail) {
       const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
@@ -198,22 +195,7 @@ router.post("/", async (req, res) => {
           <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || "N/A"}</p>
           <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
           <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
-
           <hr/>
-          <h3>Items Ordered:</h3>
-          <ul style="padding-left: 20px;">
-            ${populatedOrder.items
-              .map(
-                (item) => `
-                  <li style="margin-bottom: 5px;">
-                    <strong>${item.name}</strong> - Qty: ${item.qty}
-                  </li>
-                `
-              )
-              .join("")}
-          </ul>
-          <hr/>
-
           <p>Please check the admin panel for more details.</p>
         </div>
       `;
@@ -223,14 +205,13 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // ✅ 3. IMMEDIATE WHATSAPP TO CUSTOMER (Smart feature)
     const to = sanitizePhone(populatedOrder.customerId?.whatsapp || populatedOrder.customerId?.otpMobile || populatedOrder.shippingAddress?.phone);
 
     if (to) {
       try {
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_confirmed_new", // Using the same confirmation template
+          templateName: "order_confirmed_new", 
           languageCode: "en_US",
           components: [
             {
@@ -244,7 +225,6 @@ router.post("/", async (req, res) => {
           ],
         });
 
-        // Update DB silently so Admin Panel dropdown doesn't send duplicate message later
         await Order.findByIdAndUpdate(savedOrder._id, {
           "wa.orderConfirmedSent": true,
           "wa.lastSentAt": new Date(),
@@ -329,7 +309,8 @@ router.put("/admin/return-action/:id", async (req, res) => {
 ============================================================ */
 const updateOrderStatus = async (req, res) => {
   try {
-    const { status, trackingId, courierName, cancelledBy } = req.body;
+    // ✅ Extract packingDetails from frontend for Delhivery
+    const { status, trackingId, courierName, cancelledBy, packingDetails } = req.body;
     if (!status) return res.status(400).json({ message: "Status is required" });
 
     const newStatus = String(status).toLowerCase();
@@ -338,7 +319,6 @@ const updateOrderStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid status value" });
     }
 
-    // ✅ populate customer for WhatsApp
     const order = await Order.findById(req.params.id).populate("customerId");
     if (!order) return res.status(404).json({ message: "Order not found" });
 
@@ -357,10 +337,68 @@ const updateOrderStatus = async (req, res) => {
       order.deliveredAt = Date.now();
     }
 
-    /* ✅ TRACKING FIELDS (on shipped) */
+    /* ============================================================
+        🚚 SHIPPING & AUTO-AWB GENERATION
+    ============================================================ */
     if (newStatus === "shipped") {
-      if (trackingId) order.trackingId = trackingId;
-      if (courierName) order.courierName = courierName;
+      // ✅ 1. Check if Delhivery and no AWB exists
+      if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0 && !order.trackingId) {
+        try {
+          let totalWeightKg = 0;
+          packingDetails.forEach(box => { totalWeightKg += Number(box.totalWeight) || 0; });
+          const totalWeightGrams = totalWeightKg * 1000;
+
+          const addr = order.shippingAddress;
+          const finalCity = addr.isDifferentShipping ? addr.shippingCity : addr.city;
+          const finalState = addr.isDifferentShipping ? addr.shippingState : addr.state;
+          const finalPin = addr.isDifferentShipping ? addr.shippingPincode : addr.pincode;
+          const finalAdd = addr.isDifferentShipping ? `${addr.shippingStreet}, ${addr.shippingArea}` : `${addr.street}, ${addr.area}`;
+          const finalPhone = addr.phone || order.customerId?.otpMobile || "9999999999";
+
+          const delhiveryPayload = {
+            format: "json",
+            data: {
+              shipments: [{
+                name: addr.shopName || addr.fullName || order.customerId?.shopName || "Customer",
+                add: finalAdd,
+                pin: finalPin,
+                city: finalCity,
+                state: finalState,
+                country: "India",
+                phone: finalPhone,
+                order: order.orderNumber,
+                payment_mode: order.paymentMode === "COD" ? "COD" : "Prepaid",
+                cod_amount: order.paymentMode === "COD" ? order.remainingAmount : 0,
+                products_desc: "Bafna Toys Products",
+                seller_name: "Bafna Toys", 
+                total_amount: order.total,
+                weight: totalWeightGrams,
+                shipping_mode: "Surface" 
+              }],
+              pickup_location: { name: process.env.DELHIVERY_PICKUP_LOCATION_NAME || "BAFNATOYS" }
+            }
+          };
+
+          const response = await axios.post("https://track.delhivery.com/api/cmu/create.json", 
+            `format=json&data=${encodeURIComponent(JSON.stringify(delhiveryPayload.data))}`, 
+            { headers: { "Authorization": `Token ${process.env.DELHIVERY_API_KEY}`, "Content-Type": "application/x-www-form-urlencoded" } }
+          );
+
+          if (response.data && response.data.success) {
+            order.trackingId = response.data.packages[0].waybill;
+            order.courierName = "Delhivery";
+            order.packingDetails = packingDetails;
+            order.isShipped = true;
+          }
+        } catch (apiErr) {
+          console.error("Delhivery API Error:", apiErr.message);
+        }
+      } 
+      
+      // ✅ 2. V-Xpress ya any Manual Courier Flow
+      // Agar manual tracking Id bheja hai (ya Delhivery API bypass ho rahi hai)
+      if (trackingId && !order.trackingId) order.trackingId = trackingId;
+      if (courierName && !order.courierName) order.courierName = courierName;
       order.isShipped = true;
     }
 
@@ -369,7 +407,6 @@ const updateOrderStatus = async (req, res) => {
       order.cancelledBy = cancelledBy;
     }
 
-    // Ensure wa object exists
     if (!order.wa) {
       order.wa = {
         orderConfirmedSent: false,
@@ -384,12 +421,11 @@ const updateOrderStatus = async (req, res) => {
     await order.save();
 
     /* ============================================================
-        ✅ WhatsApp Trigger
+        💬 WhatsApp Trigger
     ============================================================ */
     const to = sanitizePhone(order.customerId?.whatsapp || order.customerId?.otpMobile || order.shippingAddress?.phone);
 
-    // ✅ ORDER CONFIRMED (processing)
-    // NOTE: This will mostly skip now if the message was sent at Order Placement, preventing duplicates!
+    // ✅ ORDER CONFIRMED
     if (to && newStatus === "processing" && !order.wa.orderConfirmedSent) {
       try {
         await sendWhatsAppTemplate({
@@ -418,22 +454,21 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ ORDER SHIPPED -> Template: order_shipped_neya_hai
+    // ✅ ORDER SHIPPED (With Dynamic Tracking Link)
     if (to && newStatus === "shipped" && order.trackingId && order.courierName && !order.wa.trackingSent) {
       try {
-        // 🔗 SMART TRACKING LINK LOGIC
-        let dynamicTrackingLink = "https://google.com";
+        let dynamicTrackingLink = "https://bafnatoys.com/orders"; // Default Fallback
         const cName = String(order.courierName).toLowerCase().trim();
 
+        // 🔗 URL Logic
         if (cName.includes("delhivery")) {
-          dynamicTrackingLink = "https://www.delhivery.com/tracking";
+          dynamicTrackingLink = `https://www.delhivery.com/track/package/?waybill=${order.trackingId}`;
         } else if (cName.includes("vxpress") || cName.includes("v-xpress") || cName.includes("v xpress")) {
           dynamicTrackingLink = "https://vxpress.in/track-result/";
         }
 
         await sendWhatsAppTemplate({
           to,
-          // 🚀 UPDATED HERE: Pointing to exact template name or env variable
           templateName: process.env.WA_TRACKING_TEMPLATE || "order_shipped_neya_hai", 
           languageCode: "en_US",
           components: [
@@ -447,7 +482,6 @@ const updateOrderStatus = async (req, res) => {
                 { type: "text", text: String(dynamicTrackingLink || "") }, // {{5}}
               ],
             },
-            // ✅ Yahan Button Variable pass kar diya taaki Meta error na de
             {
               type: "button",
               sub_type: "url",
@@ -455,7 +489,7 @@ const updateOrderStatus = async (req, res) => {
               parameters: [
                 {
                   type: "text",
-                  text: "orders" // Ye append hokar 'bafnatoys.com/orders' ban jayega
+                  text: String(order._id) // ✅ UPDATED: Bheje gaye screenshot ke anusar button dynamic hai
                 }
               ]
             }
