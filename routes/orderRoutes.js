@@ -336,6 +336,11 @@ const updateOrderStatus = async (req, res) => {
       order.deliveredAt = Date.now();
     }
 
+    // 👇========================================================================👇
+    // ✅ YAHAN FIX ADD KIYA HAI TAQI ORDER STATUS SAHI SE DATABASE MEIN SAVE HO
+    order.status = newStatus;
+    // 👆========================================================================👆
+
     /* ============================================================
         🚚 SHIPPING & EXCLUSIVE DELHIVERY AUTO-AWB GENERATION
     ============================================================ */
