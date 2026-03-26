@@ -23,6 +23,20 @@ function sanitizePhone(phone) {
   return digits; // final: 9198xxxxxxxx
 }
 
+// ✅ HELPER FUNCTION: Har order item ke sath uska SKU attach karne ke liye
+const attachSkuToItems = (order) => {
+  if (order && order.items && Array.isArray(order.items)) {
+    order.items = order.items.map(item => {
+      return {
+        ...item,
+        // Backend se explicitly SKU utha kar bhej rahe hain
+        sku: (item.productId && item.productId.sku) ? item.productId.sku : (item.sku || "")
+      };
+    });
+  }
+  return order;
+};
+
 /* ============================================================
     ✅ ANALYTICS ROUTES (Must be before /:id)
 ============================================================ */
@@ -60,10 +74,14 @@ router.get("/", async (req, res) => {
     const { customerId } = req.query;
     const filter = customerId ? { customerId } : {};
 
-    const orders = await Order.find(filter)
+    let orders = await Order.find(filter)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate("items.productId", "sku") // ✅ YAHAN SKU ADD KIYA HAI
       .sort({ createdAt: -1 })
       .lean();
+
+    // ✅ SKU Attach kar rahe hain
+    orders = orders.map(attachSkuToItems);
 
     res.json(orders);
   } catch (err) {
@@ -75,11 +93,16 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id)
+    let order = await Order.findById(req.params.id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate("items.productId", "sku") // ✅ YAHAN SKU ADD KIYA HAI
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
+    
+    // ✅ SKU Attach kar rahe hain
+    order = attachSkuToItems(order);
+
     res.json(order);
   } catch (err) {
     res.status(500).json({
@@ -89,8 +112,8 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
- * @route    POST /api/orders
- * @desc     Create a new order & Notify Admin via Email + Customer via WhatsApp
+ *@route    POST /api/orders
+ *@desc     Create a new order & Notify Admin via Email + Customer via WhatsApp
  */
 router.post("/", async (req, res) => {
   try {
@@ -177,9 +200,13 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const populatedOrder = await Order.findById(savedOrder._id)
+    let populatedOrder = await Order.findById(savedOrder._id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
+      .populate("items.productId", "sku") // ✅ YAHAN SKU ADD KIYA HAI
       .lean();
+
+    // ✅ SKU Attach kar rahe hain
+    populatedOrder = attachSkuToItems(populatedOrder);
 
     res.status(201).json({ order: populatedOrder });
 
@@ -309,7 +336,8 @@ router.put("/admin/return-action/:id", async (req, res) => {
 ============================================================ */
 const updateOrderStatus = async (req, res) => {
   try {
-    const { status, trackingId, courierName, cancelledBy, packingDetails } = req.body;
+    // 👇 Yahan manualAdvance aur codAmountToCollect ko req.body se nikala hai
+    const { status, trackingId, courierName, cancelledBy, packingDetails, manualAdvance, codAmountToCollect } = req.body;
     if (!status) return res.status(400).json({ message: "Status is required" });
 
     const newStatus = String(status).toLowerCase();
@@ -336,10 +364,8 @@ const updateOrderStatus = async (req, res) => {
       order.deliveredAt = Date.now();
     }
 
-    // 👇========================================================================👇
     // ✅ YAHAN FIX ADD KIYA HAI TAQI ORDER STATUS SAHI SE DATABASE MEIN SAVE HO
     order.status = newStatus;
-    // 👆========================================================================👆
 
     /* ============================================================
         🚚 SHIPPING & EXCLUSIVE DELHIVERY AUTO-AWB GENERATION
@@ -349,18 +375,31 @@ const updateOrderStatus = async (req, res) => {
         try {
           let totalWeightKg = 0;
           
-          // ✅ Box Dimensions Setup
-          let finalLength = 33;  
-          let finalBreadth = 22; 
-          let finalHeight = 21;  
+          // ✅ Box Dimensions Setup Default
+          let finalLength = 47;  
+          let finalBreadth = 36; 
+          let finalHeight = 25;  
 
+          // 👇 Yahan Naye Boxes A31, A08, A06, A28 ki actual dimension logic daali hai
           packingDetails.forEach(box => { 
             totalWeightKg += Number(box.totalWeight) || 0; 
             
-            if (box.boxType === "SMALL") {
-                finalLength = 33;
-                finalBreadth = 22;
-                finalHeight = 21;
+            if (box.boxType === "A28") {
+                finalLength = 47;
+                finalBreadth = 36;
+                finalHeight = 25;
+            } else if (box.boxType === "A06") {
+                finalLength = 44.5;
+                finalBreadth = 35;
+                finalHeight = 34.5;
+            } else if (box.boxType === "A08") {
+                finalLength = 47;
+                finalBreadth = 35.5;
+                finalHeight = 47;
+            } else if (box.boxType === "A31") {
+                finalLength = 89;
+                finalBreadth = 48;
+                finalHeight = 40;
             }
           });
           
@@ -372,6 +411,16 @@ const updateOrderStatus = async (req, res) => {
           const finalPin = addr.isDifferentShipping ? addr.shippingPincode : addr.pincode;
           const finalAdd = addr.isDifferentShipping ? `${addr.shippingStreet}, ${addr.shippingArea}` : `${addr.street}, ${addr.area}`;
           const finalPhone = addr.phone || order.customerId?.otpMobile || "9999999999";
+
+          // 👇 Yahan par COD amount bhejne ki logic fix ki hai
+          let delhiveryCodAmount = 0;
+          if (order.paymentMode === "COD") {
+            if (codAmountToCollect !== undefined) {
+              delhiveryCodAmount = codAmountToCollect; // Agar front-end se reduced amount aayi hai
+            } else {
+              delhiveryCodAmount = order.remainingAmount; // Default fallback
+            }
+          }
 
           const delhiveryPayload = {
             format: "json",
@@ -386,7 +435,7 @@ const updateOrderStatus = async (req, res) => {
                 phone: finalPhone,
                 order: order.orderNumber,
                 payment_mode: order.paymentMode === "COD" ? "COD" : "Prepaid",
-                cod_amount: order.paymentMode === "COD" ? order.remainingAmount : 0,
+                cod_amount: delhiveryCodAmount, // ✅ Updated amount here
                 products_desc: "Bafna Toys Products",
                 seller_name: "Bafna Toys", 
                 total_amount: order.total,
@@ -441,6 +490,12 @@ const updateOrderStatus = async (req, res) => {
         lastError: "",
         lastSentAt: null,
       };
+    }
+
+    // 👇 Agar manual paise receive hue hain toh DB update karo taaki invoice mein accurate ho
+    if (manualAdvance !== undefined && codAmountToCollect !== undefined) {
+      order.advancePaid = manualAdvance;
+      order.remainingAmount = codAmountToCollect;
     }
 
     await order.save();
@@ -506,7 +561,7 @@ const updateOrderStatus = async (req, res) => {
               parameters: [
                 {
                   type: "text",
-                  text: String(order._id) // ✅ CORRECTED: URL parameter will be the actual Order ID
+                  text: String(order._id) 
                 }
               ]
             }
@@ -524,9 +579,13 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    const populatedOrder = await Order.findById(order._id)
+    let populatedOrder = await Order.findById(order._id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
+      .populate("items.productId", "sku") // ✅ YAHAN BHI SKU ADD KIYA HAI
       .lean();
+
+    // ✅ SKU Attach kar rahe hain
+    populatedOrder = attachSkuToItems(populatedOrder);
 
     res.json(populatedOrder);
   } catch (err) {

@@ -107,7 +107,8 @@ const orderSchema = new mongoose.Schema(
     packingDetails: {
       type: [
         {
-          boxType: { type: String, enum: ["SMALL", "MEDIUM", "LARGE"] },
+          // 👇 YAHAN PAR NEW BOX SIZES KA ENUM ADD KIYA HAI 👇
+          boxType: { type: String, enum: ["A28", "A06", "A08", "A31"] },
           quantity: { type: Number, default: 0 },
           totalWeight: { type: Number, default: 0 }, // in KG
         }
