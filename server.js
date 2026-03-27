@@ -82,6 +82,10 @@ app.use("/api/banners", require("./routes/bannerRoutes"));
 app.use("/api/home-config", require("./routes/homeConfigRoutes"));
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/admin", require("./routes/adminRoutes"));
+
+// ✅ YEH LINE ADD KI (Register adminAuth route)
+app.use("/api/adminAuth", require("./routes/adminAuth")); 
+
 app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
