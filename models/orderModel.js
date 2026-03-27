@@ -163,9 +163,23 @@ const orderSchema = new mongoose.Schema(
 orderSchema.index({ orderNumber: 1 }, { unique: true });
 
 /* ================= AUTO ORDER NUMBER + TOKEN + AMOUNT ================= */
-orderSchema.pre("validate", function (next) {
+orderSchema.pre("validate", async function (next) {
   if (!this.orderNumber) {
-    this.orderNumber = "ODR" + Math.floor(100000 + Math.random() * 900000);
+    // Database mein sabse recent order dhoondo
+    const lastOrder = await this.constructor.findOne().sort({ createdAt: -1 });
+
+    let nextNum = 1001; // Default starting number
+
+    if (lastOrder && lastOrder.orderNumber) {
+      const lastNumber = parseInt(lastOrder.orderNumber.replace("ODR", ""), 10);
+      
+      // ✅ Agar pichla number valid hai aur chhota hai (taaki bade random numbers skip ho jayein)
+      if (!isNaN(lastNumber) && lastNumber < 100000) {
+        nextNum = lastNumber + 1;
+      }
+    }
+    
+    this.orderNumber = "ODR" + nextNum;
   }
 
   // ✅ generate tracking token once (for customer tracking link)
