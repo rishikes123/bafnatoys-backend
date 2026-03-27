@@ -10,7 +10,11 @@ const productSchema = new mongoose.Schema(
     
     // ✅ STOCK AND UNIT
     stock: { type: Number, default: 0 }, 
-    unit: { type: String, default: "Piece" }, // ✅ Added Unit (Packet/Box/Piece)
+    unit: { type: String, default: "Piece" }, // Packet/Box/Piece
+
+    // 🔥 NAYE FIELDS BULK BUY KE LIYE (BOX/TRAY Strict Multiples)
+    piecesPerUnit: { type: Number, default: 1 },
+    isBulkOnly: { type: Boolean, default: false },
 
     description: { type: String, trim: true },
     tagline: { type: String, trim: true },

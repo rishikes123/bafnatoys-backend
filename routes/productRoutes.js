@@ -295,6 +295,9 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       stock: req.body.stock || 0,
       unit: req.body.unit || "Piece",
       relatedProducts: req.body.relatedProducts || [],
+      // ✅ Explicitly Parsing new Bulk values
+      piecesPerUnit: Number(req.body.piecesPerUnit) || 1,
+      isBulkOnly: req.body.isBulkOnly === true || req.body.isBulkOnly === "true",
     });
 
     await prod.save();
@@ -402,6 +405,14 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
 
     if (updateData.name) {
       updateData.slug = slugify(updateData.name, { lower: true, strict: true });
+    }
+
+    // ✅ Explicitly Handle Boolean and Number parsing for Bulk Logic 
+    if (req.body.piecesPerUnit !== undefined) {
+      updateData.piecesPerUnit = Number(req.body.piecesPerUnit) || 1;
+    }
+    if (req.body.isBulkOnly !== undefined) {
+      updateData.isBulkOnly = req.body.isBulkOnly === true || req.body.isBulkOnly === "true";
     }
 
     const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {
