@@ -187,13 +187,13 @@ router.post("/", async (req, res) => {
         break;
       } catch (e) {
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
-          // ✅ NEW LOGIC: Ignore large numbers, generate correct sequence
+          // ✅ NEW LOGIC: Updated to 1001001 for correct sequence bypassing random big numbers
           const lastOrderRetry = await Order.findOne().sort({ createdAt: -1 });
-          let nextNum = 1001;
+          let nextNum = 1001001;
           
           if (lastOrderRetry && lastOrderRetry.orderNumber) {
             const lastNumber = parseInt(lastOrderRetry.orderNumber.replace("ODR", ""), 10);
-            if (!isNaN(lastNumber) && lastNumber < 100000) {
+            if (!isNaN(lastNumber) && lastNumber >= 1001000) {
               nextNum = lastNumber + 1;
             }
           }

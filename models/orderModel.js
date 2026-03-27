@@ -168,13 +168,14 @@ orderSchema.pre("validate", async function (next) {
     // Database mein sabse recent order dhoondo
     const lastOrder = await this.constructor.findOne().sort({ createdAt: -1 });
 
-    let nextNum = 1001; // Default starting number
+    // ✅ Tumhara naya base number yahan set kiya hai
+    let nextNum = 1001001; 
 
     if (lastOrder && lastOrder.orderNumber) {
       const lastNumber = parseInt(lastOrder.orderNumber.replace("ODR", ""), 10);
       
-      // ✅ Agar pichla number valid hai aur chhota hai (taaki bade random numbers skip ho jayein)
-      if (!isNaN(lastNumber) && lastNumber < 100000) {
+      // ✅ Agar pichla number 1001000 se bada hai toh usme +1 hoga, warna 1001001 se start hoga
+      if (!isNaN(lastNumber) && lastNumber >= 1001000) {
         nextNum = lastNumber + 1;
       }
     }
