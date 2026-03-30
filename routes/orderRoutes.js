@@ -1,4 +1,3 @@
-// routes/orderRoutes.js
 const express = require("express");
 const router = express.Router();
 const axios = require("axios"); // ✅ Delhivery API integration ke liye
@@ -391,7 +390,7 @@ const updateOrderStatus = async (req, res) => {
           let finalBreadth = 36; 
           let finalHeight = 25;  
 
-          // 👇 Yahan Naye Boxes A31, A08, A06, A28 ki actual dimension logic daali hai
+          // 👇 Yahan Naye Boxes A31, A08, A06, A28 aur A18 ki actual dimension logic daali hai
           packingDetails.forEach(box => { 
             totalWeightKg += Number(box.totalWeight) || 0; 
             
@@ -411,6 +410,10 @@ const updateOrderStatus = async (req, res) => {
                 finalLength = 89;
                 finalBreadth = 48;
                 finalHeight = 40;
+            } else if (box.boxType === "A18") { // ✅ A18 YAHAN ADD HUA HAI
+                finalLength = 44;
+                finalBreadth = 20; // W hai toh breadth banega
+                finalHeight = 45;
             }
           });
           
