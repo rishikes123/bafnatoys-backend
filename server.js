@@ -105,6 +105,9 @@ app.use("/api/analytics", require("./routes/analytics"));
 // ✅ NEW GRID LAYOUT ROUTE ADDED HERE
 app.use("/api/grid-layout", require("./routes/gridLayoutRoutes"));
 
+// ✅ CHATBOT ROUTE ADDED HERE
+app.use("/api/chatbot", require("./routes/chatbotRoutes"));
+
 app.use("/", require("./routes/sitemap"));
 
 /* ====================================================================
