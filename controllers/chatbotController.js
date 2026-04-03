@@ -2,12 +2,15 @@ const Order = require('../models/orderModel');
 const Product = require('../models/Product'); 
 const Setting = require('../models/settingModel'); 
 const ShippingSettings = require('../models/ShippingSettings'); 
+const Category = require('../models/categoryModel');
+const Banner = require('../models/bannerModel');
+const HomeConfig = require('../models/homeConfigModel'); 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY); 
 
 /* ==========================================
-   🛠️ TOOLS DEFINITION (Gemini ko DB sikhana)
+   🛠️ TOOLS DEFINITION
    ========================================== */
 
 const orderTrackingTool = {
@@ -52,42 +55,92 @@ const storePolicyTool = {
   },
 };
 
+const categoryTool = {
+  name: "get_all_categories",
+  description: "Get the complete list of active toy categories available on the website.",
+  parameters: {
+    type: "OBJECT",
+    properties: {}, 
+  },
+};
+
+const offerTool = {
+  name: "get_latest_offers",
+  description: "Get the latest running banners, offers, and new arrivals on the website.",
+  parameters: {
+    type: "OBJECT",
+    properties: {},
+  },
+};
+
+const dealOfDayTool = {
+  name: "get_deals_of_the_day",
+  description: "Get the top 'Deals of the Day' or hot deals configured on the website.",
+  parameters: {
+    type: "OBJECT",
+    properties: {}, 
+  },
+};
+
 exports.handleChatMessage = async (req, res) => {
   try {
     const { message, chatHistory } = req.body;
 
-    // 👇 MULTI-LANGUAGE Bot Rules 
+    // 💡 FAQ DATA INJECTED INTO BOT RULES 💡
     const botRules = `
       Tum 'Bafna Toys' ke official B2B customer support assistant ho.
-      Tumhara kaam wholesale orders, MOQ, pricing, payment, aur dispatch details dena hai.
+      Tumhara kaam wholesale orders, MOQ, pricing, payment, categories, aur dispatch details dena hai.
 
-      ⚠️ **STRICT LANGUAGE RULE (VERY IMPORTANT):** ⚠️
+      ⚠️ **STRICT LANGUAGE RULE:** ⚠️
       - User jis bhasha (language) mein baat kare (English, Hindi, Tamil, Kannada, Telugu, ya Mix Hinglish), tumhe apna poora reply usi language mein aur uski native script mein dena hai.
-      - Example: Agar user 'Tamil' select kare, toh Tamil script (தமிழ்) use karo. Agar 'Hindi' bole, toh Devanagari (हिंदी) use karo. Agar 'Mix Hinglish' bole, toh Hinglish use karo.
-      - Tone hamesha casual, friendly, aur professional B2B jaisa hona chahiye (jaise "Sir", "Bhai", "Aap" us language mein jo suit kare).
+      - Tone hamesha casual, friendly, aur professional B2B jaisa hona chahiye.
 
-      💳 **PAYMENT, SHIPPING & DISCOUNT RULES:**
-      - Agar user "Payment options", "COD", ya "Shipping details" puche, toh 'get_store_policies' tool use karo. **Order Number mat mango.**
-      - Jab policy ka data mile, toh usey user ki language me samjhao. Example: Online payment & COD both available.
-      - Agar user "Bulk discount" ke baare me puche, toh batao ki hum carton orders par special discounted rates dete hain.
+      💳 **PAYMENT & SHIPPING RULES:**
+      - Agar user "Payment options", "COD", ya "Shipping details" puche, toh 'get_store_policies' tool use karo.
+      - Jab policy ka data mile, toh usey user ki language me samjhao.
 
       📦 **MOQ (Minimum Order Quantity) RULES:**
-      Jab koi puche "MOQ kya hai?", toh ye logic user ki bhasha me samjhao:
-      - Agar item ka price ₹60 se kam hai (< ₹60) → Minimum order 3 pieces hai.
-      - Agar item ka price ₹60 ya usse zyada hai (>= ₹60) → Minimum order 2 pieces hai.
-      - Note: Box/Carton items ki MOQ dibbe ke hisaab se hoti hai.
-      
+      Jab koi "MOQ kya hai?" puche, toh hamesha is professional aur structured format me reply karo:
+      **MOQ (Minimum Order Quantity) Policy:**
+      Humari wholesale MOQ policy product ke price par aadharit hai:
+      * **₹60 se kam price wale items:** Minimum **3 pieces** per item.
+      * **₹60 ya usse zyada price wale items:** Minimum **2 pieces** per item.
+      *(Note: Box ya Carton packing wale items ki MOQ unke dibbe ke hisaab se hoti hai.)*
+
+      📚 **STORE FAQ KNOWLEDGE (RETAILERS KE SAWALO KE JAWAB):**
+      Tumhe in sab baaton ka dhyan rakhna hai agar customer pooche:
+      - **GST Billing:** Yes, GST invoice is provided. Input tax credit can be claimed. If no GST, billed to personal name.
+      - **Dispatch & Delivery:** Dispatched within 24-48 hours from Coimbatore. Delivery takes 2-3 days in South India, 7-8 days in North India. Tracking via WhatsApp/SMS.
+      - **Product Quality:** Child-safe, non-toxic, durable, strict quality checks.
+      - **Why Buy From Us:** Direct manufacturer, better margins, low MOQ (3 pcs), 400+ products.
+      - **Who is this for:** Exclusively for retailers, resellers & shop owners. NOT for single-piece retail.
+      - **Damages/Returns:** Inspect within 24 hours. Returns accepted ONLY for incorrect/defective items.
+      - **Mix Products:** Yes, can mix and match freely across all categories.
+      - **Minimum Order Value:** No strict minimum. Free delivery above ₹3000. Orders below ₹3000 have ₹500 shipping charge.
+
+      📂 **CATEGORIES, OFFERS & DEALS:**
+      - Agar user puche "Kya kya milta hai?", "Konsi categories hain?", ya "Toys dikhao", toh 'get_all_categories' tool use karo.
+      - Agar user puche "Naya kya hai?", "Offers kya hain?", toh 'get_latest_offers' tool use karo.
+      - Agar user puche "Aaj ke deals kya hain?", "Deals of the day", ya "Saste items", toh 'get_deals_of_the_day' tool use karo.
+      - 🔥 **CRITICAL FOR DEALS:** Deals ka reply hamesha is line se shuru karo: "**Aaj ki sabse best deals yaha dekhein:** [View All Hot Deals](/hot-deals)". Uske baad top products ki list do.
+      - Links ko hamesha clickable Markdown format me do: [Category Name](/?category=category-id)
+
       🔥🔥 CRITICAL RULES FOR PRODUCT SEARCH 🔥🔥
       1. Agar user product search kare, toh 'search_product' tool use karo.
       2. DB se jo products milen, unhe bulleted list me dikhao.
-      3. **SABSE ZAROORI:** Har product ke naam ko CLICKABLE LINK banao. Link DB tool se 'link' field me milega.
+      3. **SABSE ZAROORI:** Har product/category/offer ke naam ko CLICKABLE LINK banao.
          Format example: [RC Stunt Car](/product/rc-stunt-car) - ₹250
-      4. List dene ke baad, hamesha ek HELP SUGGESTION do.
+
+      💡 **MANDATORY FOOTER (FAQ SUGGESTION):**
+      Apne har reply ke bottom (end) me ek professional note zaroor add karo taaki customer ko pata chale ki wo FAQ page bhi dekh sakte hain. Isko user ki language me hi likho.
+      Hamesha exact yeh link format use karo: [FAQ Page](/faq)
+      Example in English: "💡 *For more detailed answers, please visit our [FAQ Page](/faq).*"
+      Example in Hindi: "💡 *अधिक जानकारी के लिए, कृपया हमारा [FAQ Page](/faq) देखें।*"
+      Example in Hinglish: "💡 *Aur details ke liye, hamara [FAQ Page](/faq) check karein.*"
       
-      Agar koi ODR number de, toh 'get_order_status' tool use karo. Faltu baaton ko politely mana kar do.
+      Agar koi ODR number de, ya Order Details puche, toh 'get_order_status' tool use karke details nikal ke batao. (Format: ODR1000101)
     `;
 
-    // 🔥 HISTORY CRASH FIX 🔥
     let formattedHistory = [];
     let lastRole = null;
 
@@ -107,7 +160,7 @@ exports.handleChatMessage = async (req, res) => {
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
       systemInstruction: botRules,
-      tools: [{ functionDeclarations: [orderTrackingTool, productSearchTool, storePolicyTool] }],
+      tools: [{ functionDeclarations: [orderTrackingTool, productSearchTool, storePolicyTool, categoryTool, offerTool, dealOfDayTool] }],
     });
 
     const chat = model.startChat({
@@ -117,7 +170,6 @@ exports.handleChatMessage = async (req, res) => {
     let result = await chat.sendMessage(message);
     let response = result.response;
 
-    // 🔥 FAQ CRASH FIX 🔥
     let functionCall = null;
     const calls = typeof response.functionCalls === 'function' ? response.functionCalls() : response.functionCalls;
     
@@ -129,7 +181,6 @@ exports.handleChatMessage = async (req, res) => {
       const toolName = functionCall.name;
       let dbResultObj = {};
 
-      // 🔍 CASE 1: ORDER TRACKING
       if (toolName === "get_order_status") {
         const requestedOrderNumber = functionCall.args.orderNumber;
         const orderData = await Order.findOne({ orderNumber: requestedOrderNumber });
@@ -144,11 +195,10 @@ exports.handleChatMessage = async (req, res) => {
             trackingId: orderData.trackingId || "N/A"
           };
         } else {
-          dbResultObj = { found: false, message: "Order not found." };
+          dbResultObj = { found: false, message: "Order not found. Please provide a correct ODR number." };
         }
       } 
       
-      // 🧸 CASE 2: PRODUCT SEARCH
       else if (toolName === "search_product") {
         const searchQuery = functionCall.args.query;
         const productsData = await Product.find({
@@ -157,29 +207,26 @@ exports.handleChatMessage = async (req, res) => {
             { sku: { $regex: searchQuery, $options: "i" } },
             { description: { $regex: searchQuery, $options: "i" } } 
           ]
-        }).limit(3); 
+        }).limit(5); 
 
         if (productsData && productsData.length > 0) {
-          const formattedProducts = productsData.map(prod => ({
-            name: prod.name,
-            sku: prod.sku,
-            sellingPrice: prod.price,
-            stockAvailable: prod.stock,
-            isBulkOnly: prod.isBulkOnly,
-            link: `/product/${prod.slug}` 
-          }));
-
           dbResultObj = {
             found: true,
-            count: formattedProducts.length,
-            products: formattedProducts
+            count: productsData.length,
+            products: productsData.map(prod => ({
+              name: prod.name,
+              sku: prod.sku,
+              sellingPrice: prod.price,
+              stockAvailable: prod.stock,
+              isBulkOnly: prod.isBulkOnly,
+              link: `/product/${prod.slug}` 
+            }))
           };
         } else {
           dbResultObj = { found: false, message: "No products found matching that name." };
         }
       }
 
-      // 💳📦 CASE 3: STORE POLICIES
       else if (toolName === "get_store_policies") {
         const codSettings = await Setting.findOne({ key: 'cod' });
         const shipSettings = await ShippingSettings.findOne();
@@ -195,7 +242,73 @@ exports.handleChatMessage = async (req, res) => {
         };
       }
 
-      // DB result Gemini ko bheja
+      else if (toolName === "get_all_categories") {
+        const categories = await Category.find({})
+                                         .select('name slug link order _id')
+                                         .sort({ order: 1 }) 
+                                         .limit(15);
+        
+        if (categories && categories.length > 0) {
+          dbResultObj = {
+            found: true,
+            count: categories.length,
+            categories: categories.map(cat => ({
+              name: cat.name,
+              link: cat.link ? cat.link : `/?category=${cat._id}`
+            }))
+          };
+        } else {
+          dbResultObj = { found: false, message: "No categories available at the moment." };
+        }
+      }
+
+      else if (toolName === "get_latest_offers") {
+        const banners = await Banner.find({ status: 'active' }).select('title link type');
+        
+        if (banners && banners.length > 0) {
+          dbResultObj = {
+            found: true,
+            offers: banners.map(banner => ({
+              title: banner.title,
+              link: banner.link || '/',
+              type: banner.type
+            }))
+          };
+        } else {
+          dbResultObj = { found: false, message: "No special offers running right now." };
+        }
+      }
+
+      else if (toolName === "get_deals_of_the_day") {
+        const homeConfig = await HomeConfig.findOne().populate({
+          path: 'hotDealsItems.productId',
+          select: 'name slug price stock' 
+        });
+
+        if (homeConfig && homeConfig.hotDealsItems && homeConfig.hotDealsItems.length > 0) {
+          const activeDeals = homeConfig.hotDealsItems.filter(
+            item => item.enabled && item.productId && item.productId.stock > 0
+          );
+
+          if (activeDeals.length > 0) {
+            dbResultObj = {
+              found: true,
+              deals: activeDeals.slice(0, 5).map(item => ({
+                name: item.productId.name,
+                originalPrice: item.productId.price,
+                dealPrice: item.dealPrice, 
+                discountBadge: item.badge || `${item.discountValue} ${item.discountType === 'PERCENT' ? '%' : '₹'} OFF`,
+                link: `/product/${item.productId.slug}`
+              }))
+            };
+          } else {
+            dbResultObj = { found: false, message: "Aaj ke liye koi special deals stock me nahi hain." };
+          }
+        } else {
+          dbResultObj = { found: false, message: "Aaj ke liye koi special deals available nahi hain." };
+        }
+      }
+
       result = await chat.sendMessage([{
         functionResponse: {
           name: toolName,
