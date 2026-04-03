@@ -5,10 +5,13 @@ const slugify = require("slugify");
 const cloudinary = require("../config/cloudinary");
 const multer = require("multer");
 
-// 👇 IMPORT HOMECONFIG, PRODUCT + REVIEWS (✅ NEW)
+// 📥 PDF Generator Package (✅ NEW)
+const PDFDocument = require("pdfkit");
+const axios = require("axios"); // For fetching images from cloudinary to PDF
+
 const HomeConfig = require("../models/homeConfigModel.js");
 const Product = require("../models/Product.js");
-const Review = require("../models/Review.js"); // ✅ Added Review Model
+const Review = require("../models/Review.js");
 
 // 🧠 Multer setup
 const storage = multer.memoryStorage();
@@ -22,7 +25,6 @@ async function attachDealsToProducts(productsData) {
     const isArray = Array.isArray(productsData);
     const products = isArray ? productsData : [productsData];
 
-    // ✅ Fetch config once
     const config = await HomeConfig.findOne().lean();
     const dealMap = {};
 
@@ -45,19 +47,15 @@ async function attachDealsToProducts(productsData) {
       const deal = dealMap[prodId];
 
       if (deal) {
-        // ✅ Timer
         p.sale_end_time = deal.endsAt;
 
-        // ✅ Discount
         if (
           deal.discountType &&
           deal.discountType !== "NONE" &&
           Number(deal.discountValue) > 0
         ) {
-          // Deal active => bulk pricing hide (response only)
           p.bulkPricing = [];
 
-          // mrp set
           if (!p.mrp || p.mrp <= p.price) {
             p.mrp = p.price;
           }
@@ -89,14 +87,12 @@ async function attachDealsToProducts(productsData) {
 }
 
 /* ==================================================================
-   ⭐ HELPER: ATTACH RATINGS TO PRODUCTS (✅ NEW)
+   ⭐ HELPER: ATTACH RATINGS TO PRODUCTS
 ================================================================== */
 async function attachRatingsToProducts(products) {
   try {
-    // 1. Get all product IDs
     const productIds = products.map(p => p._id);
     
-    // 2. Fetch all reviews for these products, grouped by Product ID
     const ratingsData = await Review.aggregate([
       { $match: { productId: { $in: productIds } } },
       { 
@@ -108,7 +104,6 @@ async function attachRatingsToProducts(products) {
       }
     ]);
 
-    // 3. Create a map for quick lookup
     const ratingMap = {};
     ratingsData.forEach(r => {
       ratingMap[r._id.toString()] = {
@@ -117,18 +112,17 @@ async function attachRatingsToProducts(products) {
       };
     });
 
-    // 4. Attach to products
     return products.map(p => {
       const stats = ratingMap[p._id.toString()];
       return {
         ...p,
-        rating: stats ? Number(stats.rating.toFixed(1)) : 0, // ✅ Ensure it's a number
+        rating: stats ? Number(stats.rating.toFixed(1)) : 0, 
         reviews: stats ? stats.reviews : 0
       };
     });
   } catch (error) {
     console.error("❌ Error calculating ratings:", error);
-    return products; // Return original if fails
+    return products; 
   }
 }
 
@@ -150,7 +144,7 @@ router.get("/search/all", async (req, res) => {
       .limit(20)
       .lean();
 
-    products = await attachRatingsToProducts(products); // ✅ Attach Ratings
+    products = await attachRatingsToProducts(products); 
     const finalProducts = await attachDealsToProducts(products);
     res.json(finalProducts);
   } catch (err) {
@@ -169,7 +163,7 @@ router.get("/", async (_req, res) => {
       .sort({ order: 1 })
       .lean();
 
-    products = await attachRatingsToProducts(products); // ✅ Attach Ratings
+    products = await attachRatingsToProducts(products); 
     const finalProducts = await attachDealsToProducts(products);
     res.json(finalProducts);
   } catch (err) {
@@ -198,7 +192,7 @@ router.get("/:id/related", async (req, res) => {
       .populate("category", "name")
       .lean();
 
-    related = await attachRatingsToProducts(related); // ✅ Attach Ratings
+    related = await attachRatingsToProducts(related); 
     const finalRelated = await attachDealsToProducts(related);
     res.json(finalRelated);
   } catch (err) {
@@ -214,7 +208,7 @@ router.get("/:slugOrId", async (req, res, next) => {
   try {
     const { slugOrId } = req.params;
 
-    if (slugOrId === "search" || slugOrId === "reorder") return next();
+    if (slugOrId === "search" || slugOrId === "reorder" || slugOrId === "download-catalogue") return next();
 
     const query = mongoose.Types.ObjectId.isValid(slugOrId)
       ? { _id: slugOrId }
@@ -230,7 +224,6 @@ router.get("/:slugOrId", async (req, res, next) => {
 
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
-    // ✅ Attach Rating for single product
     const ratingData = await Review.aggregate([
       { $match: { productId: prod._id } },
       { $group: { _id: null, avgRating: { $avg: "$rating" }, totalReviews: { $sum: 1 } } }
@@ -247,7 +240,7 @@ router.get("/:slugOrId", async (req, res, next) => {
     let finalProd = await attachDealsToProducts(prod);
 
     if (finalProd.relatedProducts?.length) {
-      finalProd.relatedProducts = await attachRatingsToProducts(finalProd.relatedProducts); // ✅ Attach ratings to related
+      finalProd.relatedProducts = await attachRatingsToProducts(finalProd.relatedProducts); 
       finalProd.relatedProducts = await attachDealsToProducts(finalProd.relatedProducts);
     }
 
@@ -295,7 +288,6 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       stock: req.body.stock || 0,
       unit: req.body.unit || "Piece",
       relatedProducts: req.body.relatedProducts || [],
-      // ✅ Explicitly Parsing new Bulk values
       piecesPerUnit: Number(req.body.piecesPerUnit) || 1,
       isBulkOnly: req.body.isBulkOnly === true || req.body.isBulkOnly === "true",
     });
@@ -407,7 +399,6 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
       updateData.slug = slugify(updateData.name, { lower: true, strict: true });
     }
 
-    // ✅ Explicitly Handle Boolean and Number parsing for Bulk Logic 
     if (req.body.piecesPerUnit !== undefined) {
       updateData.piecesPerUnit = Number(req.body.piecesPerUnit) || 1;
     }
@@ -441,9 +432,111 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+
+/* ------------------------------------------------------------------
+✅ 12. DOWNLOAD PDF CATALOGUE (⭐ BRAND NEW FEATURE)
+------------------------------------------------------------------ */
+router.get("/download-catalogue/pdf", async (req, res) => {
+  try {
+    // 1. Fetch All Active Products
+    const products = await Product.find({ stock: { $gt: 0 } })
+      .populate("category", "name")
+      .sort({ "category.name": 1, order: 1 })
+      .lean();
+
+    const finalProducts = await attachDealsToProducts(products);
+
+    // 2. Setup PDF Document
+    const doc = new PDFDocument({ margin: 30, size: 'A4' });
+
+    res.setHeader("Content-disposition", 'attachment; filename="BafnaToys-Catalogue.pdf"');
+    res.setHeader("Content-type", "application/pdf");
+    doc.pipe(res);
+
+    // 3. Header
+    doc.fontSize(24).fillColor("#4f46e5").text("Bafna Toys Wholesale Catalogue", { align: "center" });
+    doc.moveDown(0.5);
+    doc.fontSize(10).fillColor("#475569").text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, { align: "center" });
+    doc.moveDown(2);
+
+    // 4. Grid Variables
+    let currentX = 30;
+    let currentY = doc.y;
+    const itemWidth = 170;
+    const itemHeight = 220;
+    const itemsPerRow = 3;
+    let col = 0;
+
+    // Helper Function to fetch image buffer
+    const fetchImageBuffer = async (url) => {
+      try {
+        // Optimize URL to get small low-res image for fast PDF generation
+        const optimizedUrl = url.replace("/upload/", "/upload/w_200,h_200,c_fit,q_auto/");
+        const response = await axios.get(optimizedUrl, { responseType: 'arraybuffer' });
+        return response.data;
+      } catch (e) {
+        return null;
+      }
+    };
+
+    for (let i = 0; i < finalProducts.length; i++) {
+      const p = finalProducts[i];
+
+      // Page Break logic
+      if (currentY + itemHeight > doc.page.height - 50) {
+        doc.addPage();
+        currentY = 40;
+        currentX = 30;
+        col = 0;
+      }
+
+      // Draw Box
+      doc.lineWidth(1).strokeColor("#e2e8f0").rect(currentX, currentY, itemWidth, itemHeight).stroke();
+
+      // Draw Image
+      if (p.images && p.images.length > 0) {
+        const imgBuffer = await fetchImageBuffer(p.images[0]);
+        if (imgBuffer) {
+          try {
+            doc.image(imgBuffer, currentX + 10, currentY + 10, { fit: [150, 130], align: 'center', valign: 'center' });
+          } catch (e) { /* Ignore bad images */ }
+        }
+      }
+
+      // Draw Text details below image
+      doc.fillColor("#0f172a").fontSize(10).text(p.name.substring(0, 45) + (p.name.length > 45 ? "..." : ""), currentX + 10, currentY + 150, { width: 150, height: 25, ellipsis: true });
+      doc.fillColor("#64748b").fontSize(9).text(`SKU: ${p.sku}`, currentX + 10, currentY + 175);
+      
+      const minQty = p.piecesPerUnit > 1 ? p.piecesPerUnit : (p.price < 60 ? 3 : 2);
+      doc.fillColor("#64748b").fontSize(9).text(`Min Qty: ${minQty} Pcs`, currentX + 10, currentY + 188);
+      
+      doc.fillColor("#059669").fontSize(12).font('Helvetica-Bold').text(`Rs. ${p.price}`, currentX + 10, currentY + 200);
+      doc.font('Helvetica'); // Reset font
+
+      // Move Grid Positions
+      col++;
+      if (col >= itemsPerRow) {
+        col = 0;
+        currentX = 30;
+        currentY += itemHeight + 20;
+      } else {
+        currentX += itemWidth + 10;
+      }
+    }
+
+    doc.end();
+
+  } catch (error) {
+    console.error("❌ PDF Generation Error:", error);
+    res.status(500).json({ message: "Failed to generate PDF Catalogue" });
+  }
+});
+
+
 /* ------------------------------------------------------------------
 ✅ 10. GOOGLE MERCHANT CENTER PRODUCT FEED (XML)
 ------------------------------------------------------------------ */
+// ... (Same as before)
 router.get("/feed/google-shopping", async (req, res) => {
   try {
     const products = await Product.find()
@@ -514,7 +607,6 @@ router.get("/feed/facebook-catalog", async (req, res) => {
     finalProducts.forEach((product) => {
       const id = product.sku || product._id.toString();
       
-      // Quotes handle karna zaruri hai CSV format ke liye
       const rawTitle = (product.name || 'Bafna Toy').replace(/"/g, '""');
       const title = `"${rawTitle}"`;
       
@@ -531,7 +623,6 @@ router.get("/feed/facebook-catalog", async (req, res) => {
       csv += `${id},${title},${description},${availability},${condition},${price},${link},${image_link},${brand}\n`;
     });
 
-    // ✅ FIXED: Added UTF-8 charset and BOM for correct Excel rendering
     res.header('Content-Type', 'text/csv; charset=utf-8');
     res.attachment('facebook_catalog.csv');
     return res.send('\uFEFF' + csv);
