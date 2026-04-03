@@ -52,15 +52,35 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ⭐ 2. GET SINGLE CATEGORY BY SLUG (WITH PRODUCTS & TIMER)
+// ⭐ 2. GET SINGLE CATEGORY BY SLUG (WITH SMART FILTER & TIMER)
 router.get("/:slug", async (req, res) => {
   try {
     const category = await Category.findOne({ slug: req.params.slug });
     if (!category) return res.status(404).json({ message: "Category not found" });
 
-    const products = await Product.find({ category: category._id })
-      .sort({ order: 1 })
-      .lean();
+    let products;
+    const catNameLower = category.name.toLowerCase().trim();
+
+    // 🧠 SMART FILTER LOGIC: Check if name contains "under" OR is strictly a number ("99")
+    const isSmartFilter = catNameLower.includes("under") || /^\d+$/.test(catNameLower);
+
+    if (isSmartFilter) {
+      // Name se number nikaalo (e.g., "Under 99" -> 99, "99" -> 99)
+      const priceLimit = parseInt(catNameLower.replace(/[^0-9]/g, ""), 10);
+      
+      if (!isNaN(priceLimit)) {
+        // Agar number mil gaya toh price ke base par filter karo
+        products = await Product.find({ price: { $lte: priceLimit } })
+          .sort({ price: 1 }) // Saste products pehle dikhane ke liye
+          .lean();
+      } else {
+        // Agar number nahi mila toh normal behave karo
+        products = await Product.find({ category: category._id }).sort({ order: 1 }).lean();
+      }
+    } else {
+      // Normal Category Logic
+      products = await Product.find({ category: category._id }).sort({ order: 1 }).lean();
+    }
 
     const config = await HomeConfig.findOne().lean();
     const dealMap = {};
@@ -94,7 +114,6 @@ router.get("/:slug", async (req, res) => {
 // ✅ CREATE Category
 router.post("/", upload.single("image"), async (req, res) => {
   try {
-    // 👇 Yahan 'link' ko req.body se nikalna zaroori hai
     const { name, link } = req.body;
     if (!name) return res.status(400).json({ message: "Category name is required" });
     if (!req.file) return res.status(400).json({ message: "Category image is required" });
@@ -110,7 +129,7 @@ router.post("/", upload.single("image"), async (req, res) => {
     const cat = new Category({
       name,
       slug,
-      link: link || "", // 👇 Naya: Link database me save hoga
+      link: link || "", 
       order: nextOrder,
       image: result.secure_url,
       imageId: result.public_id,
@@ -135,7 +154,6 @@ router.put("/:id", upload.single("image"), async (req, res) => {
         cat.slug = req.body.name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
     }
 
-    // 👇 Naya: Update karte time Link ko set karna
     if (req.body.link !== undefined) {
         cat.link = req.body.link;
     }
