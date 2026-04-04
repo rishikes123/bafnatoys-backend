@@ -1,19 +1,15 @@
 const multer = require("multer");
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
-const cloudinary = require("../config/cloudinary");
 
-// ✅ Cloudinary storage setup
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: "bafnatoys", 
-    // ✅ Added "pdf" to allowed formats
-    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp", "pdf"], 
-    // ✅ Added resource_type: "auto" so Cloudinary accepts both images and documents
-    resource_type: "auto", 
-  },
+// Ab hum files ko seedha memory (buffer) mein rakhenge
+// Taaki controllers (jaise auth.js ya productRoutes.js) usko ImageKit par bhej sakein
+const storage = multer.memoryStorage();
+
+// File size ki limit 10MB rakh rahe hain (Images aur PDFs dono ke liye kaafi hai)
+const upload = multer({ 
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10 MB limit
+    }
 });
-
-const upload = multer({ storage });
 
 module.exports = upload;

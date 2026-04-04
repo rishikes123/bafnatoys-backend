@@ -2,12 +2,13 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const slugify = require("slugify");
-const cloudinary = require("../config/cloudinary");
+// 🔥 Cloudinary hataya, ImageKit laya
+const imagekit = require("../config/imagekit"); 
 const multer = require("multer");
 
-// 📥 PDF Generator Package (✅ NEW)
+// 📥 PDF Generator Package
 const PDFDocument = require("pdfkit");
-const axios = require("axios"); // For fetching images from cloudinary to PDF
+const axios = require("axios");
 
 const HomeConfig = require("../models/homeConfigModel.js");
 const Product = require("../models/Product.js");
@@ -252,23 +253,23 @@ router.get("/:slugOrId", async (req, res, next) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 5. CREATE product
+✅ 5. CREATE product (ImageKit updated)
 ------------------------------------------------------------------ */
 router.post("/", upload.array("images", 5), async (req, res) => {
   try {
     let imageUrls = [];
 
+    // ImageKit Multiple Upload Logic
     if (req.files?.length) {
-      for (const file of req.files) {
-        const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: "bafnatoys/products" },
-            (error, result) => (error ? reject(error) : resolve(result))
-          );
-          stream.end(file.buffer);
+      const uploadPromises = req.files.map((file) => {
+        return imagekit.upload({
+          file: file.buffer,
+          fileName: file.originalname,
+          folder: "/bafnatoys/products",
         });
-        imageUrls.push(result.secure_url);
-      }
+      });
+      const results = await Promise.all(uploadPromises);
+      imageUrls = results.map(result => result.url);
     }
 
     if (req.body.images) {
@@ -364,24 +365,24 @@ router.put("/:id/move", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 8. UPDATE product
+✅ 8. UPDATE product (ImageKit updated)
 ------------------------------------------------------------------ */
 router.put("/:id", upload.array("images", 5), async (req, res) => {
   try {
     const updateData = { ...req.body };
-    const newImageUrls = [];
+    let newImageUrls = [];
 
+    // ImageKit Multiple Upload Logic
     if (req.files?.length) {
-      for (const file of req.files) {
-        const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: "bafnatoys/products" },
-            (error, result) => (error ? reject(error) : resolve(result))
-          );
-          stream.end(file.buffer);
+      const uploadPromises = req.files.map((file) => {
+        return imagekit.upload({
+          file: file.buffer,
+          fileName: file.originalname,
+          folder: "/bafnatoys/products",
         });
-        newImageUrls.push(result.secure_url);
-      }
+      });
+      const results = await Promise.all(uploadPromises);
+      newImageUrls = results.map(result => result.url);
     }
 
     if (newImageUrls.length) {
@@ -434,32 +435,29 @@ router.delete("/:id", async (req, res) => {
 
 
 /* ------------------------------------------------------------------
-✅ 12. DOWNLOAD PDF CATALOGUE (⭐ BRAND NEW FEATURE)
+✅ 12. DOWNLOAD PDF CATALOGUE (FIXED EMOJIS & BLANK IMAGES)
 ------------------------------------------------------------------ */
 router.get("/download-catalogue/pdf", async (req, res) => {
   try {
-    // 1. Fetch All Active Products
     const products = await Product.find({ stock: { $gt: 0 } })
-      .populate("category", "name")
-      .sort({ "category.name": 1, order: 1 })
+      .select("name sku price mrp images stock piecesPerUnit innerQty") 
+      .sort({ order: 1 })
       .lean();
 
     const finalProducts = await attachDealsToProducts(products);
 
-    // 2. Setup PDF Document
     const doc = new PDFDocument({ margin: 30, size: 'A4' });
 
     res.setHeader("Content-disposition", 'attachment; filename="BafnaToys-Catalogue.pdf"');
     res.setHeader("Content-type", "application/pdf");
     doc.pipe(res);
 
-    // 3. Header
+    // Header
     doc.fontSize(24).fillColor("#4f46e5").text("Bafna Toys Wholesale Catalogue", { align: "center" });
     doc.moveDown(0.5);
     doc.fontSize(10).fillColor("#475569").text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, { align: "center" });
     doc.moveDown(2);
 
-    // 4. Grid Variables
     let currentX = 30;
     let currentY = doc.y;
     const itemWidth = 170;
@@ -467,14 +465,24 @@ router.get("/download-catalogue/pdf", async (req, res) => {
     const itemsPerRow = 3;
     let col = 0;
 
-    // Helper Function to fetch image buffer
+    // Fetch Image and Force JPG (Updated for ImageKit & Legacy Cloudinary)
     const fetchImageBuffer = async (url) => {
       try {
-        // Optimize URL to get small low-res image for fast PDF generation
-        const optimizedUrl = url.replace("/upload/", "/upload/w_200,h_200,c_fit,q_auto/");
-        const response = await axios.get(optimizedUrl, { responseType: 'arraybuffer' });
+        if(!url) return null;
+        let optimizedUrl = url;
+        
+        if (url.includes("ik.imagekit.io")) {
+          // ImageKit JPG & resize optimization
+          const urlParts = new URL(url);
+          optimizedUrl = `${urlParts.origin}${urlParts.pathname}?tr=w-200,h-200,c-at_max,f-jpg,q-80`;
+        } else if (url.includes("res.cloudinary.com") && url.includes("/upload/")) {
+          optimizedUrl = url.replace("/upload/", "/upload/w_200,h_200,c_fit,q_80,f_jpg/");
+        }
+        
+        const response = await axios.get(optimizedUrl, { responseType: 'arraybuffer', timeout: 8000 });
         return response.data;
       } catch (e) {
+        console.log(`Failed to fetch image: ${url}`);
         return null;
       }
     };
@@ -482,7 +490,6 @@ router.get("/download-catalogue/pdf", async (req, res) => {
     for (let i = 0; i < finalProducts.length; i++) {
       const p = finalProducts[i];
 
-      // Page Break logic
       if (currentY + itemHeight > doc.page.height - 50) {
         doc.addPage();
         currentY = 40;
@@ -490,7 +497,7 @@ router.get("/download-catalogue/pdf", async (req, res) => {
         col = 0;
       }
 
-      // Draw Box
+      // Draw Box Background
       doc.lineWidth(1).strokeColor("#e2e8f0").rect(currentX, currentY, itemWidth, itemHeight).stroke();
 
       // Draw Image
@@ -499,21 +506,30 @@ router.get("/download-catalogue/pdf", async (req, res) => {
         if (imgBuffer) {
           try {
             doc.image(imgBuffer, currentX + 10, currentY + 10, { fit: [150, 130], align: 'center', valign: 'center' });
-          } catch (e) { /* Ignore bad images */ }
+          } catch (e) { 
+            console.log(`PDFKit failed to parse image for ${p.sku}`);
+          }
         }
       }
 
-      // Draw Text details below image
-      doc.fillColor("#0f172a").fontSize(10).text(p.name.substring(0, 45) + (p.name.length > 45 ? "..." : ""), currentX + 10, currentY + 150, { width: 150, height: 25, ellipsis: true });
-      doc.fillColor("#64748b").fontSize(9).text(`SKU: ${p.sku}`, currentX + 10, currentY + 175);
+      // 🔥 FIX: STRICT EMOJI & SPECIAL CHARACTER REMOVER
+      let cleanName = "Product";
+      if (p.name) {
+         cleanName = p.name.replace(/[^\x20-\x7E]/g, "").trim();
+      }
+      cleanName = cleanName.substring(0, 40) + (cleanName.length > 40 ? "..." : "");
+
+      // Draw Text Details
+      doc.fillColor("#0f172a").fontSize(10).text(cleanName, currentX + 10, currentY + 150, { width: 150, height: 25, ellipsis: true });
+      doc.fillColor("#64748b").fontSize(9).text(`SKU: ${p.sku || 'N/A'}`, currentX + 10, currentY + 175);
       
       const minQty = p.piecesPerUnit > 1 ? p.piecesPerUnit : (p.price < 60 ? 3 : 2);
       doc.fillColor("#64748b").fontSize(9).text(`Min Qty: ${minQty} Pcs`, currentX + 10, currentY + 188);
       
       doc.fillColor("#059669").fontSize(12).font('Helvetica-Bold').text(`Rs. ${p.price}`, currentX + 10, currentY + 200);
-      doc.font('Helvetica'); // Reset font
+      doc.font('Helvetica'); // Reset font back to normal
 
-      // Move Grid Positions
+      // Move Positions
       col++;
       if (col >= itemsPerRow) {
         col = 0;
@@ -527,8 +543,10 @@ router.get("/download-catalogue/pdf", async (req, res) => {
     doc.end();
 
   } catch (error) {
-    console.error("❌ PDF Generation Error:", error);
-    res.status(500).json({ message: "Failed to generate PDF Catalogue" });
+    console.error("❌ PDF Generation Final Error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Failed to generate PDF Catalogue" });
+    }
   }
 });
 
@@ -536,7 +554,6 @@ router.get("/download-catalogue/pdf", async (req, res) => {
 /* ------------------------------------------------------------------
 ✅ 10. GOOGLE MERCHANT CENTER PRODUCT FEED (XML)
 ------------------------------------------------------------------ */
-// ... (Same as before)
 router.get("/feed/google-shopping", async (req, res) => {
   try {
     const products = await Product.find()

@@ -148,7 +148,17 @@ app.get("/product/:id", async (req, res) => {
         const imgPath = product.images[0];
         if (imgPath.startsWith("http")) {
           image = imgPath;
-          if (image.includes("res.cloudinary.com")) {
+          // 🔥 ImageKit SEO Optimization (Cloudinary removed)
+          if (image.includes("ik.imagekit.io")) {
+            try {
+              const urlParts = new URL(image);
+              urlParts.searchParams.set("tr", "w-600,h-600,cm-pad_resize,bg-FFFFFF");
+              image = urlParts.toString();
+            } catch (e) {
+              console.log("Error parsing ImageKit URL for SEO");
+            }
+          } else if (image.includes("res.cloudinary.com")) {
+            // Backup in case any old image was missed
             image = image.replace(
               "/upload/",
               "/upload/w_600,h_600,c_pad,b_white,q_auto/"
