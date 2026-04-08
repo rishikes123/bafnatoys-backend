@@ -22,14 +22,15 @@ function sanitizePhone(phone) {
   return digits; // final: 9198xxxxxxxx
 }
 
-// ✅ HELPER FUNCTION: Har order item ke sath uska SKU attach karne ke liye
+// ✅ HELPER FUNCTION: Har order item ke sath uska SKU aur MRP attach karne ke liye
 const attachSkuToItems = (order) => {
   if (order && order.items && Array.isArray(order.items)) {
     order.items = order.items.map(item => {
       return {
         ...item,
-        // Backend se explicitly SKU utha kar bhej rahe hain
-        sku: (item.productId && item.productId.sku) ? item.productId.sku : (item.sku || "")
+        // Backend se explicitly SKU aur MRP utha kar bhej rahe hain
+        sku: (item.productId && item.productId.sku) ? item.productId.sku : (item.sku || ""),
+        mrp: (item.productId && item.productId.mrp) ? item.productId.mrp : (item.mrp || 0) // ✅ Added MRP here
       };
     });
   }
@@ -75,11 +76,11 @@ router.get("/", async (req, res) => {
 
     let orders = await Order.find(filter)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
-      .populate("items.productId", "sku") // ✅ YAHAN SKU ADD KIYA HAI
+      .populate("items.productId", "sku mrp") // ✅ YAHAN SKU KE SATH MRP BHI ADD KIYA HAI
       .sort({ createdAt: -1 })
       .lean();
 
-    // ✅ SKU Attach kar rahe hain
+    // ✅ SKU and MRP Attach kar rahe hain
     orders = orders.map(attachSkuToItems);
 
     res.json(orders);
@@ -94,12 +95,12 @@ router.get("/:id", async (req, res) => {
   try {
     let order = await Order.findById(req.params.id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
-      .populate("items.productId", "sku") // ✅ YAHAN SKU ADD KIYA HAI
+      .populate("items.productId", "sku mrp") // ✅ YAHAN MRP ADD KIYA HAI
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
     
-    // ✅ SKU Attach kar rahe hain
+    // ✅ SKU and MRP Attach kar rahe hain
     order = attachSkuToItems(order);
 
     res.json(order);
@@ -212,10 +213,10 @@ router.post("/", async (req, res) => {
 
     let populatedOrder = await Order.findById(savedOrder._id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
-      .populate("items.productId", "sku") // ✅ YAHAN SKU ADD KIYA HAI
+      .populate("items.productId", "sku mrp") // ✅ YAHAN MRP ADD KIYA HAI
       .lean();
 
-    // ✅ SKU Attach kar rahe hain
+    // ✅ SKU and MRP Attach kar rahe hain
     populatedOrder = attachSkuToItems(populatedOrder);
 
     res.status(201).json({ order: populatedOrder });
@@ -595,10 +596,10 @@ const updateOrderStatus = async (req, res) => {
 
     let populatedOrder = await Order.findById(order._id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
-      .populate("items.productId", "sku") // ✅ YAHAN BHI SKU ADD KIYA HAI
+      .populate("items.productId", "sku mrp") // ✅ YAHAN BHI MRP ADD KIYA HAI
       .lean();
 
-    // ✅ SKU Attach kar rahe hain
+    // ✅ SKU and MRP Attach kar rahe hain
     populatedOrder = attachSkuToItems(populatedOrder);
 
     res.json(populatedOrder);

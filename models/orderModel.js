@@ -18,6 +18,7 @@ const orderItemSchema = new mongoose.Schema(
     innerQty: { type: Number, required: true },
     inners: { type: Number, required: true },
     price: { type: Number, required: true },
+    mrp: { type: Number, default: 0 }, // ✅ ADDED MRP HERE
     image: { type: String },
   },
   { _id: false }
