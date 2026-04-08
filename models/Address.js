@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const addressSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "Registration", required: true },
     
     // Billing Details (Matching new frontend fields)
     shopName: { type: String, required: true }, 

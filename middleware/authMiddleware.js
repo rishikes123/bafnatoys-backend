@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
-const Customer = require("../models/customerModel");
-const Admin = require("../models/Admin"); // Admin model import kiya
+const Registration = require("../models/Registration");
+const Admin = require("../models/Admin"); 
 
 // ==========================================
 // 1. CUSTOMER PROTECT (For Frontend Users)
@@ -15,12 +15,12 @@ const protect = async (req, res, next) => {
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const customer = await Customer.findById(decoded.id).select("-password");
-    if (!customer) {
+    const user = await Registration.findById(decoded.id).select("-password");
+    if (!user) {
       return res.status(401).json({ message: "User not found" });
     }
 
-    req.user = customer;
+    req.user = user;
     next();
   } catch (err) {
     console.error("Auth middleware error:", err);

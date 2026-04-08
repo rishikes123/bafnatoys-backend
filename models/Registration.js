@@ -19,7 +19,7 @@ const RegistrationSchema = new mongoose.Schema(
     // ✅ ADDED: GST Document URL field to save the Cloudinary link
     gstDocumentUrl: { type: String, required: false, default: "" },
 
-    isApproved: { type: Boolean, default: null },
+    isApproved: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
