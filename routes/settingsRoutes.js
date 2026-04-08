@@ -155,4 +155,39 @@ router.put("/reviews", async (req, res) => {
   }
 });
 
+/* ================= ANNOUNCEMENT BANNER ================= */
+
+// GET Announcement
+router.get('/announcement', async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: 'announcement' });
+    if (!setting) {
+      setting = await Setting.create({
+        key: 'announcement',
+        data: { enabled: false, text: '', bgColor: '#e63946', textColor: '#ffffff' },
+      });
+    }
+    res.json(setting.data);
+  } catch (err) {
+    console.error('❌ GET Announcement Error:', err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// UPDATE Announcement
+router.put('/announcement', async (req, res) => {
+  try {
+    const { enabled, text, bgColor, textColor } = req.body;
+    const setting = await Setting.findOneAndUpdate(
+      { key: 'announcement' },
+      { $set: { key: 'announcement', data: { enabled: Boolean(enabled), text: text || '', bgColor: bgColor || '#e63946', textColor: textColor || '#ffffff' } } },
+      { upsert: true, new: true }
+    );
+    res.json(setting.data);
+  } catch (err) {
+    console.error('❌ PUT Announcement Error:', err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
 module.exports = router;
