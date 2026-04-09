@@ -2,21 +2,29 @@ const mongoose = require('mongoose');
 
 const trustSettingsSchema = new mongoose.Schema({
   retailerCount: { type: String, default: '49,000+' },
-  factoryImage: { type: String, default: '' },
   
-  // Legacy fields (Pehle wale fields safety/fallback ke liye rakhe hain)
+  // Single Images with IDs
+  factoryImage: { type: String, default: '' },
+  factoryImageId: { type: String, default: '' },
+  makeInIndiaLogo: { type: String, default: '' },
+  makeInIndiaLogoId: { type: String, default: '' },
+  
+  // Legacy fields (Safety fallback)
   manufacturingUnit: { type: String, default: '' },
   packingDispatch: { type: String, default: '' },
   warehouseStorage: { type: String, default: '' },
   
-  // ✅ NAYA: Dynamic Factory Visuals Array
+  // Dynamic Factory Visuals Array
   factoryVisuals: [{
     image: { type: String, default: '' },
+    imageId: { type: String, default: '' },
     label: { type: String, default: '' }
   }],
 
+  // Customer Reviews Array
   customerReviews: [{
     image: { type: String, default: '' },
+    imageId: { type: String, default: '' },
     reviewText: { type: String, default: '' },
     reviewerName: { type: String, default: '' },
     rating: { type: Number, default: 5 }
@@ -26,10 +34,7 @@ const trustSettingsSchema = new mongoose.Schema({
   youtubeLink: { type: String, default: '' },
   instagramLink: { type: String, default: '' },
   facebookLink: { type: String, default: '' },
-  linkedinLink: { type: String, default: '' },
-
-  // Logos ke liye Image Fields
-  makeInIndiaLogo: { type: String, default: '' }
+  linkedinLink: { type: String, default: '' }
 
 }, { timestamps: true });
 
