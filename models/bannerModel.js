@@ -5,9 +5,14 @@ const bannerSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  // 👇 ImageKit Delete ke liye ID zaroori hai
+  imageId: {
+    type: String,
+    required: true,
+  },
   link: {
-    type: String, // 👈 yahan banner ka redirect link store hoga
-    default: '',  // optional hai, agar blank chhoda to koi redirect nahi hoga
+    type: String, 
+    default: '',  
   },
   enabled: {
     type: Boolean,
