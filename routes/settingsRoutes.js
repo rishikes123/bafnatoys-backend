@@ -190,4 +190,92 @@ router.put('/announcement', async (req, res) => {
   }
 });
 
+/* ================= MOBILE THEME SETTINGS ================= */
+
+// GET Mobile Theme
+router.get("/mobile-theme", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "mobile-theme" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "mobile-theme",
+        data: {
+          primary: "#6366f1",
+          primaryDark: "#4f46e5",
+          primaryLight: "#a5b4fc",
+          primaryBg: "#eef2ff",
+        },
+      });
+    }
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ GET Mobile Theme Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// UPDATE Mobile Theme
+router.put("/mobile-theme", async (req, res) => {
+  try {
+    const { primary, primaryDark, primaryLight, primaryBg } = req.body;
+    const setting = await Setting.findOneAndUpdate(
+      { key: "mobile-theme" },
+      {
+        $set: {
+          key: "mobile-theme",
+          data: {
+            primary: primary || "#6366f1",
+            primaryDark: primaryDark || "#4f46e5",
+            primaryLight: primaryLight || "#a5b4fc",
+            primaryBg: primaryBg || "#eef2ff",
+          },
+        },
+      },
+      { upsert: true, new: true }
+    );
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ PUT Mobile Theme Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+const ShippingSettings = require("../models/ShippingSettings");
+
+/* ================= SHIPPING SETTINGS ================= */
+
+// GET Shipping Settings
+router.get("/shipping", async (req, res) => {
+  try {
+    let settings = await ShippingSettings.findOne();
+    if (!settings) {
+      settings = await ShippingSettings.create({
+        shippingCharge: 250,
+        freeShippingThreshold: 5000,
+      });
+    }
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// UPDATE Shipping Settings
+router.put("/shipping", async (req, res) => {
+  try {
+    const { shippingCharge, freeShippingThreshold } = req.body;
+    const settings = await ShippingSettings.findOneAndUpdate(
+      {},
+      {
+        shippingCharge: Number(shippingCharge) || 0,
+        freeShippingThreshold: Number(freeShippingThreshold) || 0,
+      },
+      { new: true, upsert: true }
+    );
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;
