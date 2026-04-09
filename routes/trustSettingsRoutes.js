@@ -8,7 +8,7 @@ const { adminProtect, isAdmin } = require('../middleware/authMiddleware');
 // Multer RAM Storage with 5MB Limit
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }
+  limits: { fileSize: 25 * 1024 * 1024 }
 });
 
 // Helper for ImageKit Upload
