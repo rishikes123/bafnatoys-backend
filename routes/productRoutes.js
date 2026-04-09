@@ -306,7 +306,9 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       if (tokens.length > 0) {
         const title = "🆕 New Arrival!";
         const body = `${prod.name} is now available! Click to see details.`;
-        sendPushNotification(tokens, title, body, { productId: prod._id, type: "NEW_PRODUCT" });
+        // Pass the first image URL if available
+        const imageUrl = prod.images && prod.images.length > 0 ? (typeof prod.images[0] === 'string' ? prod.images[0] : prod.images[0].url) : null;
+        sendPushNotification(tokens, title, body, { productId: prod._id, type: "NEW_PRODUCT" }, imageUrl);
       }
     } catch (pushErr) {
       console.error("New product push error:", pushErr);
@@ -441,7 +443,8 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
         console.log(`Sending update notification to ${tokens.length} users...`);
         const title = "✨ Product Updated!";
         const body = `${prod.name} has been updated with new details. Check it out!`;
-        sendPushNotification(tokens, title, body, { productId: prod._id, type: "UPDATE_PRODUCT" });
+        const imageUrl = prod.images && prod.images.length > 0 ? prod.images[0].url : null;
+        sendPushNotification(tokens, title, body, { productId: prod._id, type: "UPDATE_PRODUCT" }, imageUrl);
       }
     } catch (pushErr) {
       console.error("Product update push error:", pushErr);

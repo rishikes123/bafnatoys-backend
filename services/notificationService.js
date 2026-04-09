@@ -10,7 +10,7 @@ let expo = new Expo();
  * @param {string} body - The body of the notification.
  * @param {Object} data - Optional data payload for the notification.
  */
-const sendPushNotification = async (tokens, title, body, data = {}) => {
+const sendPushNotification = async (tokens, title, body, data = {}, imageUrl = null) => {
   let messages = [];
   
   // Filter for valid Expo push tokens
@@ -26,6 +26,7 @@ const sendPushNotification = async (tokens, title, body, data = {}) => {
       title: title,
       body: body,
       data: data,
+      ...(imageUrl && { imageUrl: imageUrl }), // Added imageUrl support for Android
     });
   }
 

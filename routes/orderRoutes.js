@@ -531,7 +531,10 @@ const updateOrderStatus = async (req, res) => {
         body = `❌ Your order ${order.orderNumber} has been cancelled.`;
       }
 
-      sendPushNotification([order.customerId.expoPushToken], title, body, { orderId: order._id }).catch(e => {
+      // Pass the first product image URL if available
+      const imageUrl = order.items && order.items.length > 0 && order.items[0].image ? order.items[0].image : null;
+      
+      sendPushNotification([order.customerId.expoPushToken], title, body, { orderId: order._id }, imageUrl).catch(e => {
         console.error("Push Notification Error:", e.message);
       });
     }
