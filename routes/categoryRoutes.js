@@ -1,34 +1,25 @@
 const express = require("express");
 const router = express.Router();
 const Category = require("../models/categoryModel.js"); 
-const cloudinary = require("cloudinary").v2;
+const imagekit = require("../config/imagekit"); 
 const multer = require("multer");
-const streamifier = require("streamifier");
 
 const Product = require("../models/Product.js");
 const HomeConfig = require("../models/homeConfigModel.js");
+const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
-// 1️⃣ Cloudinary Config
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+// 2️⃣ Multer Setup (RAM Storage with 2MB limit for production safety)
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 } 
 });
 
-// 2️⃣ Multer Setup (RAM Storage)
-const upload = multer({ storage: multer.memoryStorage() });
-
-// 🧠 Helper: Upload to Cloudinary using Stream
-const uploadToCloudinary = (buffer) => {
-  return new Promise((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "categories" },
-      (error, result) => {
-        if (result) resolve(result);
-        else reject(error);
-      }
-    );
-    streamifier.createReadStream(buffer).pipe(uploadStream);
+// 🧠 Helper: Upload to ImageKit
+const uploadToImageKit = (file) => {
+  return imagekit.upload({
+    file: file.buffer,
+    fileName: `category_${Date.now()}_${file.originalname.replace(/\s+/g, '-')}`,
+    folder: "/bafnatoys/categories",
   });
 };
 
@@ -61,24 +52,20 @@ router.get("/:slug", async (req, res) => {
     let products;
     const catNameLower = category.name.toLowerCase().trim();
 
-    // 🧠 SMART FILTER LOGIC: Check if name contains "under" OR is strictly a number ("99")
+    // 🧠 SMART FILTER LOGIC
     const isSmartFilter = catNameLower.includes("under") || /^\d+$/.test(catNameLower);
 
     if (isSmartFilter) {
-      // Name se number nikaalo (e.g., "Under 99" -> 99, "99" -> 99)
       const priceLimit = parseInt(catNameLower.replace(/[^0-9]/g, ""), 10);
       
       if (!isNaN(priceLimit)) {
-        // Agar number mil gaya toh price ke base par filter karo
         products = await Product.find({ price: { $lte: priceLimit } })
-          .sort({ price: 1 }) // Saste products pehle dikhane ke liye
+          .sort({ price: 1 })
           .lean();
       } else {
-        // Agar number nahi mila toh normal behave karo
         products = await Product.find({ category: category._id }).sort({ order: 1 }).lean();
       }
     } else {
-      // Normal Category Logic
       products = await Product.find({ category: category._id }).sort({ order: 1 }).lean();
     }
 
@@ -112,7 +99,7 @@ router.get("/:slug", async (req, res) => {
 });
 
 // ✅ CREATE Category
-router.post("/", upload.single("image"), async (req, res) => {
+router.post("/", adminProtect, isAdmin, upload.single("image"), async (req, res) => {
   try {
     const { name, link } = req.body;
     if (!name) return res.status(400).json({ message: "Category name is required" });
@@ -121,7 +108,7 @@ router.post("/", upload.single("image"), async (req, res) => {
     const exists = await Category.findOne({ name });
     if (exists) return res.status(400).json({ message: "Category already exists" });
 
-    const result = await uploadToCloudinary(req.file.buffer);
+    const result = await uploadToImageKit(req.file);
     const nextOrder = await getNextOrder();
     
     const slug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
@@ -131,8 +118,8 @@ router.post("/", upload.single("image"), async (req, res) => {
       slug,
       link: link || "", 
       order: nextOrder,
-      image: result.secure_url,
-      imageId: result.public_id,
+      image: result.url,
+      imageId: result.fileId,
     });
 
     await cat.save();
@@ -144,7 +131,7 @@ router.post("/", upload.single("image"), async (req, res) => {
 });
 
 // ✅ UPDATE Category
-router.put("/:id", upload.single("image"), async (req, res) => {
+router.put("/:id", adminProtect, isAdmin, upload.single("image"), async (req, res) => {
   try {
     const cat = await Category.findById(req.params.id);
     if (!cat) return res.status(404).json({ message: "Category not found" });
@@ -160,11 +147,11 @@ router.put("/:id", upload.single("image"), async (req, res) => {
 
     if (req.file) {
       if (cat.imageId) {
-        await cloudinary.uploader.destroy(cat.imageId).catch(() => {});
+        await imagekit.deleteFile(cat.imageId).catch(() => console.log("Old image missing from ImageKit"));
       }
-      const result = await uploadToCloudinary(req.file.buffer);
-      cat.image = result.secure_url;
-      cat.imageId = result.public_id;
+      const result = await uploadToImageKit(req.file);
+      cat.image = result.url;
+      cat.imageId = result.fileId;
     }
 
     await cat.save();
@@ -176,24 +163,25 @@ router.put("/:id", upload.single("image"), async (req, res) => {
 });
 
 // ✅ DELETE Category
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", adminProtect, isAdmin, async (req, res) => {
   try {
     const cat = await Category.findById(req.params.id);
     if (!cat) return res.status(404).json({ message: "Category not found" });
 
     if (cat.imageId) {
-      await cloudinary.uploader.destroy(cat.imageId).catch(() => {});
+      await imagekit.deleteFile(cat.imageId).catch(() => console.log("Image missing from ImageKit"));
     }
 
     await cat.deleteOne();
     res.json({ message: "Category deleted" });
   } catch (error) {
+    console.error("Delete Error:", error);
     res.status(500).json({ message: error.message });
   }
 });
 
 // ✅ MOVE Category
-router.put("/:id/move", async (req, res) => {
+router.put("/:id/move", adminProtect, isAdmin, async (req, res) => {
   try {
     const { direction } = req.body;
     const current = await Category.findById(req.params.id);
@@ -216,6 +204,7 @@ router.put("/:id/move", async (req, res) => {
 
     res.json({ message: "Category moved successfully" });
   } catch (error) {
+    console.error("Move Error:", error);
     res.status(500).json({ message: error.message });
   }
 });

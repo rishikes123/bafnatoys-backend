@@ -8,23 +8,21 @@ const categorySchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
-    // 👇 Slug URL ke liye (Routes me use ho raha tha)
     slug: {
       type: String,
       trim: true,
     },
-    // 👇 Custom Link / Page Link (Yeh add karna zaroori tha!)
     link: {
       type: String,
       trim: true,
-      default: "", // Agar koi link nahi daalta toh khali rahega
+      default: "",
     },
-    // 👇 Cloudinary Image URL
+    // ImageKit Image URL
     image: {
       type: String,
-      required: true, // Image zaroori hai
+      required: true,
     },
-    // 👇 Cloudinary Public ID (Delete karne ke liye)
+    // ImageKit Public ID (Delete/Update karne ke liye)
     imageId: {
       type: String,
       required: true,
