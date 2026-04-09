@@ -35,8 +35,9 @@ const sendPushNotification = async (tokens, title, body, data = {}) => {
   
   for (let chunk of chunks) {
     try {
+      console.log(`Sending chunk of ${chunk.length} notifications...`);
       let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-      console.log(ticketChunk);
+      console.log('Tickets received:', ticketChunk);
       tickets.push(...ticketChunk);
     } catch (error) {
       console.error('Error sending notification chunk:', error);

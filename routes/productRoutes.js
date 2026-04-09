@@ -431,6 +431,21 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
     res.json(prod);
+
+    // 🔔 Notify all users about the update (for testing/marketing)
+    try {
+      const users = await Registration.find({ expoPushToken: { $exists: true, $ne: "" } }).select("expoPushToken").lean();
+      const tokens = users.map(u => u.expoPushToken).filter(t => !!t);
+      
+      if (tokens.length > 0) {
+        console.log(`Sending update notification to ${tokens.length} users...`);
+        const title = "✨ Product Updated!";
+        const body = `${prod.name} has been updated with new details. Check it out!`;
+        sendPushNotification(tokens, title, body, { productId: prod._id, type: "UPDATE_PRODUCT" });
+      }
+    } catch (pushErr) {
+      console.error("Product update push error:", pushErr);
+    }
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
