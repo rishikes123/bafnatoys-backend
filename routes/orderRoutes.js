@@ -6,8 +6,9 @@ const Order = require("../models/orderModel");
 const Product = require("../models/Product");
 const sendEmail = require("../utils/sendEmail");
 
-// ✅ WhatsApp Service (Meta Cloud API)
-const { sendWhatsAppTemplate } = require("../services/whatsappService");
+// ✅ Notification Service
+const { sendPushNotification } = require("../services/notificationService");
+const Registration = require("../models/Registration");
 
 // ✅ Phone sanitizer (India)
 function sanitizePhone(phone) {
@@ -514,6 +515,26 @@ const updateOrderStatus = async (req, res) => {
     }
 
     await order.save();
+
+    /* ============================================================
+        🔔 Push Notification Trigger
+    ============================================================ */
+    if (order.customerId?.expoPushToken) {
+      let title = "Order Update";
+      let body = `Your order ${order.orderNumber} is now ${newStatus.toUpperCase()}.`;
+      
+      if (newStatus === "shipped") {
+        body = `🚚 Your order ${order.orderNumber} has been shipped! Tracking ID: ${order.trackingId}`;
+      } else if (newStatus === "delivered") {
+        body = `✅ Your order ${order.orderNumber} has been delivered. Enjoy your toys!`;
+      } else if (newStatus === "cancelled") {
+        body = `❌ Your order ${order.orderNumber} has been cancelled.`;
+      }
+
+      sendPushNotification([order.customerId.expoPushToken], title, body, { orderId: order._id }).catch(e => {
+        console.error("Push Notification Error:", e.message);
+      });
+    }
 
     /* ============================================================
         💬 WhatsApp Trigger

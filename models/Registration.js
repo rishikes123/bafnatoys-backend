@@ -20,6 +20,7 @@ const RegistrationSchema = new mongoose.Schema(
     gstDocumentUrl: { type: String, required: false, default: "" },
 
     isApproved: { type: Boolean, default: true },
+    expoPushToken: { type: String, required: false },
   },
   { timestamps: true }
 );

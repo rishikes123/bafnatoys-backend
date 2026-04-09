@@ -13,6 +13,8 @@ const axios = require("axios");
 const HomeConfig = require("../models/homeConfigModel.js");
 const Product = require("../models/Product.js");
 const Review = require("../models/Review.js");
+const Registration = require("../models/Registration.js");
+const { sendPushNotification } = require("../services/notificationService");
 
 // 🧠 Multer setup
 const storage = multer.memoryStorage();
@@ -295,6 +297,20 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 
     await prod.save();
     res.status(201).json(prod);
+
+    // 🔔 Notify all users about the new arrival
+    try {
+      const users = await Registration.find({ expoPushToken: { $exists: true, $ne: "" } }).select("expoPushToken").lean();
+      const tokens = users.map(u => u.expoPushToken).filter(t => !!t);
+      
+      if (tokens.length > 0) {
+        const title = "🆕 New Arrival!";
+        const body = `${prod.name} is now available! Click to see details.`;
+        sendPushNotification(tokens, title, body, { productId: prod._id, type: "NEW_PRODUCT" });
+      }
+    } catch (pushErr) {
+      console.error("New product push error:", pushErr);
+    }
   } catch (err) {
     res.status(400).json({ message: err.message || "Failed to create product" });
   }

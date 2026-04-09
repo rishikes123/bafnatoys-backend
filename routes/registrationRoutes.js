@@ -109,7 +109,7 @@ router.put("/:id", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name:
     
     // ✅ ADDED: "gstNumber" ko allowed updates array me daala taaki edit ho sake
     const allowed = [
-      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password", "gstDocumentUrl", "gstNumber"
+      "shopName", "address", "otpMobile", "whatsapp", "visitingCardUrl", "password", "gstDocumentUrl", "gstNumber", "expoPushToken"
     ];
 
     const update = {};
@@ -160,6 +160,26 @@ router.post("/:id/reject", async (req, res) => {
     res.json({ message: "❌ User rejected" });
   } catch (err) {
     res.status(500).json({ message: "Rejection failed" });
+  }
+});
+
+/* -------------------------- SYNC PUSH TOKEN ------------------------- */
+router.post("/:id/push-token", async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: "Token is required" });
+
+    const user = await Registration.findByIdAndUpdate(
+      req.params.id, 
+      { expoPushToken: token }, 
+      { new: true }
+    );
+    
+    if (!user) return res.status(404).json({ message: "User not found" });
+    
+    res.json({ success: true, message: "Push token updated" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update push token" });
   }
 });
 
