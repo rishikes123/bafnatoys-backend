@@ -25,8 +25,13 @@ const sendPushNotification = async (tokens, title, body, data = {}, imageUrl = n
       sound: 'default',
       title: title,
       body: body,
-      data: data,
-      ...(imageUrl && { imageUrl: imageUrl }), // Added imageUrl support for Android
+      data: { ...data, imageUrl: imageUrl }, // Ensure imageUrl is in data too
+      mutableContent: !!imageUrl, // Crucial for rich notifications
+      // Some versions/platforms look for 'image' or 'attachments'
+      ...(imageUrl && { 
+        // For Android (via some FCM paths) and client-side handling
+        imageUrl: imageUrl, 
+      }),
     });
   }
 
