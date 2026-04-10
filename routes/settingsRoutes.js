@@ -291,6 +291,14 @@ router.put("/mobile-whatsapp", async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) {
+      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for WhatsApp change...");
+      io.emit("settingsUpdated");
+    }
+
     res.json(setting.data);
   } catch (err) {
     console.error("❌ PUT Mobile WhatsApp Error:", err);

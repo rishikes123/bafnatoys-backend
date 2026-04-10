@@ -237,6 +237,14 @@ router.put("/", async (req, res) => {
       { $set: payload },
       { new: true, upsert: true }
     ).lean();
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) {
+      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for Home Config change...");
+      io.emit("settingsUpdated");
+    }
+
     res.json(saved);
   } catch (err) {
     console.error("Save Config Error:", err);
@@ -252,6 +260,14 @@ router.post("/", async (req, res) => {
       { $set: payload },
       { new: true, upsert: true }
     ).lean();
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) {
+      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for Home Config change...");
+      io.emit("settingsUpdated");
+    }
+
     res.json(saved);
   } catch (err) {
     console.error("Create Config Error:", err);

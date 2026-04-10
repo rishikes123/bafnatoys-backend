@@ -124,6 +124,10 @@ router.post("/", adminProtect, isAdmin, upload.single("image"), async (req, res)
 
     await cat.save();
     res.status(201).json(cat);
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (error) {
     console.error("Create Error:", error);
     res.status(500).json({ message: error.message });
@@ -156,6 +160,10 @@ router.put("/:id", adminProtect, isAdmin, upload.single("image"), async (req, re
 
     await cat.save();
     res.json(cat);
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (error) {
     console.error("Update Error:", error);
     res.status(500).json({ message: error.message });
@@ -174,6 +182,10 @@ router.delete("/:id", adminProtect, isAdmin, async (req, res) => {
 
     await cat.deleteOne();
     res.json({ message: "Category deleted" });
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (error) {
     console.error("Delete Error:", error);
     res.status(500).json({ message: error.message });
@@ -203,6 +215,10 @@ router.put("/:id/move", adminProtect, isAdmin, async (req, res) => {
     await target.save();
 
     res.json({ message: "Category moved successfully" });
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (error) {
     console.error("Move Error:", error);
     res.status(500).json({ message: error.message });

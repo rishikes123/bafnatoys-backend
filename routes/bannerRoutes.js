@@ -52,6 +52,10 @@ router.post("/", upload.array("images", 10), async (req, res) => {
       message: "✅ Banners uploaded successfully!",
       banners: saved,
     });
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (err) {
     console.error("❌ Upload error:", err);
     res.status(500).json({ success: false, message: err.message });
@@ -100,6 +104,10 @@ router.patch("/:id/toggle", async (req, res) => {
       message: `Banner ${banner.enabled ? "enabled" : "disabled"} successfully`,
       banner,
     });
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -122,6 +130,10 @@ router.patch("/:id/link", async (req, res) => {
       message: "🔗 Banner link updated successfully",
       banner,
     });
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -143,7 +155,12 @@ router.delete("/:id", async (req, res) => {
     }
 
     await banner.deleteOne();
+
     res.json({ success: true, message: "🗑️ Banner deleted successfully" });
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
   } catch (err) {
     console.error("❌ Delete failed:", err);
     res.status(500).json({ success: false, message: err.message });
