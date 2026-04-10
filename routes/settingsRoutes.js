@@ -362,6 +362,17 @@ router.put("/mobile-layout", async (req, res) => {
   }
 });
 
+// ✅ DIAGNOSTIC: Trigger a ping to all mobile apps
+router.post("/ping-sync", async (req, res) => {
+  const io = req.app.get("io");
+  if (io) {
+    console.log("📡 [DIAGNOSTIC] Admin triggered a Sync Ping...");
+    io.emit("settingsUpdated", { type: "ping", timestamp: Date.now() });
+    return res.json({ success: true, message: "Ping sent to all clients." });
+  }
+  res.status(500).json({ success: false, message: "Socket.io not initialized." });
+});
+
 const ShippingSettings = require("../models/ShippingSettings");
 
 /* ================= SHIPPING SETTINGS ================= */
