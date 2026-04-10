@@ -240,6 +240,54 @@ router.put("/mobile-theme", async (req, res) => {
   }
 });
 
+/* ================= MOBILE HEADER WHATSAPP ================= */
+
+// GET Mobile WhatsApp Header Settings
+router.get("/mobile-whatsapp", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "mobile-whatsapp" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "mobile-whatsapp",
+        data: {
+          enabled: false,
+          phone: "",
+          message: "Hi! I want to place an order.",
+        },
+      });
+    }
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ GET Mobile WhatsApp Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// PUT Mobile WhatsApp Header Settings
+router.put("/mobile-whatsapp", async (req, res) => {
+  try {
+    const { enabled, phone, message } = req.body;
+    const setting = await Setting.findOneAndUpdate(
+      { key: "mobile-whatsapp" },
+      {
+        $set: {
+          key: "mobile-whatsapp",
+          data: {
+            enabled: enabled !== undefined ? enabled : false,
+            phone: String(phone || "").replace(/\D/g, ""),
+            message: message || "Hi! I want to place an order.",
+          },
+        },
+      },
+      { upsert: true, new: true }
+    );
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ PUT Mobile WhatsApp Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
 const ShippingSettings = require("../models/ShippingSettings");
 
 /* ================= SHIPPING SETTINGS ================= */
