@@ -35,6 +35,8 @@ io.on("connection", (socket) => {
   });
 });
 
+app.set("io", io); // ✅ Shared for real-time setting updates
+
 /* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
 

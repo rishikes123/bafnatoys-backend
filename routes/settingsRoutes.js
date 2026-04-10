@@ -204,6 +204,7 @@ router.get("/mobile-theme", async (req, res) => {
           primaryDark: "#4f46e5",
           primaryLight: "#a5b4fc",
           primaryBg: "#eef2ff",
+          brandText: "#FF3366",
         },
       });
     }
@@ -217,7 +218,7 @@ router.get("/mobile-theme", async (req, res) => {
 // UPDATE Mobile Theme
 router.put("/mobile-theme", async (req, res) => {
   try {
-    const { primary, primaryDark, primaryLight, primaryBg } = req.body;
+    const { primary, primaryDark, primaryLight, primaryBg, brandText } = req.body;
     const setting = await Setting.findOneAndUpdate(
       { key: "mobile-theme" },
       {
@@ -228,11 +229,17 @@ router.put("/mobile-theme", async (req, res) => {
             primaryDark: primaryDark || "#4f46e5",
             primaryLight: primaryLight || "#a5b4fc",
             primaryBg: primaryBg || "#eef2ff",
+            brandText: brandText || "#FF3366",
           },
         },
       },
       { upsert: true, new: true }
     );
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
+
     res.json(setting.data);
   } catch (err) {
     console.error("❌ PUT Mobile Theme Error:", err);
@@ -321,6 +328,11 @@ router.put("/mobile-layout", async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated");
+
     res.json(setting.data);
   } catch (err) {
     console.error("❌ PUT Mobile Layout Error:", err);
