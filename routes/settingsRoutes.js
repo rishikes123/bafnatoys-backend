@@ -239,7 +239,7 @@ router.put("/mobile-theme", async (req, res) => {
     // 🚀 Signal mobile app to refresh
     const io = req.app.get("io");
     if (io) {
-      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for Theme change...");
+      console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for THEME change...");
       io.emit("settingsUpdated");
     }
 
@@ -343,7 +343,7 @@ router.put("/mobile-layout", async (req, res) => {
     // 🚀 Signal mobile app to refresh
     const io = req.app.get("io");
     if (io) {
-      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for Layout change...");
+      console.log(`📢 [BACKEND] Broadcasting 'settingsUpdated' for LAYOUT change: ${layout}`);
       io.emit("settingsUpdated");
     }
 
