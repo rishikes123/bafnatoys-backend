@@ -288,6 +288,46 @@ router.put("/mobile-whatsapp", async (req, res) => {
   }
 });
 
+/* ================= MOBILE LAYOUT SETTINGS ================= */
+
+// GET Mobile Home Layout
+router.get("/mobile-layout", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "mobile-layout" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "mobile-layout",
+        data: { layout: "layout1" },
+      });
+    }
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ GET Mobile Layout Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// UPDATE Mobile Home Layout
+router.put("/mobile-layout", async (req, res) => {
+  try {
+    const { layout } = req.body;
+    const setting = await Setting.findOneAndUpdate(
+      { key: "mobile-layout" },
+      {
+        $set: {
+          key: "mobile-layout",
+          data: { layout: layout || "layout1" },
+        },
+      },
+      { upsert: true, new: true }
+    );
+    res.json(setting.data);
+  } catch (err) {
+    console.error("❌ PUT Mobile Layout Error:", err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
 const ShippingSettings = require("../models/ShippingSettings");
 
 /* ================= SHIPPING SETTINGS ================= */
