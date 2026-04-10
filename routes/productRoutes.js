@@ -143,7 +143,7 @@ router.get("/search/all", async (req, res) => {
         { sku: { $regex: query, $options: "i" } },
       ],
     })
-      .select("name sku images _id category price mrp stock slug featured")
+      .select("name sku images _id category price mrp stock slug featured piecesPerUnit minOrderQty isBulkOnly")
       .limit(20)
       .lean();
 
@@ -478,7 +478,7 @@ router.delete("/:id", async (req, res) => {
 router.get("/download-catalogue/pdf", async (req, res) => {
   try {
     const products = await Product.find({ stock: { $gt: 0 } })
-      .select("name sku price mrp images stock piecesPerUnit innerQty") 
+      .select("name sku price mrp images stock piecesPerUnit minOrderQty isBulkOnly") 
       .sort({ order: 1 })
       .lean();
 
@@ -561,7 +561,11 @@ router.get("/download-catalogue/pdf", async (req, res) => {
       doc.fillColor("#0f172a").fontSize(10).text(cleanName, currentX + 10, currentY + 150, { width: 150, height: 25, ellipsis: true });
       doc.fillColor("#64748b").fontSize(9).text(`SKU: ${p.sku || 'N/A'}`, currentX + 10, currentY + 175);
       
-      const minQty = p.piecesPerUnit > 1 ? p.piecesPerUnit : (p.price < 60 ? 3 : 2);
+      let minQty = p.minOrderQty > 0 ? p.minOrderQty : (p.piecesPerUnit > 1 ? p.piecesPerUnit : (p.price < 60 ? 3 : 2));
+      // If strict bulk, ignore manual MQ if it's smaller than unit size
+      if (p.isBulkOnly && p.piecesPerUnit > 1) {
+        minQty = Math.max(minQty, p.piecesPerUnit);
+      }
       doc.fillColor("#64748b").fontSize(9).text(`Min Qty: ${minQty} Pcs`, currentX + 10, currentY + 188);
       
       doc.fillColor("#059669").fontSize(12).font('Helvetica-Bold').text(`Rs. ${p.price}`, currentX + 10, currentY + 200);

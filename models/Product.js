@@ -15,7 +15,7 @@ const productSchema = new mongoose.Schema(
     // 🔥 NAYE FIELDS BULK BUY KE LIYE (BOX/TRAY Strict Multiples)
     piecesPerUnit: { type: Number, default: 1 },
     isBulkOnly: { type: Boolean, default: false },
-    minOrderQty: { type: Number, default: 1 }, // ✅ Naya MOQ field
+    minOrderQty: { type: Number, default: 0 }, // ✅ 0 means AUTO (fallback to 2/3 pcs)
 
     description: { type: String, trim: true },
     tagline: { type: String, trim: true },
