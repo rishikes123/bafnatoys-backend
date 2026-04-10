@@ -293,7 +293,7 @@ router.post("/", upload.array("images", 5), async (req, res) => {
       relatedProducts: req.body.relatedProducts || [],
       piecesPerUnit: Number(req.body.piecesPerUnit) || 1,
       isBulkOnly: req.body.isBulkOnly === true || req.body.isBulkOnly === "true",
-      minOrderQty: Number(req.body.minOrderQty) || 1, // ✅ Added
+      minOrderQty: Number(req.body.minOrderQty) || 0, // ✅ 0 means Auto
     });
 
     await prod.save();
@@ -426,7 +426,7 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
       updateData.isBulkOnly = req.body.isBulkOnly === true || req.body.isBulkOnly === "true";
     }
     if (req.body.minOrderQty !== undefined) {
-      updateData.minOrderQty = Number(req.body.minOrderQty) || 1; // ✅ Added
+      updateData.minOrderQty = Number(req.body.minOrderQty) || 0; // ✅ 0 means Auto
     }
 
     const prod = await Product.findByIdAndUpdate(req.params.id, updateData, {

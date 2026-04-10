@@ -183,6 +183,13 @@ router.get("/", async (_req, res) => {
         endsAt: it.endsAt ? it.endsAt.toISOString() : null,
       })),
 
+      // ✅ Resolved products for Hot Deals screen (Includes minOrderQty)
+      hotDealsItemsResolved: hotDealsItems.map((it) => ({
+        ...it,
+        product: productMap.get(String(it.productId)),
+        endsAt: it.endsAt ? it.endsAt.toISOString() : null,
+      })).filter(it => it.product),
+
       // ✅ IMPORTANT: OLD ko हटाया नहीं, NEW add किया
       promo: {
         sideBanners: promo.sideBanners,
