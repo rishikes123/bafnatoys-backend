@@ -183,6 +183,14 @@ router.put('/announcement', async (req, res) => {
       { $set: { key: 'announcement', data: { enabled: Boolean(enabled), text: text || '', bgColor: bgColor || '#e63946', textColor: textColor || '#ffffff' } } },
       { upsert: true, new: true }
     );
+
+    // 🚀 Signal mobile app to refresh
+    const io = req.app.get("io");
+    if (io) {
+      console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for ANNOUNCEMENT change...");
+      io.emit("settingsUpdated", { type: "announcement", data: setting.data });
+    }
+
     res.json(setting.data);
   } catch (err) {
     console.error('❌ PUT Announcement Error:', err);
@@ -236,11 +244,11 @@ router.put("/mobile-theme", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // 🚀 Signal mobile app to refresh
+    // 🚀 Signal mobile app to refresh with NEW DATA directly
     const io = req.app.get("io");
     if (io) {
       console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for THEME change...");
-      io.emit("settingsUpdated");
+      io.emit("settingsUpdated", { type: "theme", data: setting.data });
     }
 
     res.json(setting.data);
@@ -292,11 +300,11 @@ router.put("/mobile-whatsapp", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // 🚀 Signal mobile app to refresh
+    // 🚀 Signal mobile app to refresh with NEW DATA directly
     const io = req.app.get("io");
     if (io) {
-      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for WhatsApp change...");
-      io.emit("settingsUpdated");
+      console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for WHATSAPP change...");
+      io.emit("settingsUpdated", { type: "whatsapp", data: setting.data });
     }
 
     res.json(setting.data);
@@ -340,11 +348,11 @@ router.put("/mobile-layout", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // 🚀 Signal mobile app to refresh
+    // 🚀 Signal mobile app to refresh with NEW DATA directly
     const io = req.app.get("io");
     if (io) {
       console.log(`📢 [BACKEND] Broadcasting 'settingsUpdated' for LAYOUT change: ${layout}`);
-      io.emit("settingsUpdated");
+      io.emit("settingsUpdated", { type: "layout", data: { layout: layout || "layout1" } });
     }
 
     res.json(setting.data);
