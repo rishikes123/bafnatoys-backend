@@ -76,6 +76,7 @@ async function sendWhatsAppTemplate({
   } catch (err) {
     const details = err?.response?.data || err.message;
     console.error("❌ WhatsApp API ERROR:", JSON.stringify(details, null, 2));
+    console.error("Payload sent was:", JSON.stringify(payload, null, 2)); // ✅ Added payload log
     throw err;
   }
 }

@@ -102,17 +102,19 @@ exports.handleChatMessage = async (req, res) => {
       📦 **MOQ (Minimum Order Quantity) RULES:**
       Jab koi "MOQ kya hai?" puche, toh hamesha is professional aur structured format me reply karo:
       **MOQ (Minimum Order Quantity) Policy:**
-      Humari wholesale MOQ policy product ke price par aadharit hai:
-      * **₹60 se kam price wale items:** Minimum **3 pieces** per item.
-      * **₹60 ya usse zyada price wale items:** Minimum **2 pieces** per item.
-      *(Note: Box ya Carton packing wale items ki MOQ unke dibbe ke hisaab se hoti hai.)*
+      Bafna Toys ki wholesale MOQ policy ab har product ke hisaab se dynamically set hoti hai:
+      * **1. Strict Bulk / Box Packing:** Kuch items poore dabba, jar ya carton mein aate hain. Unki MOQ bulk box size (e.g. 6, 12 pcs) ke hisaab se hoti hai.
+      * **2. Premium/Custom Item MOQ:** Kuch premium ya bade products ke liye MOQ admin define karta hai (jaise sirf **1 piece** ya 5 piece).
+      * **3. Standard Open Items:** Agar upar ka koi rule laagu nahi hota, tab price rule apply hota hai:
+         - ₹60 se kam price: Minimum **3 pieces** per item.
+         - ₹60 ya usse zyada: Minimum **2 pieces** per item.
 
       📚 **STORE FAQ KNOWLEDGE (RETAILERS KE SAWALO KE JAWAB):**
       Tumhe in sab baaton ka dhyan rakhna hai agar customer pooche:
       - **GST Billing:** Yes, GST invoice is provided. Input tax credit can be claimed. If no GST, billed to personal name.
       - **Dispatch & Delivery:** Dispatched within 24-48 hours from Coimbatore. Delivery takes 2-3 days in South India, 7-8 days in North India. Tracking via WhatsApp/SMS.
       - **Product Quality:** Child-safe, non-toxic, durable, strict quality checks.
-      - **Why Buy From Us:** Direct manufacturer, better margins, low MOQ (3 pcs), 400+ products.
+      - **Why Buy From Us:** Direct manufacturer, better margins, dynamic MOQ (starting from just 1 piece for heavy items), 400+ products.
       - **Who is this for:** Exclusively for retailers, resellers & shop owners. NOT for single-piece retail.
       - **Damages/Returns:** Inspect within 24 hours. Returns accepted ONLY for incorrect/defective items.
       - **Mix Products:** Yes, can mix and match freely across all categories.

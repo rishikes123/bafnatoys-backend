@@ -8,6 +8,7 @@ const sendEmail = require("../utils/sendEmail");
 
 // ✅ Notification Service
 const { sendPushNotification } = require("../services/notificationService");
+const { sendWhatsAppTemplate } = require("../services/whatsappService"); // ✅ Added Missing Import
 const Registration = require("../models/Registration");
 
 // ✅ Phone sanitizer (India)
@@ -250,7 +251,7 @@ router.post("/", async (req, res) => {
       try {
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_confirmed_new",
+          templateName: process.env.WA_ORDER_TEMPLATE || "order_confirmed_new",
           languageCode: "en_US",
           components: [
             {
@@ -549,7 +550,7 @@ const updateOrderStatus = async (req, res) => {
       try {
         await sendWhatsAppTemplate({
           to,
-          templateName: "order_confirmed_new",
+          templateName: process.env.WA_ORDER_TEMPLATE || "order_confirmed_new",
           languageCode: "en_US",
           components: [
             {
