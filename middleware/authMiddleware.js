@@ -13,6 +13,12 @@ const protect = async (req, res, next) => {
     }
 
     const token = authHeader.substring(7);
+
+    // ✅ FIX: Agar localstorage khali hai aur frontend ne "null" bhej diya
+    if (!token || token === "null" || token === "undefined") {
+      return res.status(401).json({ message: "Token is null or undefined" });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const user = await Registration.findById(decoded.id).select("-password");
@@ -23,8 +29,8 @@ const protect = async (req, res, next) => {
     req.user = user;
     next();
   } catch (err) {
-    console.error("Auth middleware error:", err);
-    res.status(401).json({ message: "Invalid token" });
+    // Console error hata diya taaki terminal clean rahe
+    res.status(401).json({ message: "Not authorized, invalid token" });
   }
 };
 
@@ -39,6 +45,12 @@ const adminProtect = async (req, res, next) => {
     }
 
     const token = authHeader.substring(7);
+
+    // ✅ FIX: Admin token safety check
+    if (!token || token === "null" || token === "undefined") {
+      return res.status(401).json({ message: "Admin token is null or undefined" });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if it is the Superadmin from .env file
@@ -58,8 +70,7 @@ const adminProtect = async (req, res, next) => {
     req.user = admin; 
     next();
   } catch (err) {
-    console.error("Admin Auth error:", err);
-    res.status(401).json({ message: "Invalid admin token" });
+    res.status(401).json({ message: "Not authorized, invalid admin token" });
   }
 };
 

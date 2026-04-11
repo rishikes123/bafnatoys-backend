@@ -11,14 +11,11 @@ const orderItemSchema = new mongoose.Schema(
     },
     name: { type: String, required: true },
     qty: { type: Number, required: true },
-
-    // ✅ UNIT
     unit: { type: String, default: "Piece" },
-
     innerQty: { type: Number, required: true },
     inners: { type: Number, required: true },
     price: { type: Number, required: true },
-    mrp: { type: Number, default: 0 }, // ✅ ADDED MRP HERE
+    mrp: { type: Number, default: 0 },
     image: { type: String },
   },
   { _id: false }
@@ -27,7 +24,7 @@ const orderItemSchema = new mongoose.Schema(
 /* ================= SHIPPING ADDRESS ================= */
 const shippingAddressSchema = new mongoose.Schema(
   {
-    shopName: { type: String, default: "" }, // ✅ Added Shop Name
+    shopName: { type: String, default: "" },
     fullName: { type: String, required: true },
     phone: { type: String, required: true },
     street: { type: String, required: true },
@@ -36,10 +33,8 @@ const shippingAddressSchema = new mongoose.Schema(
     state: { type: String, required: true },
     pincode: { type: String, required: true },
     type: { type: String, default: "Home" },
-    
-    gstNumber: { type: String, default: "" }, // ✅ Added GST Number
-    
-    isDifferentShipping: { type: Boolean, default: false }, // ✅ Added Different Shipping fields
+    gstNumber: { type: String, default: "" },
+    isDifferentShipping: { type: Boolean, default: false },
     shippingStreet: { type: String, default: "" },
     shippingArea: { type: String, default: "" },
     shippingPincode: { type: String, default: "" },
@@ -90,53 +85,34 @@ const orderSchema = new mongoose.Schema(
       enum: ["pending", "processing", "shipped", "delivered", "cancelled", "returned"],
       default: "pending",
     },
-
-    // ✅ FIELD TO TRACK WHO CANCELLED (Customer or Admin)
     cancelledBy: {
-      type: String, // "Customer" or "Admin"
+      type: String,
       default: null,
     },
-
-    /* ✅ SHIPPING INTEGRATION FIELDS */
     isShipped: { type: Boolean, default: false },
     trackingId: { type: String, default: "" },
     courierName: { type: String, default: "" },
-
-    /* ============================================================
-       ✅ NEW: ADDED FOR DELHIVERY BOX SIZES (PACKING DETAILS)
-    ============================================================ */
     packingDetails: {
       type: [
         {
-          // 👇 YAHAN PAR NEW BOX SIZES KA ENUM ADD KIYA HAI 👇
-          boxType: { type: String, enum: ["A28", "A06", "A08", "A31", "A18"] }, // ✅ A18 added here
+          boxType: { type: String, enum: ["A28", "A06", "A08", "A31", "A18"] },
           quantity: { type: Number, default: 0 },
-          totalWeight: { type: Number, default: 0 }, // in KG
+          totalWeight: { type: Number, default: 0 },
         }
       ],
       default: []
     },
-
-    /* ✅ PUBLIC TRACKING TOKEN (secure tracking link) */
     trackingToken: { type: String, default: "" },
-
-    /* ✅ WHATSAPP LOGS */
     wa: {
       orderConfirmedSent: { type: Boolean, default: false },
       trackingSent: { type: Boolean, default: false },
       lastError: { type: String, default: "" },
       lastSentAt: { type: Date, default: null },
     },
-
     shippingAddress: {
       type: shippingAddressSchema,
       required: true,
     },
-
-    /* ============================================================
-       ✅ RETURN REQUEST SYSTEM (B2B Rules)
-       Only for Damaged/Wrong Product + Image/Video Uploads
-    ============================================================ */
     returnRequest: {
       isRequested: { type: Boolean, default: false },
       status: {
@@ -149,10 +125,8 @@ const orderSchema = new mongoose.Schema(
         enum: ["Damaged Product", "Wrong Product"],
       },
       description: { type: String },
-
       proofImages: [{ type: String }],
       proofVideo: { type: String },
-
       adminComment: { type: String },
       requestDate: { type: Date },
     },
@@ -166,16 +140,11 @@ orderSchema.index({ orderNumber: 1 }, { unique: true });
 /* ================= AUTO ORDER NUMBER + TOKEN + AMOUNT ================= */
 orderSchema.pre("validate", async function (next) {
   if (!this.orderNumber) {
-    // Database mein sabse recent order dhoondo
     const lastOrder = await this.constructor.findOne().sort({ createdAt: -1 });
-
-    // ✅ Tumhara naya base number yahan set kiya hai
     let nextNum = 1001001; 
 
     if (lastOrder && lastOrder.orderNumber) {
       const lastNumber = parseInt(lastOrder.orderNumber.replace("ODR", ""), 10);
-      
-      // ✅ Agar pichla number 1001000 se bada hai toh usme +1 hoga, warna 1001001 se start hoga
       if (!isNaN(lastNumber) && lastNumber >= 1001000) {
         nextNum = lastNumber + 1;
       }
@@ -184,15 +153,12 @@ orderSchema.pre("validate", async function (next) {
     this.orderNumber = "ODR" + nextNum;
   }
 
-  // ✅ generate tracking token once (for customer tracking link)
   if (!this.trackingToken) {
     this.trackingToken = crypto.randomBytes(16).toString("hex");
   }
 
   this.remainingAmount = Math.max((this.total || 0) - (this.advancePaid || 0), 0);
-
   next();
 });
 
-// Check if model already exists to prevent overwrite error in some environments
 module.exports = mongoose.models.Order || mongoose.model("Order", orderSchema);

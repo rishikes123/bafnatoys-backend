@@ -4,7 +4,6 @@ const axios = require("axios"); // ✅ Delhivery API integration ke liye
 
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
-const sendEmail = require("../utils/sendEmail");
 
 // ✅ Notification Service
 const { sendPushNotification } = require("../services/notificationService");
@@ -115,7 +114,7 @@ router.get("/:id", async (req, res) => {
 
 /**
  *@route    POST /api/orders
- *@desc     Create a new order & Notify Admin via Email + Customer via WhatsApp
+ *@desc     Create a new order & Notify Customer via WhatsApp
  */
 router.post("/", async (req, res) => {
   try {
@@ -216,37 +215,8 @@ router.post("/", async (req, res) => {
     // ✅ SKU and MRP Attach kar rahe hain
     populatedOrder = attachSkuToItems(populatedOrder);
 
-    // ❌ YAHAN SE 'res.status(201)' HATA DIYA HAI AUR SABSE NEECHE SHIFT KIYA HAI
-
     // ============================================
-    // 1. ADMIN EMAIL NOTIFICATION
-    // ============================================
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail) {
-      const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
-
-      const emailMessage = `
-        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; max-width: 600px;">
-          <h2 style="color: #27ae60;">New Order Received! 🎉</h2>
-          <p><strong>Order ID:</strong> ${populatedOrder.orderNumber}</p>
-          <p><strong>Customer:</strong> ${populatedOrder.customerId?.shopName || "Guest"} (${populatedOrder.customerId?.city || ""})</p>
-          <p><strong>Mobile:</strong> ${populatedOrder.customerId?.otpMobile || "N/A"}</p>
-          <p><strong>Total Amount:</strong> ₹${populatedOrder.total}</p>
-          <p><strong>Payment Mode:</strong> ${populatedOrder.paymentMode}</p>
-          <hr/>
-          <p>Please check the admin panel for more details.</p>
-        </div>
-      `;
-
-      try {
-        await sendEmail({ to: adminEmail, subject: emailSubject, html: emailMessage });
-      } catch (err) {
-        console.error("Background Email Error:", err.message);
-      }
-    }
-
-    // ============================================
-    // 2. WHATSAPP ORDER CONFIRMATION
+    // 1. WHATSAPP ORDER CONFIRMATION
     // ============================================
     const to = sanitizePhone(populatedOrder.customerId?.whatsapp || populatedOrder.customerId?.otpMobile || populatedOrder.shippingAddress?.phone);
 
@@ -281,7 +251,7 @@ router.post("/", async (req, res) => {
       }
     }
 
-    // ✅ FIXED: Sending the response AFTER email and WhatsApp execution is complete!
+    // ✅ FIXED: Sending the response AFTER WhatsApp execution is complete!
     res.status(201).json({ order: populatedOrder });
 
   } catch (err) {
