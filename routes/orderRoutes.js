@@ -8,7 +8,7 @@ const sendEmail = require("../utils/sendEmail");
 
 // ✅ Notification Service
 const { sendPushNotification } = require("../services/notificationService");
-const { sendWhatsAppTemplate } = require("../services/whatsappService"); // ✅ Added Missing Import
+const { sendWhatsAppTemplate } = require("../services/whatsappService"); 
 const Registration = require("../models/Registration");
 
 // ✅ Phone sanitizer (India)
@@ -126,10 +126,8 @@ router.post("/", async (req, res) => {
       paymentMode,
       paymentMethod,
       shippingAddress,
-
       codAdvancePaid,
       codRemainingAmount,
-
       itemsPrice,
       shippingPrice,
     } = req.body;
@@ -163,15 +161,12 @@ router.post("/", async (req, res) => {
         shippingCity: shippingAddress?.shippingCity || "",
         shippingState: shippingAddress?.shippingState || "",
       },
-
       itemsPrice: itemsPrice || 0,
       shippingPrice: shippingPrice || 0,
       total: total,
-
       paymentMode: finalPaymentMethod,
       advancePaid: codAdvancePaid || 0,
       remainingAmount: codRemainingAmount || 0,
-
       wa: {
         orderConfirmedSent: false,
         trackingSent: false,
@@ -221,8 +216,11 @@ router.post("/", async (req, res) => {
     // ✅ SKU and MRP Attach kar rahe hain
     populatedOrder = attachSkuToItems(populatedOrder);
 
-    res.status(201).json({ order: populatedOrder });
+    // ❌ YAHAN SE 'res.status(201)' HATA DIYA HAI AUR SABSE NEECHE SHIFT KIYA HAI
 
+    // ============================================
+    // 1. ADMIN EMAIL NOTIFICATION
+    // ============================================
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail) {
       const emailSubject = `🚀 New Order Alert: ${populatedOrder.orderNumber}`;
@@ -240,11 +238,16 @@ router.post("/", async (req, res) => {
         </div>
       `;
 
-      sendEmail({ to: adminEmail, subject: emailSubject, html: emailMessage }).catch((err) => {
+      try {
+        await sendEmail({ to: adminEmail, subject: emailSubject, html: emailMessage });
+      } catch (err) {
         console.error("Background Email Error:", err.message);
-      });
+      }
     }
 
+    // ============================================
+    // 2. WHATSAPP ORDER CONFIRMATION
+    // ============================================
     const to = sanitizePhone(populatedOrder.customerId?.whatsapp || populatedOrder.customerId?.otpMobile || populatedOrder.shippingAddress?.phone);
 
     if (to) {
@@ -277,6 +280,9 @@ router.post("/", async (req, res) => {
         });
       }
     }
+
+    // ✅ FIXED: Sending the response AFTER email and WhatsApp execution is complete!
+    res.status(201).json({ order: populatedOrder });
 
   } catch (err) {
     console.error("Order Creation Error:", err);
