@@ -1,7 +1,9 @@
 const express = require("express");
 const axios = require("axios");
+const jwt = require("jsonwebtoken");
 const router = express.Router();
 const OtpModel = require("../models/OtpModel");
+const Registration = require("../models/Registration");
 
 /* -------- SEND OTP -------- */
 router.post("/send", async (req, res) => {
@@ -74,7 +76,20 @@ router.post("/verify", async (req, res) => {
 
     // OTP correct - delete all OTPs for this phone
     await OtpModel.deleteMany({ phone });
-    res.json({ success: true, message: "OTP verified successfully" });
+
+    // Find the user and generate a real JWT token
+    const normalizedPhone = String(phone).replace(/\D/g, "").replace(/^91/, "").slice(-10);
+    const user = await Registration.findOne({
+      otpMobile: { $in: [phone, normalizedPhone, "91" + normalizedPhone] },
+    }).select("-password");
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+
+    res.json({ success: true, message: "OTP verified successfully", token, user });
   } catch (err) {
     res.status(500).json({ success: false, message: "OTP verification failed" });
   }
