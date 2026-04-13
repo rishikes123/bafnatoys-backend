@@ -77,19 +77,20 @@ router.post("/verify", async (req, res) => {
     // OTP correct - delete all OTPs for this phone
     await OtpModel.deleteMany({ phone });
 
-    // Find the user and generate a real JWT token
+    // Try to find existing user (login flow) — for registration, user won't exist yet
     const normalizedPhone = String(phone).replace(/\D/g, "").replace(/^91/, "").slice(-10);
     const user = await Registration.findOne({
       otpMobile: { $in: [phone, normalizedPhone, "91" + normalizedPhone] },
     }).select("-password");
 
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+    // If user exists → login flow: return JWT token
+    if (user) {
+      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+      return res.json({ success: true, message: "OTP verified successfully", token, user });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "30d" });
-
-    res.json({ success: true, message: "OTP verified successfully", token, user });
+    // If user not found → registration flow: OTP verified, let frontend complete registration
+    res.json({ success: true, message: "OTP verified successfully" });
   } catch (err) {
     res.status(500).json({ success: false, message: "OTP verification failed" });
   }
