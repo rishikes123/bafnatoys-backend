@@ -1,206 +1,156 @@
 const router = require("express").Router();
 const Setting = require("../models/settingModel");
+const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 /* ================= COD SETTINGS ================= */
 
-// GET COD Settings
 router.get("/cod", async (req, res) => {
   try {
     let setting = await Setting.findOne({ key: "cod" });
-
     if (!setting) {
       setting = await Setting.create({
         key: "cod",
-        // ✅ Default me COD chalu, advanceAmount 0 aur advanceType 'flat' rahega
         data: { advanceAmount: 0, advanceType: "flat", enabled: true },
       });
     }
-
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ GET Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE COD Settings
-router.put("/cod", async (req, res) => {
+router.put("/cod", adminProtect, isAdmin, async (req, res) => {
   try {
-    // ✅ advanceType ko request body se receive kar rahe hain
     const { advanceAmount, advanceType, enabled } = req.body;
-    
-    // Strict True/False checking
     let isEnabled = true;
     if (enabled === false || String(enabled).toLowerCase() === "false" || enabled === 0) {
       isEnabled = false;
     }
-
     const setting = await Setting.findOneAndUpdate(
       { key: "cod" },
       {
         $set: {
-          key: "cod", // Ensure key exists
+          key: "cod",
           data: {
             advanceAmount: Number(advanceAmount) || 0,
-            // ✅ Yahan theek se check karke percentage ya flat save hoga
-            advanceType: advanceType === "percentage" ? "percentage" : "flat", 
-            enabled: isEnabled, 
+            advanceType: advanceType === "percentage" ? "percentage" : "flat",
+            enabled: isEnabled,
           },
         },
       },
       { upsert: true, new: true }
     );
-
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ PUT Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
 /* ================= MAINTENANCE MODE ================= */
 
-// GET Maintenance Status
 router.get("/maintenance", async (req, res) => {
   try {
     let setting = await Setting.findOne({ key: "maintenance" });
-
     if (!setting) {
-      // Default: Maintenance OFF (Website Live)
-      setting = await Setting.create({
-        key: "maintenance",
-        data: { enabled: false },
-      });
+      setting = await Setting.create({ key: "maintenance", data: { enabled: false } });
     }
-
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ GET Maintenance Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE Maintenance Status
-router.put("/maintenance", async (req, res) => {
+router.put("/maintenance", adminProtect, isAdmin, async (req, res) => {
   try {
-    const { enabled } = req.body; // Expecting { enabled: true/false }
-
+    const { enabled } = req.body;
     const setting = await Setting.findOneAndUpdate(
       { key: "maintenance" },
-      {
-        $set: {
-          key: "maintenance",
-          data: { enabled: Boolean(enabled) },
-        },
-      },
+      { $set: { key: "maintenance", data: { enabled: Boolean(enabled) } } },
       { upsert: true, new: true }
     );
-
-    console.log("✅ Maintenance Mode Updated:", setting.data);
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ PUT Maintenance Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-/* ================= PRODUCT REVIEWS SETTINGS (ON/OFF) ================= */
+/* ================= PRODUCT REVIEWS SETTINGS ================= */
 
-// GET Review Settings
 router.get("/reviews", async (req, res) => {
   try {
     let setting = await Setting.findOne({ key: "reviews" });
-
     if (!setting) {
-      // Default: Reviews chalu (enabled: true) rahenge
-      setting = await Setting.create({
-        key: "reviews",
-        data: { enabled: true },
-      });
+      setting = await Setting.create({ key: "reviews", data: { enabled: true } });
     }
-
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ GET Reviews Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE Review Settings
-router.put("/reviews", async (req, res) => {
+router.put("/reviews", adminProtect, isAdmin, async (req, res) => {
   try {
     const { enabled } = req.body;
-    
-    // Strict True/False checking
     let isEnabled = true;
     if (enabled === false || String(enabled).toLowerCase() === "false" || enabled === 0) {
       isEnabled = false;
     }
-
     const setting = await Setting.findOneAndUpdate(
       { key: "reviews" },
-      {
-        $set: {
-          key: "reviews",
-          data: { enabled: isEnabled },
-        },
-      },
+      { $set: { key: "reviews", data: { enabled: isEnabled } } },
       { upsert: true, new: true }
     );
-
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ PUT Reviews Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
 /* ================= ANNOUNCEMENT BANNER ================= */
 
-// GET Announcement
-router.get('/announcement', async (req, res) => {
+router.get("/announcement", async (req, res) => {
   try {
-    let setting = await Setting.findOne({ key: 'announcement' });
+    let setting = await Setting.findOne({ key: "announcement" });
     if (!setting) {
       setting = await Setting.create({
-        key: 'announcement',
-        data: { enabled: false, text: '', bgColor: '#e63946', textColor: '#ffffff' },
+        key: "announcement",
+        data: { enabled: false, text: "", bgColor: "#e63946", textColor: "#ffffff" },
       });
     }
     res.json(setting.data);
   } catch (err) {
-    console.error('❌ GET Announcement Error:', err);
-    res.status(500).json({ message: 'Server Error' });
+    res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE Announcement
-router.put('/announcement', async (req, res) => {
+router.put("/announcement", adminProtect, isAdmin, async (req, res) => {
   try {
     const { enabled, text, bgColor, textColor } = req.body;
     const setting = await Setting.findOneAndUpdate(
-      { key: 'announcement' },
-      { $set: { key: 'announcement', data: { enabled: Boolean(enabled), text: text || '', bgColor: bgColor || '#e63946', textColor: textColor || '#ffffff' } } },
+      { key: "announcement" },
+      {
+        $set: {
+          key: "announcement",
+          data: {
+            enabled: Boolean(enabled),
+            text: text || "",
+            bgColor: bgColor || "#e63946",
+            textColor: textColor || "#ffffff",
+          },
+        },
+      },
       { upsert: true, new: true }
     );
-
-    // 🚀 Signal mobile app to refresh
     const io = req.app.get("io");
-    if (io) {
-      console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for ANNOUNCEMENT change...");
-      io.emit("settingsUpdated", { type: "announcement", data: setting.data });
-    }
-
+    if (io) io.emit("settingsUpdated", { type: "announcement", data: setting.data });
     res.json(setting.data);
   } catch (err) {
-    console.error('❌ PUT Announcement Error:', err);
-    res.status(500).json({ message: 'Server Error' });
+    res.status(500).json({ message: "Server Error" });
   }
 });
 
 /* ================= MOBILE THEME SETTINGS ================= */
 
-// GET Mobile Theme
 router.get("/mobile-theme", async (req, res) => {
   try {
     let setting = await Setting.findOne({ key: "mobile-theme" });
@@ -218,13 +168,11 @@ router.get("/mobile-theme", async (req, res) => {
     }
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ GET Mobile Theme Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE Mobile Theme
-router.put("/mobile-theme", async (req, res) => {
+router.put("/mobile-theme", adminProtect, isAdmin, async (req, res) => {
   try {
     const { primary, primaryDark, primaryLight, primaryBg, brandText } = req.body;
     const setting = await Setting.findOneAndUpdate(
@@ -243,46 +191,32 @@ router.put("/mobile-theme", async (req, res) => {
       },
       { upsert: true, new: true }
     );
-
-    // 🚀 Signal mobile app to refresh with NEW DATA directly
     const io = req.app.get("io");
-    if (io) {
-      console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for THEME change...");
-      io.emit("settingsUpdated", { type: "theme", data: setting.data });
-    }
-
+    if (io) io.emit("settingsUpdated", { type: "theme", data: setting.data });
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ PUT Mobile Theme Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
 /* ================= MOBILE HEADER WHATSAPP ================= */
 
-// GET Mobile WhatsApp Header Settings
 router.get("/mobile-whatsapp", async (req, res) => {
   try {
     let setting = await Setting.findOne({ key: "mobile-whatsapp" });
     if (!setting) {
       setting = await Setting.create({
         key: "mobile-whatsapp",
-        data: {
-          enabled: false,
-          phone: "",
-          message: "Hi! I want to place an order.",
-        },
+        data: { enabled: false, phone: "", message: "Hi! I want to place an order." },
       });
     }
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ GET Mobile WhatsApp Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// PUT Mobile WhatsApp Header Settings
-router.put("/mobile-whatsapp", async (req, res) => {
+router.put("/mobile-whatsapp", adminProtect, isAdmin, async (req, res) => {
   try {
     const { enabled, phone, message } = req.body;
     const setting = await Setting.findOneAndUpdate(
@@ -299,115 +233,78 @@ router.put("/mobile-whatsapp", async (req, res) => {
       },
       { upsert: true, new: true }
     );
-
-    // 🚀 Signal mobile app to refresh with NEW DATA directly
     const io = req.app.get("io");
-    if (io) {
-      console.log("📢 [BACKEND] Broadcasting 'settingsUpdated' for WHATSAPP change...");
-      io.emit("settingsUpdated", { type: "whatsapp", data: setting.data });
-    }
-
+    if (io) io.emit("settingsUpdated", { type: "whatsapp", data: setting.data });
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ PUT Mobile WhatsApp Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
 /* ================= MOBILE LAYOUT SETTINGS ================= */
 
-// GET Mobile Home Layout
 router.get("/mobile-layout", async (req, res) => {
   try {
     let setting = await Setting.findOne({ key: "mobile-layout" });
     if (!setting) {
-      setting = await Setting.create({
-        key: "mobile-layout",
-        data: { layout: "layout1" },
-      });
+      setting = await Setting.create({ key: "mobile-layout", data: { layout: "layout1" } });
     }
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ GET Mobile Layout Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE Mobile Home Layout
-router.put("/mobile-layout", async (req, res) => {
+router.put("/mobile-layout", adminProtect, isAdmin, async (req, res) => {
   try {
     const { layout } = req.body;
     const setting = await Setting.findOneAndUpdate(
       { key: "mobile-layout" },
-      {
-        $set: {
-          key: "mobile-layout",
-          data: { layout: layout || "layout1" },
-        },
-      },
+      { $set: { key: "mobile-layout", data: { layout: layout || "layout1" } } },
       { upsert: true, new: true }
     );
-
-    // 🚀 Signal mobile app to refresh with NEW DATA directly
     const io = req.app.get("io");
-    if (io) {
-      console.log(`📢 [BACKEND] Broadcasting 'settingsUpdated' for LAYOUT change: ${layout}`);
-      io.emit("settingsUpdated", { type: "layout", data: { layout: layout || "layout1" } });
-    }
-
+    if (io) io.emit("settingsUpdated", { type: "layout", data: { layout: layout || "layout1" } });
     res.json(setting.data);
   } catch (err) {
-    console.error("❌ PUT Mobile Layout Error:", err);
     res.status(500).json({ message: "Server Error" });
   }
 });
 
-// ✅ DIAGNOSTIC: Trigger a ping to all mobile apps
-router.post("/ping-sync", async (req, res) => {
+/* ================= DIAGNOSTIC PING (admin only) ================= */
+
+router.post("/ping-sync", adminProtect, isAdmin, async (req, res) => {
   const io = req.app.get("io");
   if (io) {
-    console.log("📡 [DIAGNOSTIC] Admin triggered a Sync Ping...");
     io.emit("settingsUpdated", { type: "ping", timestamp: Date.now() });
     return res.json({ success: true, message: "Ping sent to all clients." });
   }
   res.status(500).json({ success: false, message: "Socket.io not initialized." });
 });
 
-const ShippingSettings = require("../models/ShippingSettings");
-
 /* ================= SHIPPING SETTINGS ================= */
 
-// GET Shipping Settings
+const ShippingSettings = require("../models/ShippingSettings");
+
 router.get("/shipping", async (req, res) => {
   try {
-    let settings = await ShippingSettings.findOne();
-    if (!settings) {
-      settings = await ShippingSettings.create({
-        shippingCharge: 250,
-        freeShippingThreshold: 5000,
-      });
-    }
-    res.json(settings);
+    let s = await ShippingSettings.findOne();
+    res.json(s || {});
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Server Error" });
   }
 });
 
-// UPDATE Shipping Settings
-router.put("/shipping", async (req, res) => {
+router.put("/shipping", adminProtect, isAdmin, async (req, res) => {
   try {
-    const { shippingCharge, freeShippingThreshold } = req.body;
-    const settings = await ShippingSettings.findOneAndUpdate(
+    const updated = await ShippingSettings.findOneAndUpdate(
       {},
-      {
-        shippingCharge: Number(shippingCharge) || 0,
-        freeShippingThreshold: Number(freeShippingThreshold) || 0,
-      },
-      { new: true, upsert: true }
+      { $set: req.body },
+      { upsert: true, new: true }
     );
-    res.json(settings);
+    res.json(updated);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: "Server Error" });
   }
 });
 

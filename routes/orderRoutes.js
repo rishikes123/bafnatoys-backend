@@ -75,16 +75,39 @@ router.get("/", async (req, res) => {
     const { customerId } = req.query;
     const filter = customerId ? { customerId } : {};
 
-    let orders = await Order.find(filter)
-      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
-      .populate("items.productId", "sku mrp") // ✅ YAHAN SKU KE SATH MRP BHI ADD KIYA HAI
-      .sort({ createdAt: -1 })
-      .lean();
+    // Pagination support (default 50 per page, max 200)
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, parseInt(req.query.limit) || 50);
+    const skip = (page - 1) * limit;
 
-    // ✅ SKU and MRP Attach kar rahe hain
-    orders = orders.map(attachSkuToItems);
+    const [rawOrders, total] = await Promise.all([
+      Order.find(filter)
+        .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+        .populate("items.productId", "sku mrp")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
 
-    res.json(orders);
+    const orders = rawOrders.map(attachSkuToItems);
+
+    // If customerId is provided (customer fetching own orders), return plain array
+    // so existing frontend code doesn't break. Otherwise return paginated object.
+    if (customerId) {
+      return res.json(orders);
+    }
+
+    res.json({
+      orders,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit),
+        limit,
+      },
+    });
   } catch (err) {
     res.status(500).json({
       message: err.message || "Server error while fetching orders",

@@ -26,20 +26,14 @@ const io = new Server(server, {
 let onlineUsersCount = 0;
 
 io.on("connection", (socket) => {
-  const clientIp = socket.handshake.query.platform === 'mobile' ? 'Mobile' : socket.handshake.address;
-  console.log(`🔌 [SOCKET] New Client Connected: ${socket.id} (${clientIp})`);
-  
   onlineUsersCount++;
   io.emit("updateUserCount", onlineUsersCount);
 
-  // ✅ Test Signal for diagnostics
   socket.on("pingSync", () => {
-    console.log(`📡 [SOCKET] Received Ping from ${socket.id}. Broadcasting to all...`);
     io.emit("settingsUpdated", { type: "ping", timestamp: Date.now() });
   });
 
-  socket.on("disconnect", (reason) => {
-    console.log(`🔌 [SOCKET] Client Disconnected: ${socket.id}. Reason: ${reason}`);
+  socket.on("disconnect", () => {
     onlineUsersCount = Math.max(0, onlineUsersCount - 1);
     io.emit("updateUserCount", onlineUsersCount);
   });

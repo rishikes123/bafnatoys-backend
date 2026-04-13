@@ -5,11 +5,7 @@ const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// 🚨 TEMPORARY FIX FOR MONGODB GHOST INDEX ISSUE 🚨
-// Ye line database se purane kachre (indexes) saaf kar degi.
-Admin.collection.dropIndexes().then(() => {
-  console.log("✅ MongoDB ke bekaar indexes clear ho gaye! Ab multiple users ban jayenge.");
-}).catch(err => console.log("Index clear error:", err));
+// Note: Index cleanup was done once manually. No longer needed here.
 
 
 // 1. ADMIN LOGIN (Railway .env Superadmin + DB Subadmins)

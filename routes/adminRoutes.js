@@ -2,9 +2,10 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
-const Registration = require("../models/Registration"); // ✅ correct file
+const Registration = require("../models/Registration");
+const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
-// ADMIN LOGIN
+// ADMIN LOGIN (public - no auth needed)
 router.post("/login", (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
@@ -24,19 +25,37 @@ router.post("/login", (req, res) => {
   res.json({ message: "Admin login successful", token });
 });
 
-// GET all customers (registrations)
-router.get("/customers", async (req, res) => {
+// GET all customers with pagination (admin only)
+router.get("/customers", adminProtect, isAdmin, async (req, res) => {
   try {
-    const customers = await Registration.find().sort({ createdAt: -1 });
-    res.json(customers);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 50);
+    const skip = (page - 1) * limit;
+
+    const [customers, total] = await Promise.all([
+      Registration.find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Registration.countDocuments(),
+    ]);
+
+    res.json({
+      customers,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit),
+        limit,
+      },
+    });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// Approve a customer
-router.patch("/approve/:id", async (req, res) => {
+// Approve a customer (admin only)
+router.patch("/approve/:id", adminProtect, isAdmin, async (req, res) => {
   try {
     const user = await Registration.findByIdAndUpdate(
       req.params.id,
@@ -49,8 +68,8 @@ router.patch("/approve/:id", async (req, res) => {
   }
 });
 
-// Delete a customer
-router.delete("/customer/:id", async (req, res) => {
+// Delete a customer (admin only)
+router.delete("/customer/:id", adminProtect, isAdmin, async (req, res) => {
   try {
     await Registration.findByIdAndDelete(req.params.id);
     res.json({ message: "User deleted" });

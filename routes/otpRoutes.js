@@ -1,11 +1,9 @@
 const express = require("express");
 const axios = require("axios");
 const router = express.Router();
+const OtpModel = require("../models/OtpModel");
 
-// In-memory OTP store (⚠️ For production use Redis or DB)
-const otpStore = {};
-
-/* ---------------- SEND OTP ---------------- */
+/* -------- SEND OTP -------- */
 router.post("/send", async (req, res) => {
   try {
     const { phone } = req.body;
@@ -13,18 +11,29 @@ router.post("/send", async (req, res) => {
       return res.status(400).json({ success: false, message: "Phone required" });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000); // 6 digit OTP
-    otpStore[phone] = otp;
+    // Rate limit: max 3 OTPs per phone per 10 minutes
+    const recentCount = await OtpModel.countDocuments({ phone });
+    if (recentCount >= 3) {
+      return res.status(429).json({
+        success: false,
+        message: "Too many OTP requests. Please wait 10 minutes.",
+      });
+    }
 
-    // ✅ MSG91 Flow API
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save to MongoDB (auto-expires in 10 min via TTL index)
+    await OtpModel.create({ phone, otp });
+
+    // MSG91 Flow API
     const response = await axios.post(
       "https://control.msg91.com/api/v5/flow/",
       {
-        template_id: process.env.MSG91_TEMPLATE_ID,    // MSG91 Flow Template ID
-        DLT_TE_ID: process.env.MSG91_DLT_TEMPLATE_ID,  // DLT Template ID
-        sender: "BAFNAR",                              // Approved Sender ID
+        template_id: process.env.MSG91_TEMPLATE_ID,
+        DLT_TE_ID: process.env.MSG91_DLT_TEMPLATE_ID,
+        sender: "BAFNAR",
         mobiles: "91" + phone,
-        OTP: otp,                                      // ✅ matches ##OTP## in DLT template
+        OTP: otp,
       },
       {
         headers: {
@@ -34,30 +43,39 @@ router.post("/send", async (req, res) => {
       }
     );
 
-    console.log(`✅ OTP ${otp} sent to ${phone}`, response.data);
     res.json({ success: true, message: "OTP sent successfully", data: response.data });
   } catch (err) {
-    console.error("❌ OTP Send Error:", err.response?.data || err.message);
     res.status(500).json({ success: false, message: "Failed to send OTP" });
   }
 });
 
-/* ---------------- VERIFY OTP ---------------- */
-router.post("/verify", (req, res) => {
+/* -------- VERIFY OTP -------- */
+router.post("/verify", async (req, res) => {
   try {
     const { phone, otp } = req.body;
-    if (!otpStore[phone]) {
-      return res.status(400).json({ success: false, message: "OTP not requested" });
+
+    // Find the latest OTP for this phone
+    const record = await OtpModel.findOne({ phone }).sort({ createdAt: -1 });
+
+    if (!record) {
+      return res.status(400).json({ success: false, message: "OTP not requested or expired" });
     }
 
-    if (otpStore[phone] != otp) {
+    // Max 5 wrong attempts before locking
+    if (record.attempts >= 5) {
+      await OtpModel.deleteMany({ phone });
+      return res.status(400).json({ success: false, message: "Too many wrong attempts. Request a new OTP." });
+    }
+
+    if (record.otp !== String(otp)) {
+      await OtpModel.findByIdAndUpdate(record._id, { $inc: { attempts: 1 } });
       return res.status(400).json({ success: false, message: "Invalid OTP" });
     }
 
-    delete otpStore[phone]; // OTP clear after success
+    // OTP correct - delete all OTPs for this phone
+    await OtpModel.deleteMany({ phone });
     res.json({ success: true, message: "OTP verified successfully" });
   } catch (err) {
-    console.error("❌ OTP Verify Error:", err.message);
     res.status(500).json({ success: false, message: "OTP verification failed" });
   }
 });

@@ -2,9 +2,9 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const slugify = require("slugify");
-// 🔥 Cloudinary hataya, ImageKit laya
-const imagekit = require("../config/imagekit"); 
+const imagekit = require("../config/imagekit");
 const multer = require("multer");
+const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 // 📥 PDF Generator Package
 const PDFDocument = require("pdfkit");
@@ -257,7 +257,7 @@ router.get("/:slugOrId", async (req, res, next) => {
 /* ------------------------------------------------------------------
 ✅ 5. CREATE product (ImageKit updated)
 ------------------------------------------------------------------ */
-router.post("/", upload.array("images", 5), async (req, res) => {
+router.post("/", adminProtect, isAdmin, upload.array("images", 5), async (req, res) => {
   try {
     let imageUrls = [];
 
@@ -322,7 +322,7 @@ router.post("/", upload.array("images", 5), async (req, res) => {
 /* ------------------------------------------------------------------
 ✅ 6. REORDER PRODUCTS
 ------------------------------------------------------------------ */
-router.put("/reorder", async (req, res) => {
+router.put("/reorder", adminProtect, isAdmin, async (req, res) => {
   try {
     const { products } = req.body;
     if (!Array.isArray(products) || !products.length) {
@@ -346,7 +346,7 @@ router.put("/reorder", async (req, res) => {
 /* ------------------------------------------------------------------
 ✅ 7. MOVE PRODUCT
 ------------------------------------------------------------------ */
-router.put("/:id/move", async (req, res) => {
+router.put("/:id/move", adminProtect, isAdmin, async (req, res) => {
   try {
     const { direction } = req.body;
     const { id } = req.params;
@@ -386,7 +386,7 @@ router.put("/:id/move", async (req, res) => {
 /* ------------------------------------------------------------------
 ✅ 8. UPDATE product (ImageKit updated)
 ------------------------------------------------------------------ */
-router.put("/:id", upload.array("images", 5), async (req, res) => {
+router.put("/:id", adminProtect, isAdmin, upload.array("images", 5), async (req, res) => {
   try {
     const updateData = { ...req.body };
     let newImageUrls = [];
@@ -461,7 +461,7 @@ router.put("/:id", upload.array("images", 5), async (req, res) => {
 /* ------------------------------------------------------------------
 ✅ 9. DELETE product
 ------------------------------------------------------------------ */
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", adminProtect, isAdmin, async (req, res) => {
   try {
     const prod = await Product.findByIdAndDelete(req.params.id);
     if (!prod) return res.status(404).json({ message: "Product not found" });

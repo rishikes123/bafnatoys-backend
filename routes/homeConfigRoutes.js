@@ -4,6 +4,7 @@ const router = express.Router();
 const HomeConfig = require("../models/homeConfigModel");
 const Product = require("../models/Product");
 const Category = require("../models/categoryModel");
+const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 const safeArr = (v) => (Array.isArray(v) ? v : []);
 const safeStr = (v, d = "") => (typeof v === "string" ? v : d);
@@ -236,7 +237,7 @@ const buildPayload = (body) => ({
   promo: normalizePromo(body.promo),
 });
 
-router.put("/", async (req, res) => {
+router.put("/", adminProtect, isAdmin, async (req, res) => {
   try {
     const payload = buildPayload(req.body);
     const saved = await HomeConfig.findOneAndUpdate(
@@ -247,10 +248,7 @@ router.put("/", async (req, res) => {
 
     // 🚀 Signal mobile app to refresh
     const io = req.app.get("io");
-    if (io) {
-      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for Home Config change...");
-      io.emit("settingsUpdated");
-    }
+    if (io) io.emit("settingsUpdated");
 
     res.json(saved);
   } catch (err) {
@@ -259,7 +257,7 @@ router.put("/", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", adminProtect, isAdmin, async (req, res) => {
   try {
     const payload = buildPayload(req.body);
     const saved = await HomeConfig.findOneAndUpdate(
@@ -270,10 +268,7 @@ router.post("/", async (req, res) => {
 
     // 🚀 Signal mobile app to refresh
     const io = req.app.get("io");
-    if (io) {
-      console.log("📢 Broadcasting 'settingsUpdated' to mobile app for Home Config change...");
-      io.emit("settingsUpdated");
-    }
+    if (io) io.emit("settingsUpdated");
 
     res.json(saved);
   } catch (err) {
