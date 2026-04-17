@@ -139,7 +139,7 @@ router.get("/search/all", async (req, res) => {
 
     let products = await Product.find({
       $or: [
-        { name: { $regex: query, $options: "i" } },
+        { name: { $regex: `\\b${query}`, $options: "i" } },
         { sku: { $regex: query, $options: "i" } },
       ],
     })
