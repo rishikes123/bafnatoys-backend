@@ -260,8 +260,35 @@ router.get("/:slugOrId", async (req, res, next) => {
 
     let finalProd = await attachDealsToProducts(prod);
 
+    // ✅ AUTO "You May Also Like" — if admin hasn't manually set related products,
+    // auto-fetch from same category (excluding current product, prioritising in-stock)
+    if (!finalProd.relatedProducts?.length && finalProd.category?._id) {
+      let autoRelated = await Product.find({
+        category: finalProd.category._id,
+        _id: { $ne: finalProd._id },
+      })
+        .sort({ stock: -1, createdAt: -1 })
+        .limit(10)
+        .populate("category", "name")
+        .lean();
+
+      // Fallback: if category has too few products, top up with latest from other categories
+      if (autoRelated.length < 6) {
+        const needed = 10 - autoRelated.length;
+        const excludeIds = [finalProd._id, ...autoRelated.map((p) => p._id)];
+        const filler = await Product.find({ _id: { $nin: excludeIds } })
+          .sort({ createdAt: -1 })
+          .limit(needed)
+          .populate("category", "name")
+          .lean();
+        autoRelated = [...autoRelated, ...filler];
+      }
+
+      finalProd.relatedProducts = autoRelated;
+    }
+
     if (finalProd.relatedProducts?.length) {
-      finalProd.relatedProducts = await attachRatingsToProducts(finalProd.relatedProducts); 
+      finalProd.relatedProducts = await attachRatingsToProducts(finalProd.relatedProducts);
       finalProd.relatedProducts = await attachDealsToProducts(finalProd.relatedProducts);
     }
 
