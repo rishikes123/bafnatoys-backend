@@ -282,6 +282,62 @@ router.post("/ping-sync", adminProtect, isAdmin, async (req, res) => {
   res.status(500).json({ success: false, message: "Socket.io not initialized." });
 });
 
+/* ================= META PIXEL SETTINGS ================= */
+
+const DEFAULT_PIXEL_EVENTS = {
+  pageView: true,
+  viewContent: true,
+  addToCart: true,
+  initiateCheckout: true,
+  purchase: true,
+};
+
+router.get("/meta-pixel", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "meta-pixel" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "meta-pixel",
+        data: { pixelId: "", enabled: false, events: DEFAULT_PIXEL_EVENTS },
+      });
+    }
+    const data = setting.data || {};
+    res.json({
+      pixelId: data.pixelId || "",
+      enabled: Boolean(data.enabled),
+      events: { ...DEFAULT_PIXEL_EVENTS, ...(data.events || {}) },
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const { pixelId, enabled, events } = req.body;
+    const cleanPixelId = String(pixelId || "").replace(/\D/g, "").trim();
+    const setting = await Setting.findOneAndUpdate(
+      { key: "meta-pixel" },
+      {
+        $set: {
+          key: "meta-pixel",
+          data: {
+            pixelId: cleanPixelId,
+            enabled: Boolean(enabled) && cleanPixelId.length > 0,
+            events: { ...DEFAULT_PIXEL_EVENTS, ...(events || {}) },
+          },
+        },
+      },
+      { upsert: true, new: true }
+    );
+    const io = req.app.get("io");
+    if (io) io.emit("settingsUpdated", { type: "meta-pixel", data: setting.data });
+    res.json(setting.data);
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
 /* ================= SHIPPING SETTINGS ================= */
 
 const ShippingSettings = require("../models/ShippingSettings");
