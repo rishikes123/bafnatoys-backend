@@ -159,15 +159,33 @@ router.get("/search/all", async (req, res) => {
 /* ------------------------------------------------------------------
 ✅ 2. GET ALL PRODUCTS
 ------------------------------------------------------------------ */
+// In-memory cache: avoids 3 slow DB queries on every mobile request
+let _productsCache = null;
+let _productsCacheTime = 0;
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+const invalidateProductsCache = () => { _productsCache = null; _productsCacheTime = 0; };
+
 router.get("/", async (_req, res) => {
   try {
+    const now = Date.now();
+    if (_productsCache && (now - _productsCacheTime) < CACHE_TTL) {
+      res.setHeader("X-Cache", "HIT");
+      return res.json(_productsCache);
+    }
+
     let products = await Product.find()
       .populate("category", "name")
       .sort({ order: 1 })
       .lean();
 
-    products = await attachRatingsToProducts(products); 
+    products = await attachRatingsToProducts(products);
     const finalProducts = await attachDealsToProducts(products);
+
+    _productsCache = finalProducts;
+    _productsCacheTime = now;
+
+    res.setHeader("X-Cache", "MISS");
     res.json(finalProducts);
   } catch (err) {
     console.error("❌ Fetch error:", err);
@@ -297,6 +315,7 @@ router.post("/", adminProtect, isAdmin, upload.array("images", 5), async (req, r
     });
 
     await prod.save();
+    invalidateProductsCache();
     res.status(201).json(prod);
 
     // 🔔 Notify all users about the new arrival
@@ -337,6 +356,7 @@ router.put("/reorder", adminProtect, isAdmin, async (req, res) => {
     }));
 
     await Product.bulkWrite(bulkOps);
+    invalidateProductsCache();
     res.json({ ok: true, message: "Order updated!" });
   } catch (err) {
     res.status(500).json({ message: "Failed to reorder" });
@@ -436,6 +456,7 @@ router.put("/:id", adminProtect, isAdmin, upload.array("images", 5), async (req,
 
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
+    invalidateProductsCache();
     res.json(prod);
 
     // 🔔 Notify all users about the update (for testing/marketing)
@@ -465,6 +486,7 @@ router.delete("/:id", adminProtect, isAdmin, async (req, res) => {
   try {
     const prod = await Product.findByIdAndDelete(req.params.id);
     if (!prod) return res.status(404).json({ message: "Product not found" });
+    invalidateProductsCache();
     res.json({ message: "Deleted" });
   } catch (err) {
     res.status(400).json({ message: "Invalid ID" });
