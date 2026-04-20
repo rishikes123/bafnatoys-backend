@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const compression = require("compression");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -43,6 +44,9 @@ app.set("io", io); // ✅ Shared for real-time setting updates
 
 /* ------------------------- CONNECT DATABASE ------------------------- */
 connectDB();
+
+/* --------------------------- COMPRESSION ---------------------------- */
+app.use(compression());
 
 /* --------------------------- CORS CONFIG ---------------------------- */
 app.use(
