@@ -117,6 +117,9 @@ app.use("/api/grid-layout", require("./routes/gridLayoutRoutes"));
 // ✅ CHATBOT ROUTE ADDED HERE
 app.use("/api/chatbot", require("./routes/chatbotRoutes"));
 
+// ✅ ABANDONED CART (cart recovery via WhatsApp)
+app.use("/api/abandoned-cart", require("./routes/abandonedCartRoutes"));
+
 app.use("/", require("./routes/sitemap"));
 
 /* ====================================================================
