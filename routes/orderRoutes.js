@@ -58,6 +58,40 @@ router.get("/analytics/top-selling", async (req, res) => {
       },
       { $sort: { totalSold: -1 } },
       { $limit: 5 },
+      // ✅ Lookup current product to pull the latest image (ImageKit)
+      {
+        $lookup: {
+          from: "products",
+          localField: "_id",
+          foreignField: "_id",
+          as: "product",
+        },
+      },
+      {
+        $addFields: {
+          // Prefer the current product's first image; fallback to snapshot
+          image: {
+            $let: {
+              vars: {
+                prodImages: { $arrayElemAt: ["$product.images", 0] },
+              },
+              in: {
+                $ifNull: [
+                  { $arrayElemAt: ["$$prodImages", 0] },
+                  "$image",
+                ],
+              },
+            },
+          },
+          name: {
+            $ifNull: [
+              { $arrayElemAt: ["$product.name", 0] },
+              "$name",
+            ],
+          },
+        },
+      },
+      { $project: { product: 0 } },
     ]);
 
     res.json(topProducts);
