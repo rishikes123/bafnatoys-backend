@@ -42,8 +42,6 @@ io.on("connection", (socket) => {
 
 app.set("io", io); // ✅ Shared for real-time setting updates
 
-/* ------------------------- CONNECT DATABASE ------------------------- */
-connectDB();
 
 /* --------------------------- COMPRESSION ---------------------------- */
 app.use(compression());
@@ -243,6 +241,16 @@ app.use(errorHandler);
 /* -------------------------- START SERVER ----------------------------- */
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT} with Real-time Sockets`);
-});
+const startServer = async () => {
+  try {
+    await connectDB();
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server running on port ${PORT} with Real-time Sockets`);
+    });
+  } catch (error) {
+    console.error("❌ Failed to start server:", error.message);
+    process.exit(1);
+  }
+};
+
+startServer();
