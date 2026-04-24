@@ -118,6 +118,9 @@ app.use("/api/chatbot", require("./routes/chatbotRoutes"));
 // ✅ ABANDONED CART (cart recovery via WhatsApp)
 app.use("/api/abandoned-cart", require("./routes/abandonedCartRoutes"));
 
+// ✅ BULK WHATSAPP CAMPAIGNS (broadcast to customers / excel upload)
+app.use("/api/campaigns", require("./routes/campaignRoutes"));
+
 app.use("/", require("./routes/sitemap"));
 
 /* ====================================================================

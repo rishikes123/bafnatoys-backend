@@ -20,24 +20,52 @@ const headers = () => ({
 });
 
 /* ---------------------------------------------------------------
-   1. WALLET BALANCE
+   1. WALLET BALANCE — try multiple endpoints (classic + Delhivery One)
    --------------------------------------------------------------- */
 async function getWalletBalance() {
-  // Note: Delhivery doesn't publish an official wallet API in their public
-  // docs. Some B2B accounts use this endpoint. We try it; on failure we
-  // return null so the UI can gracefully hide the card.
-  try {
-    const url = `${BASE}/api/account/balance.json`;
-    const { data } = await axios.get(url, { headers: headers(), timeout: 10000 });
-    return { ok: true, balance: data?.balance ?? data?.wallet_balance ?? null, raw: data };
-  } catch (err) {
-    return {
-      ok: false,
-      message:
-        "Wallet balance API not enabled for this account. Check Delhivery dashboard manually.",
-      error: err?.response?.data || err.message,
-    };
+  // Delhivery has multiple possible wallet endpoints depending on account type:
+  //  (a) Classic API:     /api/account/balance.json
+  //  (b) Delhivery One:   /api/finances/unified/balance
+  //  (c) B2B CMU:         /api/cmu/account/balance.json
+  const endpoints = [
+    `${BASE}/api/account/balance.json`,
+    `${BASE}/api/finances/unified/balance`,
+    `${BASE}/api/cmu/account/balance.json`,
+    `https://one.delhivery.com/api/finances/unified/balance`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const { data } = await axios.get(url, { headers: headers(), timeout: 10000 });
+      const balance =
+        data?.balance ??
+        data?.wallet_balance ??
+        data?.current_balance ??
+        data?.data?.balance ??
+        data?.data?.current_balance ??
+        null;
+      if (balance !== null && balance !== undefined) {
+        return {
+          ok: true,
+          balance: Number(balance),
+          totalCredit:
+            Number(data?.total_credit ?? data?.data?.total_credit ?? 0) || null,
+          totalDebit:
+            Number(data?.total_debit ?? data?.data?.total_debit ?? 0) || null,
+          endpoint: url,
+          raw: data,
+        };
+      }
+    } catch (_err) {
+      // try next endpoint
+    }
   }
+
+  return {
+    ok: false,
+    message:
+      "Wallet balance API not enabled on any Delhivery endpoint for this account. Upload CSV ledger to view wallet data.",
+  };
 }
 
 /* ---------------------------------------------------------------
@@ -146,23 +174,54 @@ async function ndrAction({ waybill, act = "RE-ATTEMPT" }) {
    7. WALLET TRANSACTION HISTORY (recharges + debits)
    --------------------------------------------------------------- */
 async function getWalletTransactions({ from, to, limit = 100 } = {}) {
-  // Delhivery exposes this via the CMU panel. Not all accounts have it.
+  // Try multiple endpoints in order — first one that succeeds wins.
   const params = new URLSearchParams();
   if (from) params.append("from", from);
   if (to) params.append("to", to);
   if (limit) params.append("limit", limit);
+  const qs = params.toString();
 
-  // Try the public transactions endpoint
-  const url = `${BASE}/api/cmu/account/recharge-transaction.json?${params.toString()}`;
-  try {
-    const { data } = await axios.get(url, { headers: headers(), timeout: 15000 });
-    return { ok: true, data };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err?.response?.data || err.message,
-    };
+  // Also try Delhivery One's unified date format (ISO)
+  const isoParams = new URLSearchParams();
+  if (from) isoParams.append("from_date", new Date(from * 1000).toISOString().slice(0, 10));
+  if (to) isoParams.append("to_date", new Date(to * 1000).toISOString().slice(0, 10));
+  if (limit) isoParams.append("limit", limit);
+  const isoQs = isoParams.toString();
+
+  const endpoints = [
+    `${BASE}/api/cmu/account/recharge-transaction.json?${qs}`,
+    `${BASE}/api/finances/unified/transactions?${isoQs}`,
+    `${BASE}/api/finances/unified/ledger?${isoQs}`,
+    `https://one.delhivery.com/api/finances/unified/transactions?${isoQs}`,
+  ];
+
+  const attempts = [];
+  for (const url of endpoints) {
+    try {
+      const { data } = await axios.get(url, { headers: headers(), timeout: 15000 });
+      // Check if data actually has transactions (not just an empty OK)
+      const list =
+        data?.data ||
+        data?.transactions ||
+        data?.results ||
+        (Array.isArray(data) ? data : null);
+      if (list && (Array.isArray(list) ? list.length : true)) {
+        return { ok: true, data, endpoint: url };
+      }
+      attempts.push({ url, status: "empty" });
+    } catch (err) {
+      attempts.push({
+        url,
+        status: err?.response?.status || "network",
+      });
+    }
   }
+
+  return {
+    ok: false,
+    error: "No Delhivery wallet transaction endpoint returned data for this account.",
+    attempts,
+  };
 }
 
 /* ---------------------------------------------------------------
