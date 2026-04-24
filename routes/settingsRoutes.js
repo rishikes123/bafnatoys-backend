@@ -74,6 +74,34 @@ router.put("/maintenance", adminProtect, isAdmin, async (req, res) => {
   }
 });
 
+/* ================= FORCE LOGIN WALL ================= */
+
+router.get("/force-login", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "force-login" });
+    if (!setting) {
+      setting = await Setting.create({ key: "force-login", data: { enabled: false } });
+    }
+    res.json(setting.data);
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/force-login", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const setting = await Setting.findOneAndUpdate(
+      { key: "force-login" },
+      { $set: { key: "force-login", data: { enabled: Boolean(enabled) } } },
+      { upsert: true, new: true }
+    );
+    res.json(setting.data);
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
 /* ================= PRODUCT REVIEWS SETTINGS ================= */
 
 router.get("/reviews", async (req, res) => {
