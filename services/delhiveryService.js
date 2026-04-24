@@ -142,8 +142,43 @@ async function ndrAction({ waybill, act = "RE-ATTEMPT" }) {
   return data;
 }
 
+/* ---------------------------------------------------------------
+   7. WALLET TRANSACTION HISTORY (recharges + debits)
+   --------------------------------------------------------------- */
+async function getWalletTransactions({ from, to, limit = 100 } = {}) {
+  // Delhivery exposes this via the CMU panel. Not all accounts have it.
+  const params = new URLSearchParams();
+  if (from) params.append("from", from);
+  if (to) params.append("to", to);
+  if (limit) params.append("limit", limit);
+
+  // Try the public transactions endpoint
+  const url = `${BASE}/api/cmu/account/recharge-transaction.json?${params.toString()}`;
+  try {
+    const { data } = await axios.get(url, { headers: headers(), timeout: 15000 });
+    return { ok: true, data };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err?.response?.data || err.message,
+    };
+  }
+}
+
+/* ---------------------------------------------------------------
+   8. PER-SHIPMENT CHARGES — compute from rate API for each AWB
+   (used to build a computed transaction ledger from Orders table)
+   --------------------------------------------------------------- */
+async function getShipmentCharges(awbs = []) {
+  // Fetch tracking data which includes ChargedWeight + origin/destination
+  const tracking = await trackMultiple(awbs);
+  return tracking?.ShipmentData || [];
+}
+
 module.exports = {
   getWalletBalance,
+  getWalletTransactions,
+  getShipmentCharges,
   trackPackage,
   trackMultiple,
   checkPincode,

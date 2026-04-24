@@ -362,7 +362,111 @@ exports.ndrAction = async (req, res) => {
 };
 
 /* ---------------------------------------------------------------
-   9. QUICK STATS — dashboard summary cards
+   9. TRANSACTIONS — wallet recharge/debit history from Delhivery
+       + computed per-shipment ledger from our DB
+   --------------------------------------------------------------- */
+exports.transactions = async (req, res) => {
+  try {
+    const { from, to, days = 30 } = req.query;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const fromTs = from ? parseInt(from) : nowSec - parseInt(days) * 86400;
+    const toTs = to ? parseInt(to) : nowSec;
+
+    // 1. Try Delhivery's live wallet transactions API
+    const walletResp = await svc.getWalletTransactions({ from: fromTs, to: toTs, limit: 200 });
+
+    // Normalize Delhivery response → common txn format
+    let walletTxns = [];
+    if (walletResp.ok && walletResp.data) {
+      const raw = walletResp.data;
+      const list =
+        raw?.data ||
+        raw?.transactions ||
+        raw?.results ||
+        (Array.isArray(raw) ? raw : []);
+
+      walletTxns = (list || []).map((t) => ({
+        source: "delhivery_wallet",
+        id: t.id || t.transaction_id || t.txn_id || "",
+        date: t.created_at || t.date || t.txn_date || null,
+        type: (t.type || t.transaction_type || "").toUpperCase(), // RECHARGE/DEBIT/REFUND
+        amount: Number(t.amount) || 0,
+        balance: t.closing_balance ?? t.balance ?? null,
+        description: t.description || t.remarks || t.narration || "",
+        awb: t.waybill || t.awb || "",
+        raw: t,
+      }));
+    }
+
+    // 2. ALWAYS compute a per-shipment ledger from our orders
+    //    (works even if wallet API is blocked for this account)
+    const Order = require("../models/orderModel");
+    const orders = await Order.find({
+      trackingId: { $ne: "" },
+      createdAt: { $gte: new Date(fromTs * 1000) },
+    })
+      .select(
+        "orderNumber trackingId total paymentMode shippingAddress shippingPrice createdAt"
+      )
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .lean();
+
+    // For each order, use our stored shippingPrice as debit estimate
+    const computedTxns = orders.map((o) => ({
+      source: "computed_shipment",
+      id: o.trackingId,
+      date: o.createdAt,
+      type: "DEBIT",
+      amount: Number(o.shippingPrice) || 0, // what we charged the customer
+      description: `Shipment for #${o.orderNumber}`,
+      awb: o.trackingId,
+      orderNumber: o.orderNumber,
+      paymentMode: o.paymentMode,
+      orderTotal: o.total,
+      destination: `${o.shippingAddress?.city || ""}, ${o.shippingAddress?.pincode || ""}`,
+    }));
+
+    // Summary
+    const walletDebit = walletTxns
+      .filter((t) => t.type === "DEBIT" || t.type === "SHIPMENT_CHARGE")
+      .reduce((s, t) => s + t.amount, 0);
+    const walletCredit = walletTxns
+      .filter((t) => t.type === "RECHARGE" || t.type === "CREDIT" || t.type === "REFUND")
+      .reduce((s, t) => s + t.amount, 0);
+
+    const computedDebit = computedTxns.reduce((s, t) => s + t.amount, 0);
+    const shipmentCount = computedTxns.length;
+
+    res.json({
+      walletAvailable: walletResp.ok,
+      walletMessage: walletResp.ok
+        ? null
+        : "Live wallet transaction API not enabled for this account.",
+      range: {
+        fromTs,
+        toTs,
+        days: Math.ceil((toTs - fromTs) / 86400),
+      },
+      summary: {
+        walletDebit,
+        walletCredit,
+        computedDebit,
+        shipmentCount,
+        netOutflow: walletDebit || computedDebit,
+      },
+      walletTxns,
+      computedTxns,
+    });
+  } catch (err) {
+    console.error("delhivery/transactions error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
+  }
+};
+
+/* ---------------------------------------------------------------
+   10. QUICK STATS — dashboard summary cards
    --------------------------------------------------------------- */
 exports.stats = async (_req, res) => {
   try {

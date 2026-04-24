@@ -37,4 +37,7 @@ router.get("/delhivery/ndr", adminProtect, dh.ndrList);
 // NDR action (re-attempt / RTO / defer)
 router.post("/delhivery/ndr-action/:awb", adminProtect, dh.ndrAction);
 
+// Wallet transactions + per-shipment ledger
+router.get("/delhivery/transactions", adminProtect, dh.transactions);
+
 module.exports = router;
