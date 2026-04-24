@@ -3,6 +3,11 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
 const Registration = require("../models/Registration");
+const Order = require("../models/orderModel");
+const AbandonedCart = require("../models/AbandonedCart");
+const Review = require("../models/Review");
+const Product = require("../models/Product");
+const Visitor = require("../models/Visitor");
 const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 // ADMIN LOGIN (public - no auth needed)
@@ -65,6 +70,42 @@ router.patch("/approve/:id", adminProtect, isAdmin, async (req, res) => {
     res.json({ message: "User approved", user });
   } catch (err) {
     res.status(500).json({ message: "Approval failed" });
+  }
+});
+
+// GET summary counts for sidebar notifications (admin only)
+router.get("/summary", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const [
+      pendingOrders,
+      pendingReturns,
+      unapprovedCustomers,
+      activeAbandonedCarts,
+      lowStock,
+      visitorsToday,
+      newReviewsToday
+    ] = await Promise.all([
+      Order.countDocuments({ status: "pending" }),
+      Order.countDocuments({ "returnRequest.isRequested": true, "returnRequest.status": "Pending" }),
+      Registration.countDocuments({ isApproved: false }),
+      AbandonedCart.countDocuments({ status: "active" }),
+      Product.countDocuments({ stock: { $lte: 5 } }),
+      Visitor.findOne({ date: today }).then(v => v ? v.count : 0),
+      Review.countDocuments({ createdAt: { $gte: new Date(today) } })
+    ]);
+
+    res.json({
+      pendingOrders,
+      pendingReturns,
+      unapprovedCustomers,
+      activeAbandonedCarts,
+      lowStock,
+      visitorsToday,
+      newReviewsToday
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Summary failed" });
   }
 });
 
