@@ -7,7 +7,8 @@ const Product = require("../models/Product");
 
 // ✅ Notification Service
 const { sendPushNotification } = require("../services/notificationService");
-const { sendWhatsAppTemplate } = require("../services/whatsappService"); 
+const { sendWhatsAppTemplate } = require("../services/whatsappService");
+const { notifyAdminNewOrder } = require("../services/adminNotifyService");
 const Registration = require("../models/Registration");
 
 // ✅ Phone sanitizer (India)
@@ -307,6 +308,15 @@ router.post("/", async (req, res) => {
         });
       }
     }
+
+    // ============================================
+    // 2. ADMIN NEW-ORDER ALERT (WhatsApp + Email)
+    // ============================================
+    // Fire-and-forget — admin notification failure should NEVER block
+    // the customer's order response. Errors are logged inside the service.
+    notifyAdminNewOrder(populatedOrder).catch((e) =>
+      console.error("Admin notify error:", e?.message)
+    );
 
     // ✅ FIXED: Sending the response AFTER WhatsApp execution is complete!
     res.status(201).json({ order: populatedOrder });
