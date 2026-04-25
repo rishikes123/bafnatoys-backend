@@ -45,35 +45,76 @@ async function notifyAdminWhatsApp(order) {
 
   const orderNumber = order?.orderNumber || "";
   const total = order?.total != null ? String(order.total) : "0";
+  const paymentMode = order?.paymentMode || "—";
+  const customerPhone =
+    order?.customerId?.whatsapp ||
+    order?.customerId?.otpMobile ||
+    order?.shippingAddress?.phone ||
+    "—";
 
-  // Reuse the already-approved Utility template `order_confirmed_new`.
-  // Variables: {{1}} = shopName, {{2}} = orderNumber, {{3}} = total
-  const templateName = process.env.WA_ADMIN_ORDER_TEMPLATE || "order_confirmed_new";
+  // Primary: dedicated 5-var admin template `admin_new_order_alert`.
+  // Fallback: 3-var customer template `order_confirmed_new` (legacy, but
+  // we PREFIX shopName with "🔔 ADMIN ALERT" so admins can tell it apart
+  // from a regular customer order confirmation while the new template
+  // is still in review at Meta).
+  const primaryTemplate =
+    process.env.WA_ADMIN_ORDER_TEMPLATE || "admin_new_order_alert";
+  const fallbackTemplate = "order_confirmed_new";
+
+  const adminParams = [
+    { type: "text", text: String(shopName) },
+    { type: "text", text: String(orderNumber) },
+    { type: "text", text: String(total) },
+    { type: "text", text: String(paymentMode) },
+    { type: "text", text: String(customerPhone) },
+  ];
+  // For fallback, prepend "🔔 ADMIN" to shopName so admin doesn't confuse
+  // it with a customer copy.
+  const fallbackParams = [
+    { type: "text", text: `🔔 ADMIN — ${shopName}` },
+    { type: "text", text: String(orderNumber) },
+    { type: "text", text: String(total) },
+  ];
 
   for (const raw of numbers) {
     const to = sanitizeAdminPhone(raw);
     if (!to) continue;
 
+    // Try primary admin template first
     try {
       await sendWhatsAppTemplate({
         to,
-        templateName,
+        templateName: primaryTemplate,
         languageCode: "en_US",
-        components: [
-          {
-            type: "body",
-            parameters: [
-              { type: "text", text: String(shopName) },
-              { type: "text", text: String(orderNumber) },
-              { type: "text", text: String(total) },
-            ],
-          },
-        ],
+        components: [{ type: "body", parameters: adminParams }],
       });
-      console.log(`✅ Admin WhatsApp alert sent to ${to} for order ${orderNumber}`);
+      console.log(
+        `✅ Admin WhatsApp alert sent to ${to} for order ${orderNumber} (template: ${primaryTemplate})`
+      );
+      continue; // success, next admin
     } catch (err) {
       const detail = err?.response?.data?.error?.message || err.message;
-      console.error(`❌ Admin WhatsApp alert failed for ${to}:`, detail);
+      console.warn(
+        `⚠️  Primary admin template "${primaryTemplate}" failed for ${to} — falling back. Reason: ${detail}`
+      );
+    }
+
+    // Fallback to legacy template with "ADMIN" prefix
+    try {
+      await sendWhatsAppTemplate({
+        to,
+        templateName: fallbackTemplate,
+        languageCode: "en_US",
+        components: [{ type: "body", parameters: fallbackParams }],
+      });
+      console.log(
+        `✅ Admin WhatsApp alert sent to ${to} via FALLBACK template (${fallbackTemplate})`
+      );
+    } catch (err2) {
+      const detail = err2?.response?.data?.error?.message || err2.message;
+      console.error(
+        `❌ Admin WhatsApp alert FAILED on both templates for ${to}: ${detail}`
+      );
     }
   }
 }
