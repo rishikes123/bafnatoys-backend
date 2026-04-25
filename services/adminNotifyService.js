@@ -52,13 +52,15 @@ async function notifyAdminWhatsApp(order) {
     order?.shippingAddress?.phone ||
     "—";
 
-  // Primary: dedicated 5-var admin template `admin_new_order_alert`.
+  // Primary: dedicated 5-var admin template `_adminn_whatsapp_alert_sent`.
+  // (Original name `admin_new_order_alert` was replaced by user — old one
+  // had hardcoded values, new one has proper {{1}}..{{5}} placeholders.)
   // Fallback: 3-var customer template `order_confirmed_new` (legacy, but
   // we PREFIX shopName with "🔔 ADMIN ALERT" so admins can tell it apart
   // from a regular customer order confirmation while the new template
   // is still in review at Meta).
   const primaryTemplate =
-    process.env.WA_ADMIN_ORDER_TEMPLATE || "admin_new_order_alert";
+    process.env.WA_ADMIN_ORDER_TEMPLATE || "_adminn_whatsapp_alert_sent";
   const fallbackTemplate = "order_confirmed_new";
 
   const adminParams = [
@@ -68,12 +70,11 @@ async function notifyAdminWhatsApp(order) {
     { type: "text", text: String(paymentMode) },
     { type: "text", text: String(customerPhone) },
   ];
-  // For fallback, prepend "🔔 ADMIN" to shopName so admin doesn't confuse
-  // it with a customer copy.
+  // For fallback, pack more info into the 3 slots available in `order_confirmed_new`.
   const fallbackParams = [
-    { type: "text", text: `🔔 ADMIN — ${shopName}` },
+    { type: "text", text: `🔔 ADMIN — ${shopName} (${customerPhone})` },
     { type: "text", text: String(orderNumber) },
-    { type: "text", text: String(total) },
+    { type: "text", text: `₹${total} (${paymentMode})` },
   ];
 
   for (const raw of numbers) {
