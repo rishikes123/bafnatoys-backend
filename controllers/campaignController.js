@@ -52,7 +52,12 @@ function buildComponents({ bodyVariables = [], headerType = "none", headerValue 
   if (bodyVariables && bodyVariables.length > 0) {
     comps.push({
       type: "body",
-      parameters: bodyVariables.map((v) => ({ type: "text", text: String(v ?? "") })),
+      // Replace any empty value with a single space — Meta rejects literally
+      // empty parameters but accepts " " gracefully.
+      parameters: bodyVariables.map((v) => ({
+        type: "text",
+        text: String(v ?? "").trim() || " ",
+      })),
     });
   }
 
@@ -197,6 +202,74 @@ async function runCampaign(campaignId) {
 }
 
 /* ---------------- REST endpoints ---------------- */
+
+// POST /api/campaigns/test-send
+// Sends a single template message to one number and returns the EXACT Meta
+// response (or error) so admins can debug template / variable issues
+// without launching a real campaign.
+// body: { phone, templateName, languageCode, bodyVariables[], headerType, headerValue }
+exports.testSend = async (req, res) => {
+  try {
+    const {
+      phone,
+      templateName,
+      languageCode = "en_US",
+      bodyVariables = [],
+      headerType = "none",
+      headerValue = "",
+    } = req.body || {};
+
+    if (!phone || !templateName) {
+      return res
+        .status(400)
+        .json({ success: false, message: "phone and templateName required" });
+    }
+
+    const to = normalizePhone(phone);
+    if (!to) {
+      return res.status(400).json({ success: false, message: "Invalid phone number" });
+    }
+
+    const components = buildComponents({
+      bodyVariables: Array.isArray(bodyVariables) ? bodyVariables : [],
+      headerType,
+      headerValue,
+    });
+
+    try {
+      const resp = await sendWhatsAppTemplate({
+        to,
+        templateName,
+        languageCode,
+        components,
+      });
+      return res.json({
+        success: true,
+        to,
+        messageId: resp?.messages?.[0]?.id || "",
+        sentPayload: { templateName, languageCode, components },
+        metaResponse: resp,
+      });
+    } catch (err) {
+      const meta = err?.response?.data;
+      const errMsg =
+        meta?.error?.message || err?.message || "send failed";
+      return res.status(200).json({
+        success: false,
+        to,
+        error: errMsg,
+        errorCode: meta?.error?.code,
+        errorSubcode: meta?.error?.error_subcode,
+        errorDetails: meta?.error?.error_data?.details,
+        sentPayload: { templateName, languageCode, components },
+        metaError: meta || null,
+      });
+    }
+  } catch (err) {
+    console.error("testSend error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 // GET /api/campaigns/preview?audienceType=all
 exports.previewAudience = async (req, res) => {

@@ -49,6 +49,9 @@ router.post(
 // Preview audience count
 router.get("/preview", adminProtect, isAdmin, ctrl.previewAudience);
 
+// Send a single test message — returns Meta's actual response/error inline
+router.post("/test-send", adminProtect, isAdmin, ctrl.testSend);
+
 // Product helper (for building variables with link)
 router.get("/product-link/:id", adminProtect, isAdmin, ctrl.getProductLink);
 
