@@ -393,6 +393,43 @@ exports.refundPayment = async (req, res) => {
 };
 
 /* ========================================================================
+   DEBUG — Test Delhivery rate API response (admin only)
+   GET /api/payments/admin/debug-delhivery-rate?pin=600001&isCOD=true&total=500
+   ======================================================================== */
+exports.debugDelhiveryRate = async (req, res) => {
+  try {
+    const svc = require("../services/delhiveryService");
+    const { pin = "600001", isCOD = "false", total = "500", cgm = "500" } = req.query;
+    const o_pin = process.env.DELHIVERY_WAREHOUSE_PINCODE || "641001";
+
+    const raw = await svc.getShippingRate({
+      o_pin,
+      d_pin: pin,
+      cgm: parseInt(cgm),
+      pt: isCOD === "true" ? "COD" : "Pre-paid",
+      cod: isCOD === "true" ? parseFloat(total) : 0,
+      md: "E",
+    });
+
+    res.json({
+      o_pin,
+      d_pin: pin,
+      isCOD: isCOD === "true",
+      cgm: parseInt(cgm),
+      rawResponse: raw,
+      type: Array.isArray(raw) ? "array" : typeof raw,
+      length: Array.isArray(raw) ? raw.length : null,
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err?.response?.data || err.message,
+      status: err?.response?.status,
+      message: "Delhivery rate API failed",
+    });
+  }
+};
+
+/* ========================================================================
    FINANCE REPORT — Razorpay + Delhivery combined per-order view
    GET /api/payments/admin/finance-report
    Query: page, limit, from (yyyy-mm-dd), to (yyyy-mm-dd), paymentMode
@@ -515,7 +552,7 @@ exports.financeReport = async (req, res) => {
             lastUpdate:    s.Status?.StatusDateTime || null,
             location:      s.Status?.StatusLocation || "",
             expectedDate:  s.ExpectedDeliveryDate || null,
-            chargedWeight: s.ChargedWeight || 0,
+            chargedWeight: s.ChargedWeight || s.ActualWeight || s.Weight || s.chargedWeight || 0,
             origin:        s.Origin || "",
             destination:   s.Destination || "",
           };
@@ -529,8 +566,30 @@ exports.financeReport = async (req, res) => {
     let delChargeMap = {};
     try {
       delChargeMap = await svc.getActualChargesForOrders(orders, liveMap);
+      const filled = Object.keys(delChargeMap).length;
+      const attempted = orders.filter((o) => o.trackingId && o.shippingAddress?.pincode).length;
+      console.log(`[financeReport] Delhivery rate API: ${filled}/${attempted} charges fetched`);
+      if (filled === 0 && attempted > 0) {
+        // Log a sample to debug rate API response format
+        const sample = orders.find((o) => o.trackingId && o.shippingAddress?.pincode);
+        if (sample) {
+          try {
+            const raw = await svc.getShippingRate({
+              o_pin: process.env.DELHIVERY_WAREHOUSE_PINCODE || "641001",
+              d_pin: sample.shippingAddress.pincode,
+              cgm: 500,
+              pt: sample.paymentMode === "COD" ? "COD" : "Pre-paid",
+              cod: sample.paymentMode === "COD" ? sample.total : 0,
+              md: "E",
+            });
+            console.log("[financeReport] Delhivery rate API sample response:", JSON.stringify(raw).slice(0, 500));
+          } catch (sampleErr) {
+            console.warn("[financeReport] Delhivery rate API sample failed:", sampleErr?.response?.status, sampleErr?.response?.data || sampleErr.message);
+          }
+        }
+      }
     } catch (_e) {
-      // non-fatal — continue without actual charges
+      console.warn("[financeReport] getActualChargesForOrders failed:", _e.message);
     }
 
     // ── 5. Build report rows ─────────────────────────────────────

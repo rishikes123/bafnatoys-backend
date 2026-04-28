@@ -86,7 +86,7 @@ exports.listShipments = async (req, res) => {
             expectedDate: s.ExpectedDeliveryDate || null,
             originCity: s.Origin || "",
             destCity: s.Destination || "",
-            weight: s.ChargedWeight || 0,
+            weight: s.ChargedWeight || s.ActualWeight || s.Weight || s.chargedWeight || 0,
           };
         });
       } catch {

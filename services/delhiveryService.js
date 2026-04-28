@@ -240,41 +240,96 @@ async function getShipmentCharges(awbs = []) {
 async function getActualChargesForOrders(orders = [], trackingLiveMap = {}) {
   const o_pin = process.env.DELHIVERY_WAREHOUSE_PINCODE || "641001";
 
+  // Parse Delhivery rate API response — handles array, object, nested, and all field name variants
   const parseRate = (r) => {
     if (!r) return null;
-    const data = Array.isArray(r) ? r[0] : r;
-    if (!data) return null;
-    return {
-      freightCharge: Number(data.gross_amount ?? data.freight_charge ?? data.total_amount ?? 0),
-      codCharge:     Number(data.cod_charges  ?? data.cod_charge     ?? 0),
-      totalCharge:   Number(data.total_amount ?? data.gross_amount   ?? 0),
-      zone:          data.zone || "",
-      chargedWeight: Number(data.charged_weight ?? 0),
-    };
+
+    let zone = "";
+    let chargedWeight = 0;
+
+    // Array format: [{ name, charge, gross_amount, ... }, ...]
+    // Sum ALL non-COD, non-tax items for freight total (includes fuel surcharge, handling, ODA, etc.)
+    if (Array.isArray(r)) {
+      if (!r.length) return null;
+      let freightTotal = 0;
+      let codFee = 0;
+      for (const item of r) {
+        const name = (item.name || item.charge_type || "").toLowerCase();
+        const amount = Number(item.charge ?? item.gross_amount ?? 0);
+        if (/gst|tax|igst|cgst|sgst/i.test(name)) continue; // skip taxes
+        if (/cod/i.test(name)) {
+          codFee += amount;
+        } else {
+          freightTotal += amount;
+        }
+        if (!zone && (item.zone || item.Zone)) zone = item.zone || item.Zone;
+        if (!chargedWeight && (item.charged_weight || item.ChargedWeight)) {
+          chargedWeight = Number(item.charged_weight || item.ChargedWeight);
+        }
+      }
+      // Fallback: if summing gave 0, try gross_amount on first item
+      if (freightTotal === 0) {
+        freightTotal = Number(r[0].gross_amount ?? r[0].total_amount ?? 0);
+      }
+      return { freightCharge: freightTotal, codCharge: codFee, totalCharge: freightTotal + codFee, zone, chargedWeight };
+    }
+
+    // Object format: { freight_charge, gross_amount, cod_charges, ... }
+    const data = r;
+    zone = data.zone || data.Zone || "";
+    chargedWeight = Number(data.charged_weight ?? data.ChargedWeight ?? 0);
+
+    // gross_amount = freight + fuel surcharge + other charges (excl. COD and GST)
+    const freight = Number(
+      data.gross_amount ??
+      data.freight_charge ??
+      data.charge ??
+      data.total_amount ??
+      data.FreightCharge ??
+      0
+    );
+    const codFee = Number(
+      data.cod_charges ??
+      data.cod_charge ??
+      data.CodCharge ??
+      data.cod_fee ??
+      0
+    );
+    const totalCharge = Number(data.total_amount ?? 0) || (freight + codFee);
+
+    return { freightCharge: freight, codCharge: codFee, totalCharge, zone, chargedWeight };
   };
 
+  // Only require trackingId + valid destination pincode — live tracking data is optional
   const tasks = orders
-    .filter((o) => o.trackingId && trackingLiveMap[o.trackingId])
+    .filter((o) => o.trackingId && o.shippingAddress?.pincode)
     .map(async (o) => {
-      const live      = trackingLiveMap[o.trackingId];
-      const d_pin     = o.shippingAddress?.pincode;
-      if (!d_pin || !/^\d{6}$/.test(d_pin)) return null;
+      const d_pin = String(o.shippingAddress.pincode).trim();
+      if (!/^\d{6}$/.test(d_pin)) return null;
 
-      // ChargedWeight from Delhivery tracking (in kg) → convert to grams
-      const cgm = live.chargedWeight
-        ? Math.round(live.chargedWeight * 1000)
-        : 500;
+      // Use chargedWeight from live tracking if available (kg → grams), else 500g default
+      const live = trackingLiveMap[o.trackingId] || null;
+      const cgm  = live?.chargedWeight ? Math.round(live.chargedWeight * 1000) : 500;
 
       const isCOD = o.paymentMode === "COD";
       const pt    = isCOD ? "COD" : "Pre-paid";
-      const cod   = isCOD ? o.total : 0;
+      const cod   = isCOD ? (o.total || 0) : 0;
 
       try {
         const result = await getShippingRate({ o_pin, d_pin, cgm, pt, cod, md: "E" });
         const parsed = parseRate(result);
         if (!parsed) return null;
         return { awb: o.trackingId, ...parsed };
-      } catch (_e) {
+      } catch (err) {
+        // Log rate API errors to help diagnose issues
+        const status = err?.response?.status;
+        const body   = err?.response?.data;
+        if (status !== 404) {
+          console.warn(
+            `[Delhivery rate API] AWB=${o.trackingId} pin=${d_pin} → HTTP ${status || "network"}`,
+            body ? JSON.stringify(body).slice(0, 200) : err.message
+          );
+        }
         return null;
       }
     });
