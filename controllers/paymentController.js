@@ -399,29 +399,24 @@ exports.refundPayment = async (req, res) => {
    ======================================================================== */
 exports.financeReport = async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 25,
-      from,
-      to,
-      paymentMode,
-    } = req.query;
+    const svc = require("../services/delhiveryService");
+
+    const { page = 1, limit = 25, from, to, paymentMode } = req.query;
 
     const p = Math.max(1, parseInt(page));
     const l = Math.min(100, Math.max(1, parseInt(limit)));
     const skip = (p - 1) * l;
 
-    // Build date filter
-    const dateFilter = {};
-    if (from) dateFilter.$gte = new Date(from);
-    if (to) {
-      const toDate = new Date(to);
-      toDate.setHours(23, 59, 59, 999);
-      dateFilter.$lte = toDate;
-    }
+    // ── Date range ──────────────────────────────────────────────
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 90 * 86400 * 1000);
+    const toDate = to ? new Date(to) : new Date();
+    toDate.setHours(23, 59, 59, 999);
 
-    const filter = {};
-    if (Object.keys(dateFilter).length) filter.createdAt = dateFilter;
+    const fromTs = Math.floor(fromDate.getTime() / 1000); // unix seconds for Razorpay
+    const toTs   = Math.floor(toDate.getTime()   / 1000);
+
+    // ── 1. Fetch orders from DB ──────────────────────────────────
+    const filter = { createdAt: { $gte: fromDate, $lte: toDate } };
     if (paymentMode && paymentMode !== "ALL") filter.paymentMode = paymentMode;
 
     const [orders, total] = await Promise.all([
@@ -437,115 +432,159 @@ exports.financeReport = async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    // Fetch Razorpay data for ONLINE orders in parallel
-    const onlineOrders = orders.filter(
-      (o) => o.paymentMode === "ONLINE" && o.razorpayPaymentId
-    );
-    const rzpResults = await Promise.allSettled(
-      onlineOrders.map((o) => razorpayInstance.payments.fetch(o.razorpayPaymentId))
-    );
-    const rzpMap = {};
-    onlineOrders.forEach((o, i) => {
-      const r = rzpResults[i];
-      if (r.status === "fulfilled") {
-        const p = r.value;
-        rzpMap[o.razorpayPaymentId] = {
-          paymentId: p.id,
-          status: p.status,
-          amount: (p.amount || 0) / 100,
-          fee: (p.fee || 0) / 100,
-          tax: (p.tax || 0) / 100,
-          net: ((p.amount || 0) - (p.fee || 0)) / 100,
-          method: p.method,
-          amountRefunded: (p.amount_refunded || 0) / 100,
-        };
-      }
+    // ── 2. Fetch Razorpay payments for this date range ───────────
+    // Fetch up to 100 payments from Razorpay in the same window
+    let rzpPayments = [];
+    try {
+      const rzpResp = await razorpayInstance.payments.all({
+        from: fromTs,
+        to: toTs,
+        count: 100,
+      });
+      rzpPayments = (rzpResp?.items || []).filter(
+        (p) => p.status === "captured"
+      );
+    } catch (_e) {
+      // Razorpay fetch failed — continue without it
+    }
+
+    // Build lookup map: paymentId → rzp data
+    const rzpById = {};
+    rzpPayments.forEach((p) => {
+      rzpById[p.id] = p;
     });
 
-    // Build report rows
+    // For matching old orders (no razorpayPaymentId stored):
+    // index captured payments by amount-in-paise → array of candidates
+    const rzpByAmount = {};
+    rzpPayments.forEach((p) => {
+      const key = String(p.amount); // paise
+      if (!rzpByAmount[key]) rzpByAmount[key] = [];
+      rzpByAmount[key].push(p);
+    });
+
+    // Helper: find best Razorpay match for an order
+    const findRzpMatch = (order) => {
+      // 1. Exact match by stored paymentId
+      if (order.razorpayPaymentId && rzpById[order.razorpayPaymentId]) {
+        return rzpById[order.razorpayPaymentId];
+      }
+      // 2. Fallback: same amount + ONLINE + closest timestamp within 2 hours
+      if (order.paymentMode !== "ONLINE") return null;
+      const amtPaise = String(Math.round(order.total * 100));
+      const candidates = rzpByAmount[amtPaise] || [];
+      const orderTs = Math.floor(new Date(order.createdAt).getTime() / 1000);
+      let best = null, bestDiff = Infinity;
+      candidates.forEach((c) => {
+        const diff = Math.abs((c.created_at || 0) - orderTs);
+        if (diff < 7200 && diff < bestDiff) { // within 2 hours
+          best = c;
+          bestDiff = diff;
+        }
+      });
+      return best;
+    };
+
+    // ── 3. Fetch Delhivery live tracking ────────────────────────
+    const awbs = orders.map((o) => o.trackingId).filter(Boolean);
+    const liveMap = {};
+    if (awbs.length) {
+      try {
+        const tracking = await svc.trackMultiple(awbs);
+        (tracking?.ShipmentData || []).forEach((entry) => {
+          const s = entry?.Shipment;
+          if (!s) return;
+          liveMap[s.AWB] = {
+            liveStatus:    s.Status?.Status || "",
+            statusType:    s.Status?.StatusType || "",
+            lastUpdate:    s.Status?.StatusDateTime || null,
+            location:      s.Status?.StatusLocation || "",
+            expectedDate:  s.ExpectedDeliveryDate || null,
+            chargedWeight: s.ChargedWeight || 0,
+            origin:        s.Origin || "",
+            destination:   s.Destination || "",
+          };
+        });
+      } catch (_e) {
+        // Delhivery tracking failed — continue
+      }
+    }
+
+    // ── 4. Build report rows ─────────────────────────────────────
     const items = orders.map((o) => {
-      const rzp = o.razorpayPaymentId ? rzpMap[o.razorpayPaymentId] || null : null;
       const isCOD = o.paymentMode === "COD";
+      const rzpRaw = findRzpMatch(o);
 
-      // Money received
-      const received = isCOD
-        ? o.total  // Delhivery collects full amount for COD
-        : (rzp ? rzp.net : 0);
+      const rzp = rzpRaw
+        ? {
+            paymentId:      rzpRaw.id,
+            status:         rzpRaw.status,
+            amountReceived: (rzpRaw.amount || 0) / 100,
+            fee:            (rzpRaw.fee || 0) / 100,
+            gst:            (rzpRaw.tax || 0) / 100,
+            net:            ((rzpRaw.amount || 0) - (rzpRaw.fee || 0)) / 100,
+            method:         rzpRaw.method || "",
+            amountRefunded: (rzpRaw.amount_refunded || 0) / 100,
+          }
+        : null;
 
-      // Razorpay fees (only ONLINE)
-      const rzpFee = rzp ? rzp.fee : 0;
-      const rzpTax = rzp ? rzp.tax : 0;
-
-      // Shipping cost (what we charged customer)
+      const live      = o.trackingId ? liveMap[o.trackingId] || null : null;
+      const rzpFee    = rzp ? rzp.fee : 0;
+      const rzpTax    = rzp ? rzp.gst : 0;
       const shippingCharge = o.shippingPrice || 0;
+      const advancePaid    = o.advancePaid  || 0;
 
-      // COD: advance paid by customer at order time (if any)
-      const advancePaid = o.advancePaid || 0;
-
-      // Net receipt after all deductions
-      const netReceipt = isCOD
-        ? o.total - rzpFee  // COD: full amount minus nothing (no rzp fee)
-        : (rzp ? rzp.net : 0);
+      // Net receipt = what we actually get into bank
+      // ONLINE: Razorpay net (after fees)
+      // COD:    Full order amount (Delhivery collects & remits)
+      const netReceipt = isCOD ? o.total : (rzp ? rzp.net : 0);
 
       return {
-        orderNumber: o.orderNumber,
-        date: o.createdAt,
+        orderNumber:   o.orderNumber,
+        date:          o.createdAt,
         customer: {
-          name:
-            o.customerId?.firmName ||
-            o.customerId?.shopName ||
-            o.shippingAddress?.fullName ||
-            "—",
+          name:  o.customerId?.firmName || o.customerId?.shopName || o.shippingAddress?.fullName || "—",
           phone: o.customerId?.otpMobile || o.shippingAddress?.phone || "—",
-          city: o.shippingAddress?.city || "—",
+          city:  o.shippingAddress?.city  || "—",
           state: o.shippingAddress?.state || "—",
         },
-        paymentMode: o.paymentMode,
-        orderAmount: o.total,
-        itemsAmount: o.itemsPrice || 0,
+        paymentMode:   o.paymentMode,
+        orderAmount:   o.total,
+        itemsAmount:   o.itemsPrice || 0,
         shippingCharge,
-        status: o.status,
+        status:        o.status,
 
-        // Razorpay block
-        razorpay: rzp
-          ? {
-              paymentId: rzp.paymentId,
-              status: rzp.status,
-              amountReceived: rzp.amount,
-              fee: rzp.fee,
-              gst: rzp.tax,
-              net: rzp.net,
-              method: rzp.method,
-              amountRefunded: rzp.amountRefunded,
-            }
-          : null,
+        razorpay: rzp,
 
-        // Delhivery block
         delhivery: {
-          awb: o.trackingId || null,
+          awb:           o.trackingId || null,
           shippingCharge,
-          codAmount: isCOD ? o.total : 0,
-          advancePaid: isCOD ? advancePaid : 0,
-          deliveryStatus: o.status,
+          codAmount:     isCOD ? o.total : 0,
+          advancePaid:   isCOD ? advancePaid : 0,
+          liveStatus:    live?.liveStatus    || o.status,
+          statusType:    live?.statusType    || "",
+          lastUpdate:    live?.lastUpdate    || null,
+          location:      live?.location      || "",
+          expectedDate:  live?.expectedDate  || null,
+          chargedWeight: live?.chargedWeight || 0,
         },
 
-        // Summary
         netReceipt,
         rzpFee,
         rzpTax,
       };
     });
 
-    // Page-level totals
+    // ── 5. Page-level summary ────────────────────────────────────
     const summary = items.reduce(
       (acc, row) => {
-        acc.totalOrderAmount += row.orderAmount;
-        acc.totalRzpFee += row.rzpFee;
-        acc.totalRzpTax += row.rzpTax;
+        acc.totalOrderAmount  += row.orderAmount;
+        acc.totalRzpFee       += row.rzpFee;
+        acc.totalRzpTax       += row.rzpTax;
         acc.totalShippingCharge += row.shippingCharge;
-        acc.totalNetReceipt += row.netReceipt;
-        acc.onlineCount += row.paymentMode === "ONLINE" ? 1 : 0;
-        acc.codCount += row.paymentMode === "COD" ? 1 : 0;
+        acc.totalNetReceipt   += row.netReceipt;
+        acc.onlineCount       += row.paymentMode === "ONLINE" ? 1 : 0;
+        acc.codCount          += row.paymentMode === "COD"    ? 1 : 0;
         return acc;
       },
       {
@@ -559,14 +598,7 @@ exports.financeReport = async (req, res) => {
       }
     );
 
-    res.json({
-      items,
-      total,
-      page: p,
-      limit: l,
-      pages: Math.ceil(total / l),
-      summary,
-    });
+    res.json({ items, total, page: p, limit: l, pages: Math.ceil(total / l), summary });
   } catch (err) {
     console.error("financeReport error:", err);
     res.status(500).json({ message: err.message || "Server error" });
