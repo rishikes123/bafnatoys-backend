@@ -8,6 +8,7 @@ const {
   paymentStats,
   listSettlements,
   refundPayment,
+  financeReport,
 } = require("../controllers/paymentController");
 const { adminProtect } = require("../middleware/authMiddleware");
 
@@ -33,5 +34,8 @@ router.get("/admin/settlements", adminProtect, listSettlements);
 
 // Manual refund — partial or full
 router.post("/admin/refund/:paymentId", adminProtect, refundPayment);
+
+// Finance Report — Razorpay + Delhivery combined per-order view
+router.get("/admin/finance-report", adminProtect, financeReport);
 
 module.exports = router;

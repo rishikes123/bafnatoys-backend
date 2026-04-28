@@ -1,5 +1,6 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const Order = require("../models/orderModel");
 
 // Razorpay Initialization using your specific .env keys
 const razorpayInstance = new Razorpay({
@@ -112,10 +113,22 @@ exports.listTransactions = async (req, res) => {
       );
     }
 
+    // DB lookup: payment IDs se website order numbers dhundo
+    const paymentIds = items.map((p) => p.id).filter(Boolean);
+    const dbOrders = await Order.find(
+      { razorpayPaymentId: { $in: paymentIds } },
+      { razorpayPaymentId: 1, orderNumber: 1 }
+    ).lean();
+    const paymentToOrderNum = {};
+    dbOrders.forEach((o) => {
+      if (o.razorpayPaymentId) paymentToOrderNum[o.razorpayPaymentId] = o.orderNumber;
+    });
+
     // Slim payload for table — convert paise->rupees, pick core fields
     const mapped = items.map((p) => ({
       id: p.id,
       orderId: p.order_id,
+      siteOrderNumber: paymentToOrderNum[p.id] || null,
       amount: (p.amount || 0) / 100,
       currency: p.currency,
       status: p.status,
@@ -376,5 +389,186 @@ exports.refundPayment = async (req, res) => {
       message:
         err?.error?.description || err.message || "Refund failed",
     });
+  }
+};
+
+/* ========================================================================
+   FINANCE REPORT — Razorpay + Delhivery combined per-order view
+   GET /api/payments/admin/finance-report
+   Query: page, limit, from (yyyy-mm-dd), to (yyyy-mm-dd), paymentMode
+   ======================================================================== */
+exports.financeReport = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 25,
+      from,
+      to,
+      paymentMode,
+    } = req.query;
+
+    const p = Math.max(1, parseInt(page));
+    const l = Math.min(100, Math.max(1, parseInt(limit)));
+    const skip = (p - 1) * l;
+
+    // Build date filter
+    const dateFilter = {};
+    if (from) dateFilter.$gte = new Date(from);
+    if (to) {
+      const toDate = new Date(to);
+      toDate.setHours(23, 59, 59, 999);
+      dateFilter.$lte = toDate;
+    }
+
+    const filter = {};
+    if (Object.keys(dateFilter).length) filter.createdAt = dateFilter;
+    if (paymentMode && paymentMode !== "ALL") filter.paymentMode = paymentMode;
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(l)
+        .select(
+          "orderNumber customerId total paymentMode shippingPrice itemsPrice razorpayPaymentId trackingId status shippingAddress createdAt advancePaid remainingAmount"
+        )
+        .populate("customerId", "firmName shopName otpMobile")
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
+
+    // Fetch Razorpay data for ONLINE orders in parallel
+    const onlineOrders = orders.filter(
+      (o) => o.paymentMode === "ONLINE" && o.razorpayPaymentId
+    );
+    const rzpResults = await Promise.allSettled(
+      onlineOrders.map((o) => razorpayInstance.payments.fetch(o.razorpayPaymentId))
+    );
+    const rzpMap = {};
+    onlineOrders.forEach((o, i) => {
+      const r = rzpResults[i];
+      if (r.status === "fulfilled") {
+        const p = r.value;
+        rzpMap[o.razorpayPaymentId] = {
+          paymentId: p.id,
+          status: p.status,
+          amount: (p.amount || 0) / 100,
+          fee: (p.fee || 0) / 100,
+          tax: (p.tax || 0) / 100,
+          net: ((p.amount || 0) - (p.fee || 0)) / 100,
+          method: p.method,
+          amountRefunded: (p.amount_refunded || 0) / 100,
+        };
+      }
+    });
+
+    // Build report rows
+    const items = orders.map((o) => {
+      const rzp = o.razorpayPaymentId ? rzpMap[o.razorpayPaymentId] || null : null;
+      const isCOD = o.paymentMode === "COD";
+
+      // Money received
+      const received = isCOD
+        ? o.total  // Delhivery collects full amount for COD
+        : (rzp ? rzp.net : 0);
+
+      // Razorpay fees (only ONLINE)
+      const rzpFee = rzp ? rzp.fee : 0;
+      const rzpTax = rzp ? rzp.tax : 0;
+
+      // Shipping cost (what we charged customer)
+      const shippingCharge = o.shippingPrice || 0;
+
+      // COD: advance paid by customer at order time (if any)
+      const advancePaid = o.advancePaid || 0;
+
+      // Net receipt after all deductions
+      const netReceipt = isCOD
+        ? o.total - rzpFee  // COD: full amount minus nothing (no rzp fee)
+        : (rzp ? rzp.net : 0);
+
+      return {
+        orderNumber: o.orderNumber,
+        date: o.createdAt,
+        customer: {
+          name:
+            o.customerId?.firmName ||
+            o.customerId?.shopName ||
+            o.shippingAddress?.fullName ||
+            "—",
+          phone: o.customerId?.otpMobile || o.shippingAddress?.phone || "—",
+          city: o.shippingAddress?.city || "—",
+          state: o.shippingAddress?.state || "—",
+        },
+        paymentMode: o.paymentMode,
+        orderAmount: o.total,
+        itemsAmount: o.itemsPrice || 0,
+        shippingCharge,
+        status: o.status,
+
+        // Razorpay block
+        razorpay: rzp
+          ? {
+              paymentId: rzp.paymentId,
+              status: rzp.status,
+              amountReceived: rzp.amount,
+              fee: rzp.fee,
+              gst: rzp.tax,
+              net: rzp.net,
+              method: rzp.method,
+              amountRefunded: rzp.amountRefunded,
+            }
+          : null,
+
+        // Delhivery block
+        delhivery: {
+          awb: o.trackingId || null,
+          shippingCharge,
+          codAmount: isCOD ? o.total : 0,
+          advancePaid: isCOD ? advancePaid : 0,
+          deliveryStatus: o.status,
+        },
+
+        // Summary
+        netReceipt,
+        rzpFee,
+        rzpTax,
+      };
+    });
+
+    // Page-level totals
+    const summary = items.reduce(
+      (acc, row) => {
+        acc.totalOrderAmount += row.orderAmount;
+        acc.totalRzpFee += row.rzpFee;
+        acc.totalRzpTax += row.rzpTax;
+        acc.totalShippingCharge += row.shippingCharge;
+        acc.totalNetReceipt += row.netReceipt;
+        acc.onlineCount += row.paymentMode === "ONLINE" ? 1 : 0;
+        acc.codCount += row.paymentMode === "COD" ? 1 : 0;
+        return acc;
+      },
+      {
+        totalOrderAmount: 0,
+        totalRzpFee: 0,
+        totalRzpTax: 0,
+        totalShippingCharge: 0,
+        totalNetReceipt: 0,
+        onlineCount: 0,
+        codCount: 0,
+      }
+    );
+
+    res.json({
+      items,
+      total,
+      page: p,
+      limit: l,
+      pages: Math.ceil(total / l),
+      summary,
+    });
+  } catch (err) {
+    console.error("financeReport error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
   }
 };

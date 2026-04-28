@@ -187,6 +187,8 @@ router.post("/", async (req, res) => {
       codRemainingAmount,
       itemsPrice,
       shippingPrice,
+      razorpayPaymentId,
+      paymentId,
     } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
@@ -222,6 +224,7 @@ router.post("/", async (req, res) => {
       shippingPrice: shippingPrice || 0,
       total: total,
       paymentMode: finalPaymentMethod,
+      razorpayPaymentId: razorpayPaymentId || paymentId || "",
       advancePaid: codAdvancePaid || 0,
       remainingAmount: codRemainingAmount || 0,
       wa: {

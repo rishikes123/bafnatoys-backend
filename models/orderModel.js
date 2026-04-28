@@ -72,6 +72,11 @@ const orderSchema = new mongoose.Schema(
       enum: ["COD", "ONLINE"],
       default: "COD",
     },
+    razorpayPaymentId: {
+      type: String,
+      default: "",
+      index: true,
+    },
     advancePaid: {
       type: Number,
       default: 0,
