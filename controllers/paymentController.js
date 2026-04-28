@@ -464,25 +464,40 @@ exports.financeReport = async (req, res) => {
     });
 
     // Helper: find best Razorpay match for an order
+    // For ONLINE orders: match by full order total
+    // For COD orders with advance: match by advance amount
     const findRzpMatch = (order) => {
       // 1. Exact match by stored paymentId
       if (order.razorpayPaymentId && rzpById[order.razorpayPaymentId]) {
         return rzpById[order.razorpayPaymentId];
       }
-      // 2. Fallback: same amount + ONLINE + closest timestamp within 2 hours
-      if (order.paymentMode !== "ONLINE") return null;
-      const amtPaise = String(Math.round(order.total * 100));
-      const candidates = rzpByAmount[amtPaise] || [];
+
       const orderTs = Math.floor(new Date(order.createdAt).getTime() / 1000);
-      let best = null, bestDiff = Infinity;
-      candidates.forEach((c) => {
-        const diff = Math.abs((c.created_at || 0) - orderTs);
-        if (diff < 7200 && diff < bestDiff) { // within 2 hours
-          best = c;
-          bestDiff = diff;
-        }
-      });
-      return best;
+
+      const closestMatch = (amtPaise) => {
+        const candidates = rzpByAmount[String(amtPaise)] || [];
+        let best = null, bestDiff = Infinity;
+        candidates.forEach((c) => {
+          const diff = Math.abs((c.created_at || 0) - orderTs);
+          if (diff < 7200 && diff < bestDiff) {
+            best = c;
+            bestDiff = diff;
+          }
+        });
+        return best;
+      };
+
+      // 2. ONLINE order: match by full total amount
+      if (order.paymentMode === "ONLINE") {
+        return closestMatch(Math.round(order.total * 100));
+      }
+
+      // 3. COD order with advance payment: match by advance amount
+      if (order.paymentMode === "COD" && order.advancePaid > 0) {
+        return closestMatch(Math.round(order.advancePaid * 100));
+      }
+
+      return null;
     };
 
     // ── 3. Fetch Delhivery live tracking ────────────────────────
@@ -528,16 +543,20 @@ exports.financeReport = async (req, res) => {
           }
         : null;
 
-      const live      = o.trackingId ? liveMap[o.trackingId] || null : null;
-      const rzpFee    = rzp ? rzp.fee : 0;
-      const rzpTax    = rzp ? rzp.gst : 0;
+      const live           = o.trackingId ? liveMap[o.trackingId] || null : null;
+      const rzpFee         = rzp ? rzp.fee : 0;
+      const rzpTax         = rzp ? rzp.gst : 0;
       const shippingCharge = o.shippingPrice || 0;
-      const advancePaid    = o.advancePaid  || 0;
+      const advancePaid    = o.advancePaid   || 0;
+      const remainingAmt   = o.remainingAmount ?? Math.max(o.total - advancePaid, 0);
 
-      // Net receipt = what we actually get into bank
-      // ONLINE: Razorpay net (after fees)
-      // COD:    Full order amount (Delhivery collects & remits)
-      const netReceipt = isCOD ? o.total : (rzp ? rzp.net : 0);
+      // Net receipt = what we actually get into bank:
+      // ONLINE:           Razorpay net (after fees)
+      // COD (no advance): Full order total (Delhivery remits)
+      // COD + advance:    advance net via Razorpay + remaining collected at door
+      const netReceipt = isCOD
+        ? (rzp ? rzp.net + remainingAmt : o.total)
+        : (rzp ? rzp.net : 0);
 
       return {
         orderNumber:   o.orderNumber,
@@ -557,16 +576,17 @@ exports.financeReport = async (req, res) => {
         razorpay: rzp,
 
         delhivery: {
-          awb:           o.trackingId || null,
+          awb:            o.trackingId || null,
           shippingCharge,
-          codAmount:     isCOD ? o.total : 0,
-          advancePaid:   isCOD ? advancePaid : 0,
-          liveStatus:    live?.liveStatus    || o.status,
-          statusType:    live?.statusType    || "",
-          lastUpdate:    live?.lastUpdate    || null,
-          location:      live?.location      || "",
-          expectedDate:  live?.expectedDate  || null,
-          chargedWeight: live?.chargedWeight || 0,
+          codAmount:      isCOD ? o.total : 0,
+          advancePaid:    isCOD ? advancePaid : 0,
+          remainingAmt:   isCOD ? remainingAmt : 0,
+          liveStatus:     live?.liveStatus    || o.status,
+          statusType:     live?.statusType    || "",
+          lastUpdate:     live?.lastUpdate    || null,
+          location:       live?.location      || "",
+          expectedDate:   live?.expectedDate  || null,
+          chargedWeight:  live?.chargedWeight || 0,
         },
 
         netReceipt,
