@@ -226,18 +226,74 @@ async function getWalletTransactions({ from, to, limit = 100 } = {}) {
 
 /* ---------------------------------------------------------------
    8. PER-SHIPMENT CHARGES — compute from rate API for each AWB
-   (used to build a computed transaction ledger from Orders table)
    --------------------------------------------------------------- */
 async function getShipmentCharges(awbs = []) {
-  // Fetch tracking data which includes ChargedWeight + origin/destination
   const tracking = await trackMultiple(awbs);
   return tracking?.ShipmentData || [];
+}
+
+/* ---------------------------------------------------------------
+   9. ACTUAL DELHIVERY CHARGES PER ORDER (freight + COD fee)
+   Uses the rate calculator with real charged weight + destination pin.
+   Returns map: { [awb]: { freightCharge, codCharge, totalCharge, zone, chargedWeight } }
+   --------------------------------------------------------------- */
+async function getActualChargesForOrders(orders = [], trackingLiveMap = {}) {
+  const o_pin = process.env.DELHIVERY_WAREHOUSE_PINCODE || "641001";
+
+  const parseRate = (r) => {
+    if (!r) return null;
+    const data = Array.isArray(r) ? r[0] : r;
+    if (!data) return null;
+    return {
+      freightCharge: Number(data.gross_amount ?? data.freight_charge ?? data.total_amount ?? 0),
+      codCharge:     Number(data.cod_charges  ?? data.cod_charge     ?? 0),
+      totalCharge:   Number(data.total_amount ?? data.gross_amount   ?? 0),
+      zone:          data.zone || "",
+      chargedWeight: Number(data.charged_weight ?? 0),
+    };
+  };
+
+  const tasks = orders
+    .filter((o) => o.trackingId && trackingLiveMap[o.trackingId])
+    .map(async (o) => {
+      const live      = trackingLiveMap[o.trackingId];
+      const d_pin     = o.shippingAddress?.pincode;
+      if (!d_pin || !/^\d{6}$/.test(d_pin)) return null;
+
+      // ChargedWeight from Delhivery tracking (in kg) → convert to grams
+      const cgm = live.chargedWeight
+        ? Math.round(live.chargedWeight * 1000)
+        : 500;
+
+      const isCOD = o.paymentMode === "COD";
+      const pt    = isCOD ? "COD" : "Pre-paid";
+      const cod   = isCOD ? o.total : 0;
+
+      try {
+        const result = await getShippingRate({ o_pin, d_pin, cgm, pt, cod, md: "E" });
+        const parsed = parseRate(result);
+        if (!parsed) return null;
+        return { awb: o.trackingId, ...parsed };
+      } catch (_e) {
+        return null;
+      }
+    });
+
+  const results = await Promise.allSettled(tasks);
+  const map = {};
+  results.forEach((r) => {
+    if (r.status === "fulfilled" && r.value) {
+      map[r.value.awb] = r.value;
+    }
+  });
+  return map;
 }
 
 module.exports = {
   getWalletBalance,
   getWalletTransactions,
   getShipmentCharges,
+  getActualChargesForOrders,
   trackPackage,
   trackMultiple,
   checkPincode,

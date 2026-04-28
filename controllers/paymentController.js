@@ -525,7 +525,15 @@ exports.financeReport = async (req, res) => {
       }
     }
 
-    // ── 4. Build report rows ─────────────────────────────────────
+    // ── 4. Fetch actual Delhivery freight + COD charges per order ─
+    let delChargeMap = {};
+    try {
+      delChargeMap = await svc.getActualChargesForOrders(orders, liveMap);
+    } catch (_e) {
+      // non-fatal — continue without actual charges
+    }
+
+    // ── 5. Build report rows ─────────────────────────────────────
     const items = orders.map((o) => {
       const isCOD = o.paymentMode === "COD";
       const rzpRaw = findRzpMatch(o);
@@ -543,7 +551,8 @@ exports.financeReport = async (req, res) => {
           }
         : null;
 
-      const live           = o.trackingId ? liveMap[o.trackingId] || null : null;
+      const live           = o.trackingId ? liveMap[o.trackingId]     || null : null;
+      const delActual      = o.trackingId ? delChargeMap[o.trackingId] || null : null;
       const rzpFee         = rzp ? rzp.fee : 0;
       const rzpTax         = rzp ? rzp.gst : 0;
       const shippingCharge = o.shippingPrice || 0;
@@ -576,17 +585,23 @@ exports.financeReport = async (req, res) => {
         razorpay: rzp,
 
         delhivery: {
-          awb:            o.trackingId || null,
+          awb:              o.trackingId || null,
           shippingCharge,
-          codAmount:      isCOD ? o.total : 0,
-          advancePaid:    isCOD ? advancePaid : 0,
-          remainingAmt:   isCOD ? remainingAmt : 0,
-          liveStatus:     live?.liveStatus    || o.status,
-          statusType:     live?.statusType    || "",
-          lastUpdate:     live?.lastUpdate    || null,
-          location:       live?.location      || "",
-          expectedDate:   live?.expectedDate  || null,
-          chargedWeight:  live?.chargedWeight || 0,
+          codAmount:        isCOD ? o.total : 0,
+          advancePaid:      isCOD ? advancePaid : 0,
+          remainingAmt:     isCOD ? remainingAmt : 0,
+          // Actual Delhivery charges (from rate API)
+          actualFreight:    delActual?.freightCharge ?? null,
+          actualCodCharge:  delActual?.codCharge     ?? null,
+          actualTotal:      delActual?.totalCharge   ?? null,
+          zone:             delActual?.zone          || live?.location?.split("_")?.[0] || "",
+          // Live tracking
+          liveStatus:       live?.liveStatus    || o.status,
+          statusType:       live?.statusType    || "",
+          lastUpdate:       live?.lastUpdate    || null,
+          location:         live?.location      || "",
+          expectedDate:     live?.expectedDate  || null,
+          chargedWeight:    delActual?.chargedWeight || live?.chargedWeight || 0,
         },
 
         netReceipt,
@@ -598,13 +613,15 @@ exports.financeReport = async (req, res) => {
     // ── 5. Page-level summary ────────────────────────────────────
     const summary = items.reduce(
       (acc, row) => {
-        acc.totalOrderAmount  += row.orderAmount;
-        acc.totalRzpFee       += row.rzpFee;
-        acc.totalRzpTax       += row.rzpTax;
+        acc.totalOrderAmount    += row.orderAmount;
+        acc.totalRzpFee         += row.rzpFee;
+        acc.totalRzpTax         += row.rzpTax;
         acc.totalShippingCharge += row.shippingCharge;
-        acc.totalNetReceipt   += row.netReceipt;
-        acc.onlineCount       += row.paymentMode === "ONLINE" ? 1 : 0;
-        acc.codCount          += row.paymentMode === "COD"    ? 1 : 0;
+        acc.totalNetReceipt     += row.netReceipt;
+        acc.totalDelFreight     += row.delhivery.actualFreight   ?? 0;
+        acc.totalDelCodCharge   += row.delhivery.actualCodCharge ?? 0;
+        acc.onlineCount         += row.paymentMode === "ONLINE" ? 1 : 0;
+        acc.codCount            += row.paymentMode === "COD"    ? 1 : 0;
         return acc;
       },
       {
@@ -613,6 +630,8 @@ exports.financeReport = async (req, res) => {
         totalRzpTax: 0,
         totalShippingCharge: 0,
         totalNetReceipt: 0,
+        totalDelFreight: 0,
+        totalDelCodCharge: 0,
         onlineCount: 0,
         codCount: 0,
       }
