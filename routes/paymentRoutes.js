@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
 const {
   createOrder,
   verifyPayment,
@@ -10,8 +11,11 @@ const {
   refundPayment,
   financeReport,
   debugDelhiveryRate,
+  uploadDelhiveryCSV,
 } = require("../controllers/paymentController");
 const { adminProtect } = require("../middleware/authMiddleware");
+
+const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 /* ------------------------ CUSTOMER CHECKOUT ------------------------ */
 // Payment Order Create: POST /api/payments/create-order
@@ -41,5 +45,8 @@ router.get("/admin/finance-report", adminProtect, financeReport);
 
 // Debug: test raw Delhivery rate API response
 router.get("/admin/debug-delhivery-rate", adminProtect, debugDelhiveryRate);
+
+// Upload Delhivery settlement CSV to get actual freight charges
+router.post("/admin/upload-delhivery-csv", adminProtect, csvUpload.single("csv"), uploadDelhiveryCSV);
 
 module.exports = router;

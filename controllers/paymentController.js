@@ -430,6 +430,91 @@ exports.debugDelhiveryRate = async (req, res) => {
 };
 
 /* ========================================================================
+   UPLOAD DELHIVERY CSV LEDGER
+   POST /api/payments/admin/upload-delhivery-csv
+   Multer memory upload — parses Delhivery settlement CSV and stores per-AWB charges
+   ======================================================================== */
+exports.uploadDelhiveryCSV = async (req, res) => {
+  try {
+    const DelhiveryLedger = require("../models/DelhiveryLedger");
+    if (!req.file) return res.status(400).json({ message: "CSV file required" });
+
+    const text = req.file.buffer.toString("utf8");
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return res.status(400).json({ message: "CSV is empty" });
+
+    // Parse header row — detect column indices dynamically
+    const sep = lines[0].includes("\t") ? "\t" : ",";
+    const headers = lines[0].split(sep).map((h) => h.trim().replace(/^"|"$/g, "").toLowerCase());
+
+    const col = (name) => headers.indexOf(name);
+    const iWaybill   = col("waybill_no");
+    const iZone      = col("zone");
+    const iStatus    = col("status");
+    const iGross     = col("gross_am");
+    const iTotal     = col("total_amo");
+    const iCod       = col("cod_amou");
+    const iIgst      = col("igst");
+    const iCgst      = col("cgst");
+    const iSgst      = headers.findIndex((h) => h.startsWith("sgst"));
+    const iPickup    = col("pickup_date");
+
+    if (iWaybill === -1) return res.status(400).json({ message: "Column 'waybill_no' not found — Delhivery CSV format expected" });
+    if (iGross === -1)   return res.status(400).json({ message: "Column 'gross_am' not found — Delhivery CSV format expected" });
+
+    const parseNum = (v) => {
+      const n = parseFloat(String(v || "").replace(/[^0-9.-]/g, ""));
+      return isNaN(n) ? 0 : n;
+    };
+
+    const ops = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(sep).map((c) => c.trim().replace(/^"|"$/g, ""));
+      const waybill = cols[iWaybill];
+      if (!waybill || waybill.length < 5) continue;
+
+      const grossAmount = parseNum(cols[iGross]);
+      if (grossAmount === 0) continue;
+
+      const doc = {
+        waybill,
+        zone:        iZone   !== -1 ? cols[iZone]   : "",
+        status:      iStatus !== -1 ? cols[iStatus] : "",
+        grossAmount,
+        totalAmount: iTotal  !== -1 ? parseNum(cols[iTotal]) : 0,
+        codAmount:   iCod    !== -1 ? parseNum(cols[iCod])   : 0,
+        igst:        iIgst   !== -1 ? parseNum(cols[iIgst])  : 0,
+        cgst:        iCgst   !== -1 ? parseNum(cols[iCgst])  : 0,
+        sgst:        iSgst   !== -1 ? parseNum(cols[iSgst])  : 0,
+        pickupDate:  iPickup !== -1 && cols[iPickup] ? new Date(cols[iPickup]) : undefined,
+        uploadedAt:  new Date(),
+      };
+
+      ops.push({
+        updateOne: {
+          filter: { waybill },
+          update: { $set: doc },
+          upsert: true,
+        },
+      });
+    }
+
+    if (!ops.length) return res.status(400).json({ message: "No valid rows found in CSV" });
+
+    const result = await DelhiveryLedger.bulkWrite(ops);
+    res.json({
+      message: "CSV imported successfully",
+      upserted: result.upsertedCount,
+      modified: result.modifiedCount,
+      total: ops.length,
+    });
+  } catch (err) {
+    console.error("[uploadDelhiveryCSV]", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ========================================================================
    FINANCE REPORT — Razorpay + Delhivery combined per-order view
    GET /api/payments/admin/finance-report
    Query: page, limit, from (yyyy-mm-dd), to (yyyy-mm-dd), paymentMode
@@ -562,34 +647,39 @@ exports.financeReport = async (req, res) => {
       }
     }
 
-    // ── 4. Fetch actual Delhivery freight + COD charges per order ─
-    let delChargeMap = {};
-    try {
-      delChargeMap = await svc.getActualChargesForOrders(orders, liveMap);
-      const filled = Object.keys(delChargeMap).length;
-      const attempted = orders.filter((o) => o.trackingId && o.shippingAddress?.pincode).length;
-      console.log(`[financeReport] Delhivery rate API: ${filled}/${attempted} charges fetched`);
-      if (filled === 0 && attempted > 0) {
-        // Log a sample to debug rate API response format
-        const sample = orders.find((o) => o.trackingId && o.shippingAddress?.pincode);
-        if (sample) {
-          try {
-            const raw = await svc.getShippingRate({
-              o_pin: process.env.DELHIVERY_WAREHOUSE_PINCODE || "641001",
-              d_pin: sample.shippingAddress.pincode,
-              cgm: 500,
-              pt: sample.paymentMode === "COD" ? "COD" : "Pre-paid",
-              cod: sample.paymentMode === "COD" ? sample.total : 0,
-              md: "E",
-            });
-            console.log("[financeReport] Delhivery rate API sample response:", JSON.stringify(raw).slice(0, 500));
-          } catch (sampleErr) {
-            console.warn("[financeReport] Delhivery rate API sample failed:", sampleErr?.response?.status, sampleErr?.response?.data || sampleErr.message);
-          }
-        }
+    // ── 4a. Load charges from uploaded Delhivery ledger CSV (actual billed amounts) ─
+    const DelhiveryLedger = require("../models/DelhiveryLedger");
+    const ledgerAwbs = orders.map((o) => o.trackingId).filter(Boolean);
+    const ledgerDocs = ledgerAwbs.length
+      ? await DelhiveryLedger.find({ waybill: { $in: ledgerAwbs } }).lean()
+      : [];
+    const ledgerMap = {};
+    ledgerDocs.forEach((d) => {
+      ledgerMap[d.waybill] = {
+        freightCharge: d.grossAmount || 0,
+        codCharge:     0,
+        totalCharge:   d.totalAmount || 0,
+        zone:          d.zone || "",
+        chargedWeight: 0,
+        fromLedger:    true,
+      };
+    });
+
+    // ── 4b. For orders not in ledger, fall back to Rate API ─────────
+    let delChargeMap = { ...ledgerMap };
+    const needsRateApi = orders.filter(
+      (o) => o.trackingId && o.shippingAddress?.pincode && !ledgerMap[o.trackingId]
+    );
+    if (needsRateApi.length) {
+      try {
+        const rateMap = await svc.getActualChargesForOrders(needsRateApi, liveMap);
+        Object.assign(delChargeMap, rateMap);
+        console.log(`[financeReport] Ledger: ${ledgerDocs.length} | Rate API: ${Object.keys(rateMap).length}`);
+      } catch (_e) {
+        console.warn("[financeReport] getActualChargesForOrders failed:", _e.message);
       }
-    } catch (_e) {
-      console.warn("[financeReport] getActualChargesForOrders failed:", _e.message);
+    } else {
+      console.log(`[financeReport] All ${ledgerDocs.length} orders served from ledger CSV`);
     }
 
     // ── 5. Build report rows ─────────────────────────────────────
@@ -649,11 +739,11 @@ exports.financeReport = async (req, res) => {
           codAmount:        isCOD ? o.total : 0,
           advancePaid:      isCOD ? advancePaid : 0,
           remainingAmt:     isCOD ? remainingAmt : 0,
-          // Actual Delhivery charges (from rate API)
           actualFreight:    delActual?.freightCharge ?? null,
           actualCodCharge:  delActual?.codCharge     ?? null,
           actualTotal:      delActual?.totalCharge   ?? null,
           zone:             delActual?.zone          || live?.location?.split("_")?.[0] || "",
+          fromLedger:       delActual?.fromLedger    || false,
           // Live tracking
           liveStatus:       live?.liveStatus    || o.status,
           statusType:       live?.statusType    || "",
