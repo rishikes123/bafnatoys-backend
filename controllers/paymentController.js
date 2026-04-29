@@ -439,28 +439,47 @@ exports.uploadDelhiveryCSV = async (req, res) => {
     const DelhiveryLedger = require("../models/DelhiveryLedger");
     if (!req.file) return res.status(400).json({ message: "CSV file required" });
 
-    const text = req.file.buffer.toString("utf8");
-    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    // Strip UTF-8 BOM if present (Excel saves CSVs with BOM)
+    const raw = req.file.buffer.toString("utf8").replace(/^﻿/, "");
+    const lines = raw.split(/\r?\n/).filter((l) => l.trim());
     if (lines.length < 2) return res.status(400).json({ message: "CSV is empty" });
 
     // Parse header row — detect column indices dynamically
     const sep = lines[0].includes("\t") ? "\t" : ",";
-    const headers = lines[0].split(sep).map((h) => h.trim().replace(/^"|"$/g, "").toLowerCase());
+    const headers = lines[0].split(sep).map((h) =>
+      h.trim().replace(/^"|"$/g, "").replace(/^﻿/, "").toLowerCase()
+    );
 
-    const col = (name) => headers.indexOf(name);
-    const iWaybill   = col("waybill_no");
+    // Flexible column finder — tries multiple known name variants
+    const col = (...names) => {
+      for (const name of names) {
+        const idx = headers.indexOf(name.toLowerCase());
+        if (idx !== -1) return idx;
+      }
+      return -1;
+    };
+
+    const iWaybill   = col("waybill_no", "waybill", "awb", "waybill no", "waybillno");
     const iZone      = col("zone");
     const iStatus    = col("status");
-    const iGross     = col("gross_am");
-    const iTotal     = col("total_amo");
-    const iCod       = col("cod_amou");
+    const iGross     = col("gross_am", "gross_amount", "grossamount");
+    const iTotal     = col("total_amo", "total_amount", "totalamount");
+    const iCod       = col("cod_amou", "cod_amount", "cod");
     const iIgst      = col("igst");
     const iCgst      = col("cgst");
     const iSgst      = headers.findIndex((h) => h.startsWith("sgst"));
-    const iPickup    = col("pickup_date");
+    const iPickup    = col("pickup_date", "pickupdate");
 
-    if (iWaybill === -1) return res.status(400).json({ message: "Column 'waybill_no' not found — Delhivery CSV format expected" });
-    if (iGross === -1)   return res.status(400).json({ message: "Column 'gross_am' not found — Delhivery CSV format expected" });
+    if (iWaybill === -1) {
+      return res.status(400).json({
+        message: `Column 'waybill_no' not found. Headers detected: ${headers.slice(0, 10).join(", ")}`,
+      });
+    }
+    if (iGross === -1) {
+      return res.status(400).json({
+        message: `Column 'gross_am' not found. Headers detected: ${headers.join(", ")}`,
+      });
+    }
 
     const parseNum = (v) => {
       const n = parseFloat(String(v || "").replace(/[^0-9.-]/g, ""));

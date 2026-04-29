@@ -97,6 +97,16 @@ const orderSchema = new mongoose.Schema(
     isShipped: { type: Boolean, default: false },
     trackingId: { type: String, default: "" },
     courierName: { type: String, default: "" },
+    splitShipments: {
+      type: [{
+        awb:       { type: String },
+        boxNumber: { type: Number },
+        weightKg:  { type: Number },
+        courier:   { type: String, default: "Delhivery" },
+        createdAt: { type: Date, default: Date.now },
+      }],
+      default: [],
+    },
     packingDetails: {
       type: [
         {

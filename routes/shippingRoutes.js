@@ -1,12 +1,15 @@
 const express = require("express");
 const router = express.Router();
-const { createShippingOrder } = require("../controllers/shippingController");
+const { createShippingOrder, createSplitShipment } = require("../controllers/shippingController");
 const dh = require("../controllers/delhiveryAdminController");
 const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 /* ----------------------- EXISTING ----------------------- */
 // Create shipping order (admin only)
 router.post("/create", adminProtect, isAdmin, createShippingOrder);
+
+// Create split shipment — 2nd/3rd box for same order
+router.post("/create-split", adminProtect, isAdmin, createSplitShipment);
 
 /* =============== DELHIVERY ADMIN PANEL =============== */
 
