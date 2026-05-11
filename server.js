@@ -121,6 +121,16 @@ app.use("/api/abandoned-cart", require("./routes/abandonedCartRoutes"));
 // ✅ BULK WHATSAPP CAMPAIGNS (broadcast to customers / excel upload)
 app.use("/api/campaigns", require("./routes/campaignRoutes"));
 
+// ✅ FEED ROUTES (Direct access for Meta/Google Catalog)
+app.get("/facebook-feed.csv", (req, res, next) => {
+  req.url = "/api/products/feed/facebook-catalog";
+  next();
+});
+app.get("/google-feed.xml", (req, res, next) => {
+  req.url = "/api/products/feed/google-shopping";
+  next();
+});
+
 app.use("/", require("./routes/sitemap"));
 
 /* ====================================================================

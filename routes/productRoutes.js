@@ -710,29 +710,51 @@ router.get("/feed/facebook-catalog", async (req, res) => {
     const products = await Product.find().lean();
     const finalProducts = await attachDealsToProducts(products);
 
-    let csv = 'id,title,description,availability,condition,price,link,image_link,brand\n';
+    // Standard CSV headers for Facebook Catalog
+    const headers = ['id', 'title', 'description', 'availability', 'condition', 'price', 'link', 'image_link', 'brand'];
+    let csv = headers.join(',') + '\n';
 
     finalProducts.forEach((product) => {
       const id = product.sku || product._id.toString();
       
-      const rawTitle = (product.name || 'Bafna Toy').replace(/"/g, '""');
-      const title = `"${rawTitle}"`;
-      
-      const rawDesc = (product.description || product.tagline || product.name || 'Best quality toy').replace(/"/g, '""');
-      const description = `"${rawDesc}"`;
+      // Clean up title and description (remove HTML, handle quotes)
+      const cleanTitle = (product.name || 'Bafna Toy').replace(/<[^>]*>?/gm, '').replace(/"/g, '""');
+      const cleanDesc = (product.description || product.tagline || product.name || 'Best quality wholesale toy').replace(/<[^>]*>?/gm, '').replace(/"/g, '""');
       
       const availability = (product.stock && product.stock > 0) ? 'in stock' : 'out of stock';
       const condition = 'new';
-      const price = `${product.price} INR`;
+      
+      // Meta prefers 100.00 INR format
+      const price = `${Number(product.price).toFixed(2)} INR`;
+      
       const link = `https://bafnatoys.com/product/${product.slug || product._id.toString()}`;
-      const image_link = (product.images && product.images.length > 0) ? product.images[0] : 'https://bafnatoys.com/default-image.jpg';
+      
+      let image_link = 'https://bafnatoys.com/logo.webp'; // Fallback to logo
+      if (product.images && product.images.length > 0) {
+        image_link = product.images[0];
+      }
+
       const brand = 'Bafna Toys';
 
-      csv += `${id},${title},${description},${availability},${condition},${price},${link},${image_link},${brand}\n`;
+      // Build row ensuring each field is quoted if it might contain commas/quotes
+      const row = [
+        `"${id}"`,
+        `"${cleanTitle}"`,
+        `"${cleanDesc}"`,
+        `"${availability}"`,
+        `"${condition}"`,
+        `"${price}"`,
+        `"${link}"`,
+        `"${image_link}"`,
+        `"${brand}"`
+      ];
+
+      csv += row.join(',') + '\n';
     });
 
     res.header('Content-Type', 'text/csv; charset=utf-8');
-    res.attachment('facebook_catalog.csv');
+    res.attachment('facebook_feed.csv');
+    // Send with UTF-8 BOM for better Excel/Meta compatibility
     return res.send('\uFEFF' + csv);
 
   } catch (error) {
