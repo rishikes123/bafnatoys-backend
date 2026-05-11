@@ -83,6 +83,9 @@ router.put("/", async (req, res) => {
    🔥 WHATSAPP BUSINESS API WEBHOOK LOGIC
    ==================================================================== */
 
+const Order = require("../models/orderModel");
+const Product = require("../models/Product");
+
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "BAFNA_TOYS_BOT_2026";
 const ACCESS_TOKEN = process.env.WA_ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID;
@@ -117,39 +120,97 @@ router.post("/webhook", async (req, res) => {
       ) {
         const msg = body.entry[0].changes[0].value.messages[0];
         const from = msg.from; // Customer's number
-        const msgBody = msg.text?.body?.toLowerCase() || "";
+        const msgBody = msg.text?.body?.trim().toLowerCase() || "";
 
-        console.log(`📩 New message from ${from}: ${msgBody}`);
+        if (!msgBody) return res.sendStatus(200);
 
-        // --- BOT LOGIC START ---
+        console.log(`📩 Message from ${from}: ${msgBody}`);
+
         let replyText = "";
+        let replyImage = "";
+        let replyDoc = "";
 
-        if (msgBody.includes("hi") || msgBody.includes("hello") || msgBody.includes("start")) {
-          replyText = "Welcome to Bafna Toys! 🧸\nHow can we help you today?\n1. Order Status\n2. Download Catalog\n3. Talk to Agent";
-        } else if (msgBody.includes("catalog")) {
-          replyText = "You can view our latest catalog here: https://bafnatoys.com/download-catalogue/pdf";
-        } else {
-          replyText = "Thank you for messaging Bafna Toys. Our team will get back to you soon!";
+        // --- 1. ORDER STATUS LOGIC ---
+        if (msgBody.startsWith("odr") || msgBody.startsWith("ret") || (msgBody.length >= 7 && !isNaN(msgBody.substring(3)))) {
+          const order = await Order.findOne({ 
+            $or: [
+              { orderNumber: new RegExp(msgBody, 'i') },
+              { trackingId: new RegExp(msgBody, 'i') }
+            ]
+          });
+
+          if (order) {
+            replyText = `📦 *Order Status for ${order.orderNumber}*\n\n` +
+                        `🔹 Status: *${order.status.toUpperCase()}*\n` +
+                        `💰 Total: ₹${order.total}\n` +
+                        `🚛 Courier: ${order.courierName || "Not assigned"}\n` +
+                        `🆔 Tracking: ${order.trackingId || "N/A"}\n\n` +
+                        `View details: https://bafnatoys.com/orders/${order._id}`;
+          } else {
+            replyText = "❌ Sorry, I couldn't find any order with that ID. Please check and try again.";
+          }
         }
-        // --- BOT LOGIC END ---
 
-        // Send Auto-Reply via Meta API
-        if (replyText && ACCESS_TOKEN && PHONE_NUMBER_ID) {
-          try {
-            await axios.post(
-              `https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`,
-              {
-                messaging_product: "whatsapp",
-                to: from,
-                type: "text",
-                text: { body: replyText },
-              },
-              {
-                headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+        // --- 2. CATALOG LOGIC ---
+        else if (msgBody.includes("catalog") || msgBody.includes("price list")) {
+          replyText = "Sure! Here is our latest wholesale catalog PDF.";
+          replyDoc = "https://bafnatoys.com/download-catalogue/pdf"; // Adjust to your actual PDF link
+        }
+
+        // --- 3. PRODUCT SEARCH LOGIC ---
+        else if (msgBody.length > 2) {
+          const products = await Product.find({
+            $or: [
+              { name: { $regex: msgBody, $options: "i" } },
+              { categoryName: { $regex: msgBody, $options: "i" } }
+            ]
+          }).limit(3).lean();
+
+          if (products.length > 0) {
+            replyText = `🔍 *Search results for "${msgBody}":*\n\n`;
+            for (const p of products) {
+              replyText += `🧸 *${p.name}*\n💰 Price: ₹${p.price}\n🔗 Link: https://bafnatoys.com/product/${p.slug || p._id}\n\n`;
+              if (!replyImage && p.images && p.images.length > 0) {
+                replyImage = p.images[0]; // Set the first product image to send
               }
-            );
-          } catch (apiErr) {
-            console.error("❌ WhatsApp API Error:", apiErr.response?.data || apiErr.message);
+            }
+          } else if (msgBody.includes("hi") || msgBody.includes("hello") || msgBody.includes("start")) {
+            replyText = "Welcome to Bafna Toys! 🧸\nHow can we help you today?\n\n👉 Send *Order ID* (e.g. ODR1001) for status.\n👉 Send *Product Name* (e.g. Doll) to search.\n👉 Send *Catalog* to get PDF.";
+          } else {
+            replyText = "I'm not sure about that. Try searching for a toy name (like 'Car' or 'Doll') or send an Order ID.";
+          }
+        }
+
+        // --- SENDING THE RESPONSE ---
+        if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
+          // A. Send Document (if catalog)
+          if (replyDoc) {
+            await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
+              messaging_product: "whatsapp",
+              to: from,
+              type: "document",
+              document: { link: replyDoc, filename: "Bafna_Toys_Catalog.pdf" }
+            }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+          }
+
+          // B. Send Image (if product search)
+          if (replyImage) {
+            await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
+              messaging_product: "whatsapp",
+              to: from,
+              type: "image",
+              image: { link: replyImage }
+            }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+          }
+
+          // C. Send Text (Primary reply)
+          if (replyText) {
+            await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
+              messaging_product: "whatsapp",
+              to: from,
+              type: "text",
+              text: { body: replyText }
+            }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
           }
         }
       }
