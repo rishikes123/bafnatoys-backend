@@ -8,7 +8,7 @@ const WA_VER = process.env.WA_API_VERSION || "v20.0";
 const DEFAULTS = {
   enabled: true,
   phone: "",
-  defaultMessage: "Hi! I need help.",
+  defaultMessage: "Hi Bafna Toys, I want to explore your toys! 🧸",
   position: "right",
   offsetX: 18,
   offsetY: 18,
@@ -83,8 +83,13 @@ router.put("/", async (req, res) => {
    🔥 WHATSAPP BUSINESS API WEBHOOK LOGIC
    ==================================================================== */
 
+/* ====================================================================
+   🔥 WHATSAPP BUSINESS API WEBHOOK LOGIC
+   ==================================================================== */
+
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
+const Category = require("../models/categoryModel");
 
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "BAFNA_TOYS_BOT_2026";
 const ACCESS_TOKEN = process.env.WA_ACCESS_TOKEN;
@@ -121,12 +126,13 @@ router.post("/webhook", async (req, res) => {
         const msg = body.entry[0].changes[0].value.messages[0];
         const from = msg.from; // Customer's number
         
-        // Handle both text messages and button clicks
         let msgBody = "";
         if (msg.type === "text") {
           msgBody = msg.text?.body?.trim().toLowerCase() || "";
         } else if (msg.type === "interactive") {
-          msgBody = msg.interactive?.button_reply?.title?.trim().toLowerCase() || "";
+          // Handle both button replies and list selections
+          msgBody = msg.interactive?.button_reply?.title?.trim().toLowerCase() || 
+                    msg.interactive?.list_reply?.title?.trim().toLowerCase() || "";
         }
 
         if (!msgBody) return res.sendStatus(200);
@@ -137,8 +143,54 @@ router.post("/webhook", async (req, res) => {
         let replyImage = "";
         let replyDoc = "";
 
-        // --- 1. ORDER STATUS LOGIC ---
-        if (msgBody.startsWith("odr") || msgBody.startsWith("ret") || (msgBody.length >= 7 && !isNaN(msgBody.substring(3)))) {
+        // --- A. CATEGORY LIST LOGIC ---
+        if (msgBody.includes("categories") || msgBody.includes("📂")) {
+          const cats = await Category.find().sort({ order: 1 }).limit(10).lean();
+          
+          if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
+            const sections = [{
+              title: "Our Toy Categories",
+              rows: [
+                ...cats.map(c => ({
+                  id: `cat_${c._id}`,
+                  title: c.name.substring(0, 24),
+                  description: `View ${c.name} on website`
+                })),
+                { id: "agent_row", title: "👤 Talk to Agent", description: "Chat with our support team" }
+              ]
+            }];
+
+            await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: from,
+              type: "interactive",
+              interactive: {
+                type: "list",
+                header: { type: "text", text: "Browse Categories 📂" },
+                body: { text: "Select a category to view products on our website." },
+                footer: { text: "Bafna Toys - Factory Direct" },
+                action: {
+                  button: "View All",
+                  sections
+                }
+              }
+            }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+            return res.sendStatus(200);
+          }
+        }
+
+        // --- B. CATEGORY SELECTION HANDLER ---
+        if (msgBody.startsWith("cat_") || (msg.type === "interactive" && msg.interactive?.list_reply?.id?.startsWith("cat_"))) {
+          const catId = msg.interactive?.list_reply?.id?.replace("cat_", "");
+          const category = await Category.findById(catId);
+          if (category) {
+            replyText = `📂 *${category.name}*\n\nExplore all products in this category here:\nhttps://bafnatoys.com/category/${category.slug || category._id}`;
+          }
+        }
+
+        // --- C. ORDER STATUS LOGIC ---
+        else if (msgBody.startsWith("odr") || msgBody.startsWith("ret") || (msgBody.length >= 7 && !isNaN(msgBody.substring(3)))) {
           const order = await Order.findOne({ 
             $or: [
               { orderNumber: new RegExp(msgBody, 'i') },
@@ -158,14 +210,31 @@ router.post("/webhook", async (req, res) => {
           }
         }
 
-        // --- 2. CATALOG LOGIC ---
+        // --- D. CATALOG LOGIC ---
         else if (msgBody.includes("catalog") || msgBody.includes("price list")) {
-          replyText = "Sure! Here is our latest wholesale catalog PDF.";
+          // Send acknowledgement first because PDF generation/download might take time
+          if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
+            await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
+              messaging_product: "whatsapp",
+              to: from,
+              type: "text",
+              text: { body: "Generating your latest wholesale catalog PDF... Please wait a moment ⏳" }
+            }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+          }
           replyDoc = "https://api.bafnatoys.com/api/products/download-catalogue/pdf"; 
+          replyText = "Here is your catalog! 📚 Feel free to ask if you have any questions.";
         }
 
-        // --- 3. PRODUCT SEARCH LOGIC ---
-        else if (msgBody.length > 2 && !msgBody.includes("hi") && !msgBody.includes("hello") && !msgBody.includes("start") && !msgBody.includes("help") && !msgBody.includes("agent")) {
+        // --- E. AGENT / HELP LOGIC ---
+        else if (msgBody.includes("agent") || msgBody.includes("help") || msgBody.includes("talk")) {
+          replyText = "Our support team is here to help! 👤\n\n" +
+                      "📞 *Call/WhatsApp:* +91 9080114528\n" +
+                      "📧 *Email:* bafnatoysphotos@gmail.com\n\n" +
+                      "An agent will check this chat shortly and get back to you. Thank you for your patience! 🙏";
+        }
+
+        // --- F. PRODUCT SEARCH LOGIC ---
+        else if (msgBody.length > 2 && !["hi","hello","start","help","agent","talk"].some(w => msgBody.includes(w))) {
           const products = await Product.find({
             $or: [
               { name: { $regex: msgBody, $options: "i" } },
@@ -186,15 +255,14 @@ router.post("/webhook", async (req, res) => {
           }
         }
 
-        // --- 4. WELCOME & INTERACTIVE BUTTONS ---
+        // --- F. WELCOME & INTERACTIVE BUTTONS ---
         else {
           const welcomeBody = `*Namaste! Welcome to Bafna Toys* 🧸✨\n\n` +
                               `We are India's leading *B2B Toy Manufacturer*. 🏭🇮🇳\n\n` +
-                              `*Why Shop With Us?*\n` +
-                              `✅ Factory Price Toys\n` +
-                              `✅ 4,900+ Trusted Retailers\n` +
-                              `✅ BIS Certified & COD Available\n\n` +
-                              `How can I help you today?`;
+                              `*Our Highlights:*\n` +
+                              `✅ Factory Price | 4,900+ Retailers\n` +
+                              `✅ BIS Certified | COD Available\n\n` +
+                              `Select an option below or type *'Agent'* to talk to us:`;
 
           if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
             try {
@@ -210,26 +278,25 @@ router.post("/webhook", async (req, res) => {
                   footer: { text: "Select an option below 👇" },
                   action: {
                     buttons: [
-                      { type: "reply", reply: { id: "catalog", title: "📚 Get Catalog" } },
+                      { type: "reply", reply: { id: "categories", title: "📂 View Categories" } },
                       { type: "reply", reply: { id: "order", title: "📦 Order Status" } },
-                      { type: "reply", reply: { id: "agent", title: "👤 Talk to Agent" } }
+                      { type: "reply", reply: { id: "catalog", title: "📚 Get Catalog" } }
                     ]
                   }
                 }
               }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
-              return res.sendStatus(200); // Handled here, no need for more replies
+              return res.sendStatus(200); 
             } catch (err) {
-              console.error("❌ Button Error:", err.response?.data || err.message);
-              replyText = welcomeBody; // Fallback to text if buttons fail
+              console.error("❌ Welcome Error:", err.response?.data || err.message);
+              replyText = welcomeBody; 
             }
           } else {
             replyText = welcomeBody;
           }
         }
 
-        // --- SENDING THE RESPONSE ---
+        // --- G. SENDING THE FINAL RESPONSE ---
         if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
-          // A. Send Document (if catalog)
           if (replyDoc) {
             await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
               messaging_product: "whatsapp",
@@ -238,8 +305,6 @@ router.post("/webhook", async (req, res) => {
               document: { link: replyDoc, filename: "Bafna_Toys_Catalog.pdf" }
             }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
           }
-
-          // B. Send Image (if product search)
           if (replyImage) {
             await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
               messaging_product: "whatsapp",
@@ -248,8 +313,6 @@ router.post("/webhook", async (req, res) => {
               image: { link: replyImage }
             }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
           }
-
-          // C. Send Text (Primary reply)
           if (replyText) {
             await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
               messaging_product: "whatsapp",
