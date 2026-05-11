@@ -154,7 +154,7 @@ router.post("/webhook", async (req, res) => {
         // --- 2. CATALOG LOGIC ---
         else if (msgBody.includes("catalog") || msgBody.includes("price list")) {
           replyText = "Sure! Here is our latest wholesale catalog PDF.";
-          replyDoc = "https://bafnatoys.com/download-catalogue/pdf"; // Adjust to your actual PDF link
+          replyDoc = "https://api.bafnatoys.com/api/products/download-catalogue/pdf"; 
         }
 
         // --- 3. PRODUCT SEARCH LOGIC ---
@@ -174,8 +174,23 @@ router.post("/webhook", async (req, res) => {
                 replyImage = p.images[0]; // Set the first product image to send
               }
             }
-          } else if (msgBody.includes("hi") || msgBody.includes("hello") || msgBody.includes("start")) {
-            replyText = "Welcome to Bafna Toys! 🧸\nHow can we help you today?\n\n👉 Send *Order ID* (e.g. ODR1001) for status.\n👉 Send *Product Name* (e.g. Doll) to search.\n👉 Send *Catalog* to get PDF.";
+          } else if (msgBody.includes("hi") || msgBody.includes("hello") || msgBody.includes("start") || msgBody.includes("help")) {
+            replyText = `*Namaste! Welcome to Bafna Toys* 🧸✨\n\n` +
+                        `We are India's leading *B2B Toy Manufacturer & Wholesale Supplier*. 🏭🇮🇳\n\n` +
+                        `*Why Shop With Us?*\n` +
+                        `✅ Factory Price Toys (Direct from Source)\n` +
+                        `✅ 4,900+ Trusted Retailers across India\n` +
+                        `✅ BIS Certified Quality (Safe for Kids)\n` +
+                        `✅ All India Door Delivery (COD Available)\n\n` +
+                        `*What can I help you with today?*\n\n` +
+                        `1️⃣ *Check Order Status* 📦\n` +
+                        `_(Send your Order ID, e.g., ODR1001)_ \n\n` +
+                        `2️⃣ *Browse Products* 🧸\n` +
+                        `_(Send any toy name, e.g., 'Car' or 'Doll')_ \n\n` +
+                        `3️⃣ *Download Catalog* 📚\n` +
+                        `_(Send 'Catalog' to get our full price list)_ \n\n` +
+                        `4️⃣ *Talk to Agent* 👤\n` +
+                        `_(Type 'Agent' to connect with our team)_`;
           } else {
             replyText = "I'm not sure about that. Try searching for a toy name (like 'Car' or 'Doll') or send an Order ID.";
           }
