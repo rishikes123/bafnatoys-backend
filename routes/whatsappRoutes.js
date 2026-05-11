@@ -120,7 +120,14 @@ router.post("/webhook", async (req, res) => {
       ) {
         const msg = body.entry[0].changes[0].value.messages[0];
         const from = msg.from; // Customer's number
-        const msgBody = msg.text?.body?.trim().toLowerCase() || "";
+        
+        // Handle both text messages and button clicks
+        let msgBody = "";
+        if (msg.type === "text") {
+          msgBody = msg.text?.body?.trim().toLowerCase() || "";
+        } else if (msg.type === "interactive") {
+          msgBody = msg.interactive?.button_reply?.title?.trim().toLowerCase() || "";
+        }
 
         if (!msgBody) return res.sendStatus(200);
 
@@ -158,7 +165,7 @@ router.post("/webhook", async (req, res) => {
         }
 
         // --- 3. PRODUCT SEARCH LOGIC ---
-        else if (msgBody.length > 2) {
+        else if (msgBody.length > 2 && !msgBody.includes("hi") && !msgBody.includes("hello") && !msgBody.includes("start") && !msgBody.includes("help") && !msgBody.includes("agent")) {
           const products = await Product.find({
             $or: [
               { name: { $regex: msgBody, $options: "i" } },
@@ -171,28 +178,52 @@ router.post("/webhook", async (req, res) => {
             for (const p of products) {
               replyText += `🧸 *${p.name}*\n💰 Price: ₹${p.price}\n🔗 Link: https://bafnatoys.com/product/${p.slug || p._id}\n\n`;
               if (!replyImage && p.images && p.images.length > 0) {
-                replyImage = p.images[0]; // Set the first product image to send
+                replyImage = p.images[0]; 
               }
             }
-          } else if (msgBody.includes("hi") || msgBody.includes("hello") || msgBody.includes("start") || msgBody.includes("help")) {
-            replyText = `*Namaste! Welcome to Bafna Toys* 🧸✨\n\n` +
-                        `We are India's leading *B2B Toy Manufacturer & Wholesale Supplier*. 🏭🇮🇳\n\n` +
-                        `*Why Shop With Us?*\n` +
-                        `✅ Factory Price Toys (Direct from Source)\n` +
-                        `✅ 4,900+ Trusted Retailers across India\n` +
-                        `✅ BIS Certified Quality (Safe for Kids)\n` +
-                        `✅ All India Door Delivery (COD Available)\n\n` +
-                        `*What can I help you with today?*\n\n` +
-                        `1️⃣ *Check Order Status* 📦\n` +
-                        `_(Send your Order ID, e.g., ODR1001)_ \n\n` +
-                        `2️⃣ *Browse Products* 🧸\n` +
-                        `_(Send any toy name, e.g., 'Car' or 'Doll')_ \n\n` +
-                        `3️⃣ *Download Catalog* 📚\n` +
-                        `_(Send 'Catalog' to get our full price list)_ \n\n` +
-                        `4️⃣ *Talk to Agent* 👤\n` +
-                        `_(Type 'Agent' to connect with our team)_`;
           } else {
             replyText = "I'm not sure about that. Try searching for a toy name (like 'Car' or 'Doll') or send an Order ID.";
+          }
+        }
+
+        // --- 4. WELCOME & INTERACTIVE BUTTONS ---
+        else {
+          const welcomeBody = `*Namaste! Welcome to Bafna Toys* 🧸✨\n\n` +
+                              `We are India's leading *B2B Toy Manufacturer*. 🏭🇮🇳\n\n` +
+                              `*Why Shop With Us?*\n` +
+                              `✅ Factory Price Toys\n` +
+                              `✅ 4,900+ Trusted Retailers\n` +
+                              `✅ BIS Certified & COD Available\n\n` +
+                              `How can I help you today?`;
+
+          if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
+            try {
+              await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: from,
+                type: "interactive",
+                interactive: {
+                  type: "button",
+                  header: { type: "text", text: "Bafna Toys 🧸" },
+                  body: { text: welcomeBody },
+                  footer: { text: "Select an option below 👇" },
+                  action: {
+                    buttons: [
+                      { type: "reply", reply: { id: "catalog", title: "📚 Get Catalog" } },
+                      { type: "reply", reply: { id: "order", title: "📦 Order Status" } },
+                      { type: "reply", reply: { id: "agent", title: "👤 Talk to Agent" } }
+                    ]
+                  }
+                }
+              }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+              return res.sendStatus(200); // Handled here, no need for more replies
+            } catch (err) {
+              console.error("❌ Button Error:", err.response?.data || err.message);
+              replyText = welcomeBody; // Fallback to text if buttons fail
+            }
+          } else {
+            replyText = welcomeBody;
           }
         }
 
