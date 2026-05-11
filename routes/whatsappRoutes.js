@@ -159,8 +159,7 @@ router.post("/webhook", async (req, res) => {
                   { id: "order", title: "📦 Order Status", description: "Track your shipment" },
                   { id: "catalog", title: "📚 Get Catalog", description: "Latest wholesale price list" },
                   { id: "agent", title: "👤 Talk to Agent", description: "Chat with support" },
-                  { id: "instagram", title: "📸 Instagram", description: "Follow us for updates" },
-                  { id: "website", title: "🌐 Visit Website", description: "Shop online 24/7" }
+                  { id: "instagram", title: "📸 Instagram", description: "Follow us for updates" }
                 ]
               }];
 
@@ -280,7 +279,14 @@ router.post("/webhook", async (req, res) => {
                       "An agent will check this chat shortly and get back to you. Thank you for your patience! 🙏";
         }
 
-        // --- F. PRODUCT SEARCH LOGIC ---
+        // --- 7. INSTAGRAM LOGIC ---
+        else if (msgBody.includes("instagram") || msgBody.includes("📸")) {
+          replyText = "Follow us on Instagram for latest toy updates and factory videos! 📸✨\n\n" +
+                      "🔗 *Instagram Link:* https://www.instagram.com/bafna_toys?igsh=MXRmNWs3dmZyYTJmbw==\n\n" +
+                      "Don't forget to tag us in your stories! 🧸";
+        }
+
+        // --- 8. PRODUCT SEARCH LOGIC (Last Resort) ---
         else if (msgBody.length > 2 && !["hi","hello","start","help","agent","talk"].some(w => msgBody.includes(w))) {
           const products = await Product.find({
             $or: [
@@ -300,20 +306,6 @@ router.post("/webhook", async (req, res) => {
           } else {
             replyText = "I'm not sure about that. Try searching for a toy name (like 'Car' or 'Doll') or send an Order ID.";
           }
-        }
-
-        // --- G. INSTAGRAM LOGIC ---
-        else if (msgBody.includes("instagram") || msgBody.includes("📸")) {
-          replyText = "Follow us on Instagram for latest toy updates and factory videos! 📸✨\n\n" +
-                      "🔗 *Instagram Link:* https://www.instagram.com/bafna_toys?igsh=MXRmNWs3dmZyYTJmbw==\n\n" +
-                      "Don't forget to tag us in your stories! 🧸";
-        }
-
-        // --- H. WEBSITE LOGIC ---
-        else if (msgBody.includes("website") || msgBody.includes("🌐")) {
-          replyText = "Explore our full collection and factory prices on our website! 🌐✨\n\n" +
-                      "🔗 *Website Link:* https://bafnatoys.com\n\n" +
-                      "Join our community of 4,900+ retailers! 🧸";
         }
 
         // --- G. SENDING THE FINAL RESPONSE ---
