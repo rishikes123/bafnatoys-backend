@@ -1,6 +1,9 @@
 const express = require("express");
 const router = express.Router();
+const axios = require("axios");
 const WhatsAppSettings = require("../models/whatsappSettingsModel");
+
+const WA_VER = process.env.WA_API_VERSION || "v20.0";
 
 const DEFAULTS = {
   enabled: true,
@@ -134,7 +137,7 @@ router.post("/webhook", async (req, res) => {
         if (replyText && ACCESS_TOKEN && PHONE_NUMBER_ID) {
           try {
             await axios.post(
-              `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
+              `https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`,
               {
                 messaging_product: "whatsapp",
                 to: from,
