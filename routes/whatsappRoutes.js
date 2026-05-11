@@ -255,39 +255,60 @@ router.post("/webhook", async (req, res) => {
           }
         }
 
-        // --- F. WELCOME & INTERACTIVE BUTTONS ---
+        // --- G. INSTAGRAM LOGIC ---
+        else if (msgBody.includes("instagram") || msgBody.includes("📸")) {
+          replyText = "Follow us on Instagram for latest toy updates and factory videos! 📸✨\n\n" +
+                      "🔗 *Instagram Link:* https://www.instagram.com/bafna_toys?igsh=MXRmNWs3dmZyYTJmbw==\n\n" +
+                      "Don't forget to tag us in your stories! 🧸";
+        }
+
+        // --- H. WEBSITE LOGIC ---
+        else if (msgBody.includes("website") || msgBody.includes("🌐")) {
+          replyText = "Explore our full collection and factory prices on our website! 🌐✨\n\n" +
+                      "🔗 *Website Link:* https://bafnatoys.com\n\n" +
+                      "Join our community of 4,900+ retailers! 🧸";
+        }
+
+        // --- I. WELCOME & MAIN MENU LIST ---
         else {
           const welcomeBody = `*Namaste! Welcome to Bafna Toys* 🧸✨\n\n` +
-                              `We are India's leading *B2B Toy Manufacturer*. 🏭🇮🇳\n\n` +
-                              `*Our Highlights:*\n` +
-                              `✅ Factory Price | 4,900+ Retailers\n` +
-                              `✅ BIS Certified | COD Available\n\n` +
-                              `Select an option below or type *'Agent'* to talk to us:`;
+                              `India's leading *B2B Toy Manufacturer*. 🏭🇮🇳\n\n` +
+                              `✅ Factory Price | BIS Certified\n` +
+                              `✅ 4,900+ Trusted Retailers\n\n` +
+                              `Please select an option from the *Main Menu* below to get started:`;
 
           if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
             try {
+              const sections = [{
+                title: "Main Menu",
+                rows: [
+                  { id: "order", title: "📦 Order Status", description: "Track your shipment" },
+                  { id: "catalog", title: "📚 Get Catalog", description: "Latest wholesale price list" },
+                  { id: "agent", title: "👤 Talk to Agent", description: "Chat with support" },
+                  { id: "instagram", title: "📸 Instagram", description: "Follow us for updates" },
+                  { id: "website", title: "🌐 Visit Website", description: "Shop online 24/7" }
+                ]
+              }];
+
               await axios.post(`https://graph.facebook.com/${WA_VER}/${PHONE_NUMBER_ID}/messages`, {
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
                 to: from,
                 type: "interactive",
                 interactive: {
-                  type: "button",
+                  type: "list",
                   header: { type: "text", text: "Bafna Toys 🧸" },
                   body: { text: welcomeBody },
-                  footer: { text: "Select an option below 👇" },
+                  footer: { text: "Click below to see options 👇" },
                   action: {
-                    buttons: [
-                      { type: "reply", reply: { id: "categories", title: "📂 View Categories" } },
-                      { type: "reply", reply: { id: "order", title: "📦 Order Status" } },
-                      { type: "reply", reply: { id: "catalog", title: "📚 Get Catalog" } }
-                    ]
+                    button: "Main Menu",
+                    sections
                   }
                 }
               }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
               return res.sendStatus(200); 
             } catch (err) {
-              console.error("❌ Welcome Error:", err.response?.data || err.message);
+              console.error("❌ Menu Error:", err.response?.data || err.message);
               replyText = welcomeBody; 
             }
           } else {
