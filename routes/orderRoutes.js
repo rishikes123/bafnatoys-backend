@@ -4,11 +4,13 @@ const axios = require("axios"); // ✅ Delhivery API integration ke liye
 
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
+const Setting = require("../models/settingModel");
 
 // ✅ Notification Service
 const { sendPushNotification } = require("../services/notificationService");
 const { sendWhatsAppTemplate } = require("../services/whatsappService");
 const { notifyAdminNewOrder } = require("../services/adminNotifyService");
+const { sendPurchaseEvent } = require("../services/metaCapiService");
 const Registration = require("../models/Registration");
 
 // ✅ Phone sanitizer (India)
@@ -323,6 +325,21 @@ router.post("/", async (req, res) => {
 
     // ✅ FIXED: Sending the response AFTER WhatsApp execution is complete!
     res.status(201).json({ order: populatedOrder });
+
+    // ============================================
+    // 3. META CONVERSIONS API (Purchase Event)
+    // ============================================
+    try {
+      const metaSettingDoc = await Setting.findOne({ key: "meta-pixel" });
+      if (metaSettingDoc && metaSettingDoc.data) {
+        // Fire-and-forget CAPI request
+        sendPurchaseEvent(populatedOrder, populatedOrder.customerId, metaSettingDoc.data).catch(e => 
+          console.error("Meta CAPI inner error:", e.message)
+        );
+      }
+    } catch (capiErr) {
+      console.error("Meta CAPI fetch setting error:", capiErr.message);
+    }
 
   } catch (err) {
     console.error("Order Creation Error:", err);

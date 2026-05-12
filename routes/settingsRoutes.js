@@ -326,12 +326,13 @@ router.get("/meta-pixel", async (req, res) => {
     if (!setting) {
       setting = await Setting.create({
         key: "meta-pixel",
-        data: { pixelId: "", enabled: false, events: DEFAULT_PIXEL_EVENTS },
+        data: { pixelId: "", accessToken: "", enabled: false, events: DEFAULT_PIXEL_EVENTS },
       });
     }
     const data = setting.data || {};
     res.json({
       pixelId: data.pixelId || "",
+      accessToken: data.accessToken || "",
       enabled: Boolean(data.enabled),
       events: { ...DEFAULT_PIXEL_EVENTS, ...(data.events || {}) },
     });
@@ -342,7 +343,7 @@ router.get("/meta-pixel", async (req, res) => {
 
 router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
   try {
-    const { pixelId, enabled, events } = req.body;
+    const { pixelId, accessToken, enabled, events } = req.body;
     const cleanPixelId = String(pixelId || "").replace(/\D/g, "").trim();
     const setting = await Setting.findOneAndUpdate(
       { key: "meta-pixel" },
@@ -351,6 +352,7 @@ router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
           key: "meta-pixel",
           data: {
             pixelId: cleanPixelId,
+            accessToken: (accessToken || "").trim(),
             enabled: Boolean(enabled) && cleanPixelId.length > 0,
             events: { ...DEFAULT_PIXEL_EVENTS, ...(events || {}) },
           },
