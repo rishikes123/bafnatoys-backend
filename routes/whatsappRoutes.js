@@ -346,4 +346,46 @@ router.post("/webhook", async (req, res) => {
   }
 });
 
+/* ====================================================================
+   🧪 TEST ENDPOINT — WhatsApp API direct test (admin only)
+   POST /api/whatsapp/test-send
+   Body: { to: "919876543210", templateName: "hello_world" }
+   ==================================================================== */
+const { sendWhatsAppTemplate } = require("../services/whatsappService");
+const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
+// Order already required above at line 90
+
+router.post("/test-send", adminProtect, isAdmin, async (req, res) => {
+  const { to, templateName } = req.body;
+  if (!to) return res.status(400).json({ error: "to (phone number) required. Format: 919XXXXXXXXX" });
+
+  const template = templateName || "hello_world";
+  try {
+    const result = await sendWhatsAppTemplate({
+      to,
+      templateName: template,
+      languageCode: "en_US",
+      components: [],
+    });
+    res.json({ success: true, template, to, result });
+  } catch (err) {
+    const detail = err?.response?.data || err.message;
+    res.json({ success: false, template, to, error: detail });
+  }
+});
+
+// GET /api/whatsapp/wa-errors — last 10 orders ka WA error status
+router.get("/wa-errors", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const orders = await Order.find({ "wa.lastError": { $ne: "" } })
+      .sort({ updatedAt: -1 })
+      .limit(10)
+      .select("orderNumber wa createdAt updatedAt")
+      .lean();
+    res.json({ count: orders.length, orders });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
