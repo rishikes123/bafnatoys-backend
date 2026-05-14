@@ -109,6 +109,19 @@ router.get("/summary", adminProtect, isAdmin, async (req, res) => {
   }
 });
 
+// Block or unblock a customer (admin only)
+router.patch("/customer/:id/block", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const customer = await Registration.findById(req.params.id);
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+    customer.isBlocked = !customer.isBlocked;
+    await customer.save();
+    res.json({ message: customer.isBlocked ? "Customer blocked" : "Customer unblocked", isBlocked: customer.isBlocked });
+  } catch (err) {
+    res.status(500).json({ message: "Block/unblock failed" });
+  }
+});
+
 // Delete a customer (admin only)
 router.delete("/customer/:id", adminProtect, isAdmin, async (req, res) => {
   try {

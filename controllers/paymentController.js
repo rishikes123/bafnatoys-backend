@@ -1,6 +1,9 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const Order = require("../models/orderModel");
+const Product = require("../models/Product");
+const ShippingSettings = require("../models/ShippingSettings");
+const Setting = require("../models/settingModel");
 
 // Razorpay Initialization using your specific .env keys
 const razorpayInstance = new Razorpay({
@@ -10,23 +13,79 @@ const razorpayInstance = new Razorpay({
 
 /* ========================================================================
    1. Create Razorpay Order (customer checkout)
+   Amount is calculated SERVER-SIDE from DB — client amount is never trusted.
    ======================================================================== */
 exports.createOrder = async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { items, paymentMode } = req.body;
 
-    if (!amount) {
-      return res.status(400).json({ message: "Amount is required" });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Items are required" });
     }
 
-    const options = {
-      amount: Math.round(Number(amount) * 100), // convert to paise
+    // 1. Fetch prices from DB (never trust client-supplied prices)
+    const productIds = items.map((i) => i.productId).filter(Boolean);
+    const products = await Product.find({ _id: { $in: productIds } }).select("price").lean();
+    const priceMap = {};
+    products.forEach((p) => { priceMap[String(p._id)] = p.price; });
+
+    // 2. itemsTotal using DB prices (qty = inners × piecesPerUnit, already expanded by frontend)
+    let itemsTotal = 0;
+    for (const item of items) {
+      const unitPrice = priceMap[String(item.productId)];
+      if (unitPrice === undefined) {
+        return res.status(400).json({ message: `Product not found: ${item.productId}` });
+      }
+      itemsTotal += unitPrice * (Number(item.qty) || 0);
+    }
+
+    // 3. Shipping from DB settings
+    const shippingSettings = await ShippingSettings.findOne().lean();
+    const flatRate = shippingSettings?.shippingCharge || 0;
+    const freeAbove = shippingSettings?.freeShippingThreshold || 0;
+    const shippingCharge = freeAbove > 0 && itemsTotal >= freeAbove ? 0 : flatRate;
+
+    // 4. Discount from DB rules
+    const discountRules = shippingSettings?.discountRules || [];
+    let discountAmount = 0;
+    const sortedRules = [...discountRules].sort((a, b) => b.minAmount - a.minAmount);
+    const applicableRule = sortedRules.find((r) => itemsTotal >= r.minAmount);
+    if (applicableRule) {
+      discountAmount = Math.floor((itemsTotal * applicableRule.discountPercentage) / 100);
+    }
+
+    const grandTotal = Math.max(0, itemsTotal + shippingCharge - discountAmount);
+
+    // 5. Determine amount to charge (full total for ONLINE, advance for COD)
+    let amountToCharge = grandTotal;
+    if (paymentMode === "COD") {
+      const codSetting = await Setting.findOne({ key: "cod" }).lean();
+      const codData = codSetting?.data || {};
+      let advance = Number(codData.advanceAmount) || 0;
+      if (codData.advanceType === "percentage") {
+        advance = Math.floor((grandTotal * advance) / 100);
+      }
+      amountToCharge = Math.min(advance, grandTotal);
+      if (amountToCharge <= 0) {
+        return res.status(400).json({ message: "No advance required for this COD order" });
+      }
+    }
+
+    if (amountToCharge <= 0) {
+      return res.status(400).json({ message: "Calculated amount is zero" });
+    }
+
+    // 6. Create Razorpay order with server-calculated amount
+    const order = await razorpayInstance.orders.create({
+      amount: Math.round(amountToCharge * 100), // paise
       currency: "INR",
       receipt: `receipt_${Date.now()}`,
-    };
+    });
 
-    const order = await razorpayInstance.orders.create(options);
-    res.status(200).json(order);
+    res.status(200).json({
+      ...order,
+      _serverCalc: { itemsTotal, shippingCharge, discountAmount, grandTotal, amountToCharge },
+    });
   } catch (error) {
     console.error("Razorpay Order Error:", error);
     res.status(500).json({ message: "Internal Server Error", error });
@@ -34,23 +93,45 @@ exports.createOrder = async (req, res) => {
 };
 
 /* ========================================================================
-   2. Verify Payment Signature
+   2. Verify Payment Signature + Amount
+   Verifies HMAC signature AND checks that Razorpay captured the correct amount.
    ======================================================================== */
 exports.verifyPayment = async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
+    // 1. Verify HMAC signature (proves payment came from Razorpay)
     const sign = razorpay_order_id + "|" + razorpay_payment_id;
     const expectedSign = crypto
       .createHmac("sha256", process.env.RAZORPAY_SECRET)
       .update(sign.toString())
       .digest("hex");
 
-    if (razorpay_signature === expectedSign) {
-      return res.status(200).json({ success: true, message: "Payment verified successfully" });
-    } else {
+    if (razorpay_signature !== expectedSign) {
       return res.status(400).json({ success: false, message: "Invalid payment signature" });
     }
+
+    // 2. Fetch Razorpay order to get the expected amount (set by server in createOrder)
+    const rzpOrder = await razorpayInstance.orders.fetch(razorpay_order_id);
+    if (!rzpOrder || rzpOrder.status !== "paid") {
+      return res.status(400).json({ success: false, message: "Razorpay order not paid" });
+    }
+
+    // 3. Fetch the actual payment and verify the captured amount matches
+    const rzpPayment = await razorpayInstance.payments.fetch(razorpay_payment_id);
+    if (rzpPayment.status !== "captured") {
+      return res.status(400).json({ success: false, message: "Payment not captured" });
+    }
+    if (rzpPayment.amount !== rzpOrder.amount) {
+      console.error(`FRAUD ALERT: Payment ${razorpay_payment_id} captured ₹${rzpPayment.amount / 100} but order expected ₹${rzpOrder.amount / 100}`);
+      return res.status(400).json({ success: false, message: "Payment amount mismatch" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment verified successfully",
+      capturedAmount: rzpPayment.amount / 100,
+    });
   } catch (error) {
     console.error("Verification Error:", error);
     res.status(500).json({ message: "Internal Server Error", error });

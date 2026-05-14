@@ -2,9 +2,16 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios"); // ✅ Delhivery API integration ke liye
 
+const Razorpay = require("razorpay");
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
+const ShippingSettings = require("../models/ShippingSettings");
 const Setting = require("../models/settingModel");
+
+const razorpayInstance = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY,
+  key_secret: process.env.RAZORPAY_SECRET,
+});
 
 // ✅ Notification Service
 const { sendPushNotification } = require("../services/notificationService");
@@ -181,16 +188,13 @@ router.post("/", async (req, res) => {
     const {
       customerId,
       items,
-      total,
       paymentMode,
       paymentMethod,
       shippingAddress,
-      codAdvancePaid,
-      codRemainingAmount,
-      itemsPrice,
-      shippingPrice,
       razorpayPaymentId,
       paymentId,
+      // total, itemsPrice, shippingPrice, codAdvancePaid, codRemainingAmount
+      // are intentionally NOT destructured — backend recalculates them from DB
     } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
@@ -200,6 +204,70 @@ router.post("/", async (req, res) => {
     }
 
     const finalPaymentMethod = paymentMode || paymentMethod || "COD";
+    const rzpPayId = razorpayPaymentId || paymentId || "";
+
+    // ── SERVER-SIDE AMOUNT RECALCULATION ────────────────────────────────────
+    // 1. Fetch current prices from DB (never trust client-supplied prices)
+    const productIds = items.map((i) => i.productId).filter(Boolean);
+    const products = await Product.find({ _id: { $in: productIds } }).select("price").lean();
+    const priceMap = {};
+    products.forEach((p) => { priceMap[String(p._id)] = p.price; });
+
+    // 2. itemsTotal (qty = inners × piecesPerUnit, already expanded by frontend)
+    let serverItemsTotal = 0;
+    for (const item of items) {
+      const unitPrice = priceMap[String(item.productId)];
+      if (unitPrice === undefined) {
+        return res.status(400).json({ message: `Product not found: ${item.productId}` });
+      }
+      serverItemsTotal += unitPrice * (Number(item.qty) || 0);
+    }
+
+    // 3. Shipping from DB settings
+    const shippingSettings = await ShippingSettings.findOne().lean();
+    const flatRate = shippingSettings?.shippingCharge || 0;
+    const freeAbove = shippingSettings?.freeShippingThreshold || 0;
+    const serverShippingPrice = freeAbove > 0 && serverItemsTotal >= freeAbove ? 0 : flatRate;
+
+    // 4. Discount from DB rules
+    const discountRules = shippingSettings?.discountRules || [];
+    let serverDiscountAmount = 0;
+    const sortedRules = [...discountRules].sort((a, b) => b.minAmount - a.minAmount);
+    const applicableRule = sortedRules.find((r) => serverItemsTotal >= r.minAmount);
+    if (applicableRule) {
+      serverDiscountAmount = Math.floor((serverItemsTotal * applicableRule.discountPercentage) / 100);
+    }
+
+    const serverGrandTotal = Math.max(0, serverItemsTotal + serverShippingPrice - serverDiscountAmount);
+
+    // 5. COD advance: recalculate from server settings
+    let serverAdvancePaid = 0;
+    let serverRemainingAmount = serverGrandTotal;
+    if (finalPaymentMethod === "COD" && rzpPayId) {
+      const codSetting = await Setting.findOne({ key: "cod" }).lean();
+      const codData = codSetting?.data || {};
+      let advance = Number(codData.advanceAmount) || 0;
+      if (codData.advanceType === "percentage") {
+        advance = Math.floor((serverGrandTotal * advance) / 100);
+      }
+      serverAdvancePaid = Math.min(advance, serverGrandTotal);
+      serverRemainingAmount = Math.max(serverGrandTotal - serverAdvancePaid, 0);
+    }
+
+    // 6. Verify Razorpay payment amount matches server-calculated amount
+    if (rzpPayId) {
+      const rzpPayment = await razorpayInstance.payments.fetch(rzpPayId);
+      if (rzpPayment.status !== "captured") {
+        return res.status(400).json({ message: "Payment not captured" });
+      }
+      const capturedRupees = rzpPayment.amount / 100;
+      const expectedAmount = finalPaymentMethod === "ONLINE" ? serverGrandTotal : serverAdvancePaid;
+      if (Math.abs(capturedRupees - expectedAmount) > 1) { // ₹1 rounding tolerance
+        console.error(`FRAUD ALERT: Expected ₹${expectedAmount} but captured ₹${capturedRupees}. Customer: ${customerId}`);
+        return res.status(400).json({ message: "Payment amount does not match order total" });
+      }
+    }
+    // ── END SERVER-SIDE CALCULATION ──────────────────────────────────────────
 
     const order = new Order({
       customerId,
@@ -222,13 +290,13 @@ router.post("/", async (req, res) => {
         shippingCity: shippingAddress?.shippingCity || "",
         shippingState: shippingAddress?.shippingState || "",
       },
-      itemsPrice: itemsPrice || 0,
-      shippingPrice: shippingPrice || 0,
-      total: total,
+      itemsPrice: serverItemsTotal,
+      shippingPrice: serverShippingPrice,
+      total: serverGrandTotal,
       paymentMode: finalPaymentMethod,
-      razorpayPaymentId: razorpayPaymentId || paymentId || "",
-      advancePaid: codAdvancePaid || 0,
-      remainingAmount: codRemainingAmount || 0,
+      razorpayPaymentId: rzpPayId,
+      advancePaid: serverAdvancePaid,
+      remainingAmount: serverRemainingAmount,
       wa: {
         orderConfirmedSent: false,
         trackingSent: false,
