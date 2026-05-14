@@ -517,101 +517,105 @@ const updateOrderStatus = async (req, res) => {
     if (newStatus === "shipped") {
       if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0 && !order.trackingId) {
         try {
-          let totalWeightKg = 0;
-          
-          // ✅ Box Dimensions Setup Default
-          let finalLength = 47;  
-          let finalBreadth = 36; 
-          let finalHeight = 25;  
-
-          // 👇 Yahan Naye Boxes A31, A08, A06, A28 aur A18 ki actual dimension logic daali hai
-          packingDetails.forEach(box => { 
-            totalWeightKg += Number(box.totalWeight) || 0; 
-            
-            if (box.boxType === "A28") {
-                finalLength = 47;
-                finalBreadth = 36;
-                finalHeight = 25;
-            } else if (box.boxType === "A06") {
-                finalLength = 44.5;
-                finalBreadth = 35;
-                finalHeight = 34.5;
-            } else if (box.boxType === "A08") {
-                finalLength = 47;
-                finalBreadth = 35.5;
-                finalHeight = 47;
-            } else if (box.boxType === "A31") {
-                finalLength = 89;
-                finalBreadth = 48;
-                finalHeight = 40;
-            } else if (box.boxType === "A18") { // ✅ A18 YAHAN ADD HUA HAI
-                finalLength = 44;
-                finalBreadth = 20; // W hai toh breadth banega
-                finalHeight = 45;
-            }
-          });
-          
-          const totalWeightGrams = totalWeightKg * 1000;
-
-          const addr = order.shippingAddress;
-          const finalCity = addr.isDifferentShipping ? addr.shippingCity : addr.city;
-          const finalState = addr.isDifferentShipping ? addr.shippingState : addr.state;
-          const finalPin = addr.isDifferentShipping ? addr.shippingPincode : addr.pincode;
-          const finalAdd = addr.isDifferentShipping ? `${addr.shippingStreet}, ${addr.shippingArea}` : `${addr.street}, ${addr.area}`;
-          const finalPhone = addr.phone || order.customerId?.otpMobile || "9999999999";
-
-          // 👇 Yahan par COD amount bhejne ki logic fix ki hai
-          let delhiveryCodAmount = 0;
-          if (order.paymentMode === "COD") {
-            if (codAmountToCollect !== undefined) {
-              delhiveryCodAmount = codAmountToCollect; // Agar front-end se reduced amount aayi hai
-            } else {
-              delhiveryCodAmount = order.remainingAmount; // Default fallback
-            }
-          }
-
-          const delhiveryPayload = {
-            format: "json",
-            data: {
-              shipments: [{
-                name: addr.shopName || addr.fullName || order.customerId?.shopName || "Customer",
-                add: finalAdd,
-                pin: finalPin,
-                city: finalCity,
-                state: finalState,
-                country: "India",
-                phone: finalPhone,
-                order: order.orderNumber,
-                payment_mode: order.paymentMode === "COD" ? "COD" : "Prepaid",
-                cod_amount: delhiveryCodAmount, // ✅ Updated amount here
-                products_desc: "Bafna Toys Products",
-                seller_name: "Bafna Toys", 
-                total_amount: order.total,
-                weight: totalWeightGrams,
-                shipping_mode: "Surface",
-                
-                // ✅ DIMENSIONS SENT TO DELHIVERY
-                length: finalLength,
-                breadth: finalBreadth,
-                height: finalHeight
-              }],
-              pickup_location: { name: process.env.DELHIVERY_PICKUP_LOCATION_NAME || "BAFNATOYS" }
-            }
+          // Box dimensions map
+          const BOX_DIMS = {
+            A28: { length: 47,   breadth: 36,   height: 25   },
+            A06: { length: 44.5, breadth: 35,   height: 34.5 },
+            A08: { length: 47,   breadth: 35.5, height: 47   },
+            A31: { length: 89,   breadth: 48,   height: 40   },
+            A18: { length: 44,   breadth: 20,   height: 45   },
           };
 
-          const response = await axios.post("https://track.delhivery.com/api/cmu/create.json", 
-            `format=json&data=${encodeURIComponent(JSON.stringify(delhiveryPayload.data))}`, 
+          // Har box type ko individual boxes mein expand karo
+          // A28 qty:5 → 5 alag boxes, har ek ka apna shipment entry
+          const individualBoxes = [];
+          packingDetails.forEach(box => {
+            const qty = Number(box.quantity) || 1;
+            const dims = BOX_DIMS[box.boxType] || { length: 47, breadth: 36, height: 25 };
+            const perBoxWeightKg = (Number(box.totalWeight) || 0) / qty;
+            // Volumetric vs actual — jo zyada ho
+            const volWeightKg = (dims.length * dims.breadth * dims.height) / 5000;
+            const chargeableKg = Math.max(perBoxWeightKg, volWeightKg);
+            for (let i = 0; i < qty; i++) {
+              individualBoxes.push({
+                boxType: box.boxType,
+                dims,
+                weightGrams: Math.round(chargeableKg * 1000),
+              });
+            }
+          });
+
+          const addr = order.shippingAddress;
+          const finalCity  = addr.isDifferentShipping ? addr.shippingCity    : addr.city;
+          const finalState = addr.isDifferentShipping ? addr.shippingState   : addr.state;
+          const finalPin   = addr.isDifferentShipping ? addr.shippingPincode : addr.pincode;
+          const finalAdd   = addr.isDifferentShipping
+            ? `${addr.shippingStreet}, ${addr.shippingArea}`
+            : `${addr.street}, ${addr.area}`;
+          const finalPhone = addr.phone || order.customerId?.otpMobile || "9999999999";
+          const customerName = addr.shopName || addr.fullName || order.customerId?.shopName || "Customer";
+
+          // COD amount — sirf pehle box pe, baaki prepaid
+          let delhiveryCodAmount = 0;
+          if (order.paymentMode === "COD") {
+            delhiveryCodAmount = codAmountToCollect !== undefined
+              ? codAmountToCollect
+              : (order.remainingAmount || order.total);
+          }
+
+          // Har box ke liye ek shipment entry — ek API call mein sab AWB milenge
+          const shipmentEntries = individualBoxes.map((box, idx) => ({
+            name:         customerName,
+            add:          finalAdd,
+            pin:          finalPin,
+            city:         finalCity,
+            state:        finalState,
+            country:      "India",
+            phone:        finalPhone,
+            // Box 1 = main order number, Box 2+ = ODR1001013-B2, B3...
+            order:        idx === 0 ? order.orderNumber : `${order.orderNumber}-B${idx + 1}`,
+            // Sirf pehle box pe COD — delivery agent wahan se collect karega
+            payment_mode: idx === 0 && order.paymentMode === "COD" ? "COD" : "Prepaid",
+            cod_amount:   idx === 0 ? delhiveryCodAmount : 0,
+            total_amount: idx === 0 ? order.total : 0,
+            products_desc: `Bafna Toys — Box ${idx + 1} of ${individualBoxes.length}`,
+            seller_name:  "Bafna Toys",
+            weight:       box.weightGrams,
+            shipping_mode: "Surface",
+            length:       box.dims.length,
+            breadth:      box.dims.breadth,
+            height:       box.dims.height,
+          }));
+
+          const response = await axios.post(
+            "https://track.delhivery.com/api/cmu/create.json",
+            `format=json&data=${encodeURIComponent(JSON.stringify({
+              shipments: shipmentEntries,
+              pickup_location: { name: process.env.DELHIVERY_PICKUP_LOCATION_NAME || "BAFNATOYS" },
+            }))}`,
             { headers: { "Authorization": `Token ${process.env.DELHIVERY_API_KEY}`, "Content-Type": "application/x-www-form-urlencoded" } }
           );
 
           if (response.data && response.data.success) {
-            order.trackingId = response.data.packages[0].waybill;
+            const packages = response.data.packages || [];
+            // Box 1 → main trackingId
+            order.trackingId  = packages[0]?.waybill || "";
             order.courierName = "Delhivery";
             order.packingDetails = packingDetails;
-            order.isShipped = true;
+            order.isShipped   = true;
+            // Box 2+ → splitShipments array mein save karo
+            if (packages.length > 1) {
+              order.splitShipments = packages.slice(1).map((pkg, i) => ({
+                awb:       pkg.waybill,
+                boxNumber: i + 2,
+                weightKg:  individualBoxes[i + 1].weightGrams / 1000,
+                courier:   "Delhivery",
+                createdAt: new Date(),
+              }));
+            }
           } else {
-             console.error("Delhivery API Rejected:", response.data);
-             return res.status(400).json({ message: "Delhivery API Error: " + JSON.stringify(response.data.error || response.data.rmk) });
+            console.error("Delhivery API Rejected:", response.data);
+            return res.status(400).json({ message: "Delhivery API Error: " + JSON.stringify(response.data.error || response.data.rmk) });
           }
         } catch (apiErr) {
           console.error("Delhivery API Failed:", apiErr.message);

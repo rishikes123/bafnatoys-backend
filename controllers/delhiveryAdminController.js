@@ -1,4 +1,5 @@
 // backend/controllers/delhiveryAdminController.js
+const axios = require("axios");
 const Order = require("../models/orderModel");
 const svc = require("../services/delhiveryService");
 
@@ -503,5 +504,34 @@ exports.stats = async (_req, res) => {
   } catch (err) {
     console.error("delhivery/stats error:", err);
     res.status(500).json({ message: err.message || "Server error" });
+  }
+};
+
+/* ---------------------------------------------------------------
+   11. LABEL PRINT — Delhivery packing slip PDF proxy
+   GET /api/shipping/label?awb=AWB1,AWB2,AWB3
+   API token server pe rehta hai — frontend ko expose nahi hota
+   --------------------------------------------------------------- */
+exports.printLabel = async (req, res) => {
+  try {
+    const { awb } = req.query;
+    if (!awb) return res.status(400).json({ message: "AWB required" });
+
+    const token = process.env.DELHIVERY_API_KEY;
+    if (!token) return res.status(500).json({ message: "Delhivery API key not configured" });
+
+    const url = `https://track.delhivery.com/api/p/packing_slip?waybill=${encodeURIComponent(awb)}&token=${token}`;
+
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 15000,
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="label-${awb}.pdf"`);
+    res.send(response.data);
+  } catch (err) {
+    console.error("Label print error:", err?.response?.status, err?.message);
+    res.status(500).json({ message: "Label fetch failed. Check AWB number." });
   }
 };

@@ -1,11 +1,19 @@
 const axios = require("axios");
 const Order = require("../models/orderModel");
 
+const BOX_DIMS = {
+  A28: { length: 47,   breadth: 36,   height: 25   },
+  A06: { length: 44.5, breadth: 35,   height: 34.5 },
+  A08: { length: 47,   breadth: 35.5, height: 47   },
+  A31: { length: 89,   breadth: 48,   height: 40   },
+  A18: { length: 44,   breadth: 20,   height: 45   },
+};
+
 const createShippingOrder = async (req, res) => {
   try {
     console.log("🚀 Shipping Process Started (FINAL + SAFE ADDRESS)...");
 
-    const { orderId } = req.body;
+    const { orderId, packingDetails } = req.body;
     const order = await Order.findById(orderId).populate("customerId");
     if (!order) return res.status(404).json({ message: "Order not found" });
 
@@ -22,7 +30,6 @@ const createShippingOrder = async (req, res) => {
       today.getMonth() + 1
     ).padStart(2, "0")}-${today.getFullYear()}`;
 
-    // ✅ SAFE FULL ADDRESS (NO MORE ERRORS)
     const fullAddress = [
       sa.street,
       sa.area,
@@ -30,6 +37,33 @@ const createShippingOrder = async (req, res) => {
       sa.state,
       sa.pincode
     ].filter(Boolean).join(", ");
+
+    // ---------- BOX DIMENSIONS — packingDetails se ya default ----------
+    let finalLength = 47, finalBreadth = 36, finalHeight = 25; // default A28
+    let totalWeightKg = 0.5; // default 500g
+
+    const details = packingDetails || order.packingDetails || [];
+    if (details.length > 0) {
+      let largestVolume = 0;
+      totalWeightKg = 0;
+      details.forEach(box => {
+        totalWeightKg += Number(box.totalWeight) || 0;
+        const dims = BOX_DIMS[box.boxType];
+        if (dims) {
+          const vol = dims.length * dims.breadth * dims.height;
+          if (vol > largestVolume) {
+            largestVolume  = vol;
+            finalLength    = dims.length;
+            finalBreadth   = dims.breadth;
+            finalHeight    = dims.height;
+          }
+        }
+      });
+    }
+
+    // Volumetric weight vs actual weight — Delhivery charges higher
+    const volumetricWeightKg = (finalLength * finalBreadth * finalHeight) / 5000;
+    const chargeableWeightKg = Math.max(totalWeightKg, volumetricWeightKg);
 
     // ---------- FINAL PAYLOAD ----------
     const payload = {
@@ -44,7 +78,7 @@ const createShippingOrder = async (req, res) => {
 
             name: sa.fullName || "Customer",
             company_name: "Bafnatoys",
-            add: fullAddress, // ✅ FIXED HERE
+            add: fullAddress,
             pin: cleanPincode,
             city: sa.city,
             state: sa.state,
@@ -54,7 +88,6 @@ const createShippingOrder = async (req, res) => {
             alt_phone: cleanPhone,
             email: "bafnatoys@gmail.com",
 
-            // ✅ Billing (MANDATORY)
             is_billing_same_as_shipping: "yes",
             billing_name: sa.fullName || "Customer",
             billing_add: fullAddress,
@@ -71,10 +104,10 @@ const createShippingOrder = async (req, res) => {
               }
             ],
 
-            shipment_length: "10",
-            shipment_width: "10",
-            shipment_height: "10",
-            weight: "0.5",
+            shipment_length: String(finalLength),
+            shipment_width:  String(finalBreadth),
+            shipment_height: String(finalHeight),
+            weight:          String(chargeableWeightKg.toFixed(2)),
 
             shipping_charges: "0",
             giftwrap_charges: "0",
@@ -83,7 +116,7 @@ const createShippingOrder = async (req, res) => {
             first_attemp_discount: "0",
             cod_charges: "0",
             advance_amount: "0",
-            cod_amount: isCod ? String(Math.round(order.total)) : "0",
+            cod_amount: isCod ? String(Math.round(order.remainingAmount ?? order.total)) : "0",
 
             payment_mode: isCod ? "COD" : "Prepaid",
             reseller_name: "",
@@ -141,13 +174,6 @@ const createShippingOrder = async (req, res) => {
    Body: { orderId, boxNumber, packingDetails: [{boxType, quantity, totalWeight}] }
    Uses same Delhivery API as main ship flow.
    ===================================================================== */
-const BOX_DIMS = {
-  A28: { length: 47,   breadth: 36,   height: 25   },
-  A06: { length: 44.5, breadth: 35,   height: 34.5 },
-  A08: { length: 47,   breadth: 35.5, height: 47   },
-  A31: { length: 89,   breadth: 48,   height: 40   },
-  A18: { length: 44,   breadth: 20,   height: 45   },
-};
 
 const createSplitShipment = async (req, res) => {
   try {

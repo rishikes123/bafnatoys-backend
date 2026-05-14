@@ -43,4 +43,8 @@ router.post("/delhivery/ndr-action/:awb", adminProtect, dh.ndrAction);
 // Wallet transactions + per-shipment ledger
 router.get("/delhivery/transactions", adminProtect, dh.transactions);
 
+// Label print — Delhivery packing slip PDF
+// GET /api/shipping/label?awb=AWB1   or   ?awb=AWB1,AWB2,AWB3
+router.get("/label", adminProtect, dh.printLabel);
+
 module.exports = router;
