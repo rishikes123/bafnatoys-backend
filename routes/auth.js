@@ -40,6 +40,8 @@ router.post('/login', async (req, res) => {
     const { otpMobile } = req.body;
     const user = await Registration.findOne({ otpMobile });
     if (!user) return res.status(400).json({ msg: 'User not found' });
+    if (user.isBlocked)
+      return res.status(403).json({ msg: 'Your account has been blocked. Please contact support.' });
     if (!user.isApproved)
       return res.status(403).json({ msg: 'Admin approval pending.' });
 

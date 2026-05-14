@@ -40,6 +40,9 @@ router.post("/register", upload.fields([{ name: 'visitingCard', maxCount: 1 }, {
     // Duplicate Check
     const dup = await Registration.findOne({ otpMobile: nMobile });
     if (dup) {
+      if (dup.isBlocked) {
+        return res.status(403).json({ message: "Your account has been blocked. Please contact support." });
+      }
       return res.status(409).json({ message: "Mobile number already registered." });
     }
 

@@ -13,6 +13,15 @@ router.post("/send", async (req, res) => {
       return res.status(400).json({ success: false, message: "Phone required" });
     }
 
+    // Block check: blocked customers cannot receive OTP
+    const normalizedForBlock = String(phone).replace(/\D/g, "").replace(/^91/, "").slice(-10);
+    const existingUser = await Registration.findOne({
+      otpMobile: { $in: [phone, normalizedForBlock, "91" + normalizedForBlock] },
+    }).select("isBlocked");
+    if (existingUser?.isBlocked) {
+      return res.status(403).json({ success: false, message: "Your account has been blocked. Please contact support." });
+    }
+
     // Rate limit: max 3 OTPs per phone per 10 minutes
     const recentCount = await OtpModel.countDocuments({ phone });
     if (recentCount >= 3) {
@@ -83,8 +92,11 @@ router.post("/verify", async (req, res) => {
       otpMobile: { $in: [phone, normalizedPhone, "91" + normalizedPhone] },
     }).select("-password");
 
-    // If user exists → login flow: return JWT token
+    // If user exists → login flow
     if (user) {
+      if (user.isBlocked) {
+        return res.status(403).json({ success: false, message: "Your account has been blocked. Please contact support." });
+      }
       const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "30d" });
       return res.json({ success: true, message: "OTP verified successfully", token, user });
     }
