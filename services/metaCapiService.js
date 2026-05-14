@@ -13,8 +13,9 @@ const hashData = (data) => {
  * @param {Object} order - Order object containing total, items, and orderNumber
  * @param {Object} customer - Customer object with email, phone, name, city, state, zip
  * @param {Object} metaSetting - Contains pixelId and accessToken
+ * @param {Object} req - Express request object to extract IP, user agent, and cookies
  */
-const sendPurchaseEvent = async (order, customer, metaSetting) => {
+const sendPurchaseEvent = async (order, customer, metaSetting, req) => {
   try {
     const { pixelId, accessToken, enabled, events } = metaSetting || {};
     
@@ -23,6 +24,26 @@ const sendPurchaseEvent = async (order, customer, metaSetting) => {
 
     // Build the user_data payload
     const userData = {};
+
+    // 1. IP Address & User Agent (Highly recommended by Meta)
+    if (req) {
+      const clientIp = req.headers?.["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || req.connection?.remoteAddress;
+      if (clientIp) userData.client_ip_address = clientIp;
+      
+      const userAgent = req.headers?.["user-agent"];
+      if (userAgent) userData.client_user_agent = userAgent;
+
+      // 2. Facebook Click ID (fbc) and Browser ID (fbp) from Cookies
+      if (req.headers?.cookie) {
+        const cookies = req.headers.cookie.split(";").reduce((res, c) => {
+          const [key, val] = c.trim().split("=");
+          res[key] = val;
+          return res;
+        }, {});
+        if (cookies["_fbp"]) userData.fbp = cookies["_fbp"];
+        if (cookies["_fbc"]) userData.fbc = cookies["_fbc"];
+      }
+    }
     
     if (customer?.email) userData.em = [hashData(customer.email)];
     

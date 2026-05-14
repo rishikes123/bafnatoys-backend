@@ -333,7 +333,7 @@ router.post("/", async (req, res) => {
       const metaSettingDoc = await Setting.findOne({ key: "meta-pixel" });
       if (metaSettingDoc && metaSettingDoc.data) {
         // Fire-and-forget CAPI request
-        sendPurchaseEvent(populatedOrder, populatedOrder.customerId, metaSettingDoc.data).catch(e => 
+        sendPurchaseEvent(populatedOrder, populatedOrder.customerId, metaSettingDoc.data, req).catch(e => 
           console.error("Meta CAPI inner error:", e.message)
         );
       }
