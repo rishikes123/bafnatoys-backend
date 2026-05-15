@@ -344,6 +344,20 @@ async function getActualChargesForOrders(orders = [], trackingLiveMap = {}) {
   return map;
 }
 
+/* ---------------------------------------------------------------
+   PACKING SLIP / LABEL — PDF stream from Delhivery
+   awbs: comma-separated AWB string e.g. "123,456"
+   --------------------------------------------------------------- */
+async function getPackingSlip(awbs) {
+  const url = `${BASE}/api/p/packing_slip`;
+  const response = await axios.get(url, {
+    params: { wbns: awbs, token: TOKEN },
+    responseType: "arraybuffer",
+    timeout: 20000,
+  });
+  return response; // caller streams response.data
+}
+
 module.exports = {
   getWalletBalance,
   getWalletTransactions,
@@ -355,5 +369,6 @@ module.exports = {
   getShippingRate,
   createPickupRequest,
   ndrAction,
+  getPackingSlip,
   PICKUP_LOCATION,
 };

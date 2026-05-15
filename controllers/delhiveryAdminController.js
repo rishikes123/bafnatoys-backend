@@ -264,7 +264,57 @@ exports.createPickup = async (req, res) => {
 };
 
 /* ---------------------------------------------------------------
-   7. NDR DASHBOARD — fetch shipped orders + filter those in NDR state
+   7. PRINT LABEL — stream Delhivery packing slip PDF
+   GET /delhivery/label/:awb   (or ?awbs=awb1,awb2 for bulk)
+   --------------------------------------------------------------- */
+exports.printLabel = async (req, res) => {
+  try {
+    const awbParam = req.params.awb || req.query.awbs || "";
+    if (!awbParam) return res.status(400).json({ message: "AWB required" });
+
+    const response = await svc.getPackingSlip(awbParam);
+    const contentType = response.headers["content-type"] || "application/pdf";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="label-${awbParam}.pdf"`
+    );
+    res.send(Buffer.from(response.data));
+  } catch (err) {
+    console.error("delhivery/label error:", err?.response?.status, err.message);
+    res.status(502).json({
+      message: "Failed to fetch label from Delhivery",
+      detail: err?.response?.data?.toString?.() || err.message,
+    });
+  }
+};
+
+/* ---------------------------------------------------------------
+   7b. BULK PRINT LABEL — POST body: { awbs: ["awb1","awb2"] }
+   --------------------------------------------------------------- */
+exports.printLabelBulk = async (req, res) => {
+  try {
+    const { awbs } = req.body;
+    if (!Array.isArray(awbs) || awbs.length === 0) {
+      return res.status(400).json({ message: "awbs array required" });
+    }
+    const awbParam = awbs.join(",");
+    const response = await svc.getPackingSlip(awbParam);
+    const contentType = response.headers["content-type"] || "application/pdf";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="labels-bulk.pdf"`
+    );
+    res.send(Buffer.from(response.data));
+  } catch (err) {
+    console.error("delhivery/label-bulk error:", err.message);
+    res.status(502).json({ message: "Failed to fetch bulk labels" });
+  }
+};
+
+/* ---------------------------------------------------------------
+   8. NDR DASHBOARD — fetch shipped orders + filter those in NDR state
    --------------------------------------------------------------- */
 exports.ndrList = async (_req, res) => {
   try {
