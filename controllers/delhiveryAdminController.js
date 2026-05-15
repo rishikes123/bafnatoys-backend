@@ -269,22 +269,27 @@ exports.createPickup = async (req, res) => {
    --------------------------------------------------------------- */
 exports.printLabel = async (req, res) => {
   try {
-    const awbParam = req.params.awb || req.query.awbs || "";
+    const awbParam = req.params.awb || req.query.awb || req.query.awbs || "";
     if (!awbParam) return res.status(400).json({ message: "AWB required" });
 
+    console.log(`[Label] Request for AWB: ${awbParam}`);
     const response = await svc.getPackingSlip(awbParam);
     const contentType = response.headers["content-type"] || "application/pdf";
+    console.log(`[Label] Got response, content-type: ${contentType}, size: ${response.data?.length}`);
     res.setHeader("Content-Type", contentType);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="label-${awbParam}.pdf"`
-    );
+    res.setHeader("Content-Disposition", `inline; filename="label-${awbParam}.pdf"`);
     res.send(Buffer.from(response.data));
   } catch (err) {
-    console.error("delhivery/label error:", err?.response?.status, err.message);
+    // Get actual Delhivery error text
+    let delhiveryErr = err.message;
+    if (err?.response?.data) {
+      try {
+        delhiveryErr = Buffer.from(err.response.data).toString("utf8").slice(0, 300);
+      } catch {}
+    }
+    console.error(`[Label] FAILED for AWB:`, err?.response?.status, delhiveryErr);
     res.status(502).json({
-      message: "Failed to fetch label from Delhivery",
-      detail: err?.response?.data?.toString?.() || err.message,
+      message: delhiveryErr || "Failed to fetch label from Delhivery",
     });
   }
 };

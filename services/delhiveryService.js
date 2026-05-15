@@ -347,15 +347,42 @@ async function getActualChargesForOrders(orders = [], trackingLiveMap = {}) {
 /* ---------------------------------------------------------------
    PACKING SLIP / LABEL — PDF stream from Delhivery
    awbs: comma-separated AWB string e.g. "123,456"
+   Tries multiple Delhivery endpoints (classic + Delhivery One)
    --------------------------------------------------------------- */
 async function getPackingSlip(awbs) {
-  const url = `${BASE}/api/p/packing_slip`;
-  const response = await axios.get(url, {
-    params: { wbns: awbs, token: TOKEN },
-    responseType: "arraybuffer",
-    timeout: 20000,
-  });
-  return response; // caller streams response.data
+  const endpoints = [
+    `${BASE}/api/p/packing_slip`,
+    `https://one.delhivery.com/api/p/packing_slip`,
+    `${BASE}/api/p/packing-slip`,
+  ];
+
+  let lastErr = null;
+  for (const url of endpoints) {
+    try {
+      console.log(`[Label] Trying: ${url} for AWBs: ${awbs}`);
+      const response = await axios.get(url, {
+        params: { wbns: awbs, token: TOKEN },
+        responseType: "arraybuffer",
+        timeout: 20000,
+      });
+      // Check if response is actually a PDF (not an error HTML page)
+      const contentType = response.headers["content-type"] || "";
+      const isHtml = contentType.includes("text/html");
+      if (isHtml) {
+        // Delhivery returned HTML error page — try next URL
+        const text = Buffer.from(response.data).toString("utf8").slice(0, 200);
+        console.warn(`[Label] Got HTML from ${url}:`, text);
+        lastErr = new Error(`Got HTML response: ${text}`);
+        continue;
+      }
+      console.log(`[Label] Success from ${url}, content-type: ${contentType}`);
+      return response;
+    } catch (err) {
+      console.warn(`[Label] Failed at ${url}:`, err?.response?.status, err.message);
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("All label endpoints failed");
 }
 
 module.exports = {

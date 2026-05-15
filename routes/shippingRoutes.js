@@ -44,8 +44,10 @@ router.post("/delhivery/ndr-action/:awb", adminProtect, dh.ndrAction);
 router.get("/delhivery/transactions", adminProtect, dh.transactions);
 
 // Label print — single AWB
-// GET /api/shipping/delhivery/label/52286510000405
+// GET /api/shipping/delhivery/label?awb=52286510000405
+// GET /api/shipping/delhivery/label/52286510000405  (both work)
 router.get("/delhivery/label/:awb", adminProtect, dh.printLabel);
+router.get("/delhivery/label", adminProtect, dh.printLabel);
 
 // Label print — bulk (multiple AWBs)
 // POST /api/shipping/delhivery/label-bulk  { awbs: ["awb1","awb2"] }
