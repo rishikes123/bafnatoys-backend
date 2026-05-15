@@ -105,6 +105,17 @@ router.get("/phone/:otpMobile", async (req, res) => {
   }
 });
 
+/* --------------------------- GET BY ID ----------------------------- */
+router.get("/:id", async (req, res) => {
+  try {
+    const user = await Registration.findById(req.params.id).lean();
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch user" });
+  }
+});
+
 /* ------------------------------- UPDATE ------------------------------ */
 router.put("/:id", upload.fields([{ name: 'visitingCard', maxCount: 1 }, { name: 'gstDocument', maxCount: 1 }]), async (req, res) => {
   try {
@@ -183,6 +194,31 @@ router.post("/:id/push-token", async (req, res) => {
     res.json({ success: true, message: "Push token updated" });
   } catch (err) {
     res.status(500).json({ message: "Failed to update push token" });
+  }
+});
+
+/* ----------- SPECIAL CUSTOMER SETTINGS TOGGLE ----------- */
+// PATCH /api/registrations/:id/settings
+// body: { isSpecial, codEnabled, noAdvance }
+router.patch("/:id/settings", async (req, res) => {
+  try {
+    const allowed = ["isSpecial", "codEnabled", "noAdvance"];
+    const update = {};
+    for (const k of allowed) {
+      if (req.body[k] !== undefined) update[k] = Boolean(req.body[k]);
+    }
+    if (Object.keys(update).length === 0)
+      return res.status(400).json({ message: "No valid fields" });
+
+    const doc = await Registration.findByIdAndUpdate(
+      req.params.id,
+      update,
+      { new: true }
+    );
+    if (!doc) return res.status(404).json({ message: "Customer not found" });
+    res.json(doc);
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to update settings" });
   }
 });
 

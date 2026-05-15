@@ -22,6 +22,11 @@ const RegistrationSchema = new mongoose.Schema(
     isApproved: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
     expoPushToken: { type: String, required: false },
+
+    // Special customer settings
+    isSpecial:   { type: Boolean, default: false },  // ⭐ Special badge
+    codEnabled:  { type: Boolean, default: true  },  // COD on/off
+    noAdvance:   { type: Boolean, default: false },  // No advance required
   },
   { timestamps: true }
 );
