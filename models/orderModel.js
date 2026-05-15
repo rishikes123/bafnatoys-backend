@@ -110,9 +110,14 @@ const orderSchema = new mongoose.Schema(
     packingDetails: {
       type: [
         {
-          boxType: { type: String, enum: ["A28", "A06", "A08", "A31", "A18"] },
-          quantity: { type: Number, default: 0 },
-          totalWeight: { type: Number, default: 0 },
+          boxType:     { type: String },              // "A28"|"A06"|"A08"|"A31"|"A18"|"custom"
+          customId:    { type: String, default: "" }, // CustomBox _id (only for custom)
+          customName:  { type: String, default: "" }, // display name
+          length:      { type: Number, default: 0 },  // cm (custom boxes)
+          breadth:     { type: Number, default: 0 },
+          height:      { type: Number, default: 0 },
+          quantity:    { type: Number, default: 0 },
+          totalWeight: { type: Number, default: 0 },  // kg
         }
       ],
       default: []

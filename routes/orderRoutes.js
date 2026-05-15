@@ -531,7 +531,10 @@ const updateOrderStatus = async (req, res) => {
           const individualBoxes = [];
           packingDetails.forEach(box => {
             const qty = Number(box.quantity) || 1;
-            const dims = BOX_DIMS[box.boxType] || { length: 47, breadth: 36, height: 25 };
+            // Custom box → use admin-entered dims; standard box → lookup BOX_DIMS
+            const dims = box.boxType === "custom"
+              ? { length: Number(box.length) || 10, breadth: Number(box.breadth) || 10, height: Number(box.height) || 10 }
+              : (BOX_DIMS[box.boxType] || { length: 47, breadth: 36, height: 25 });
             const perBoxWeightKg = (Number(box.totalWeight) || 0) / qty;
             // Volumetric vs actual — jo zyada ho
             const volWeightKg = (dims.length * dims.breadth * dims.height) / 5000;

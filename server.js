@@ -111,6 +111,7 @@ app.use("/api/otp", require("./routes/otpRoutes"));
 app.use("/api/addresses", require("./routes/addressRoutes"));
 app.use("/api/settings", require("./routes/settingsRoutes"));
 app.use("/api/shipping", require("./routes/shippingRoutes"));
+app.use("/api/custom-boxes", require("./routes/customBoxRoutes"));
 app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/discount-rules", require("./routes/discountRoutes"));
 app.use("/api/reviews", require("./routes/reviewRoutes")); 

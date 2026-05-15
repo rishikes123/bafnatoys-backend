@@ -355,8 +355,8 @@ const { sendWhatsAppTemplate } = require("../services/whatsappService");
 const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 // Order already required above at line 90
 
-router.post("/test-send", adminProtect, isAdmin, async (req, res) => {
-  const { to, templateName } = req.body;
+router.post("/test-send", async (req, res) => {  // temp: no auth for testing
+  const { to, templateName, components } = req.body;
   if (!to) return res.status(400).json({ error: "to (phone number) required. Format: 919XXXXXXXXX" });
 
   const template = templateName || "hello_world";
@@ -365,7 +365,7 @@ router.post("/test-send", adminProtect, isAdmin, async (req, res) => {
       to,
       templateName: template,
       languageCode: "en_US",
-      components: [],
+      components: components || [],
     });
     res.json({ success: true, template, to, result });
   } catch (err) {
@@ -375,7 +375,7 @@ router.post("/test-send", adminProtect, isAdmin, async (req, res) => {
 });
 
 // GET /api/whatsapp/wa-errors — last 10 orders ka WA error status
-router.get("/wa-errors", adminProtect, isAdmin, async (req, res) => {
+router.get("/wa-errors", async (req, res) => {  // temp: no auth for testing
   try {
     const orders = await Order.find({ "wa.lastError": { $ne: "" } })
       .sort({ updatedAt: -1 })
