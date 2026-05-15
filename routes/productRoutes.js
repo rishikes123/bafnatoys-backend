@@ -609,16 +609,13 @@ router.get("/download-catalogue/pdf", async (req, res) => {
       // Draw Text Details
       doc.fillColor("#0f172a").fontSize(10).text(cleanName, currentX + 10, currentY + 150, { width: 150, height: 25, ellipsis: true });
       doc.fillColor("#64748b").fontSize(9).text(`SKU: ${p.sku || 'N/A'}`, currentX + 10, currentY + 175);
-      
-      let minQty = p.minOrderQty > 0 ? p.minOrderQty : (p.piecesPerUnit > 1 ? p.piecesPerUnit : (p.price < 60 ? 3 : 2));
-      // If strict bulk, ignore manual MQ if it's smaller than unit size
+
+      let minQty = p.minOrderQty > 0 ? p.minOrderQty : (p.piecesPerUnit > 1 ? p.piecesPerUnit : 2);
       if (p.isBulkOnly && p.piecesPerUnit > 1) {
         minQty = Math.max(minQty, p.piecesPerUnit);
       }
       doc.fillColor("#64748b").fontSize(9).text(`Min Qty: ${minQty} Pcs`, currentX + 10, currentY + 188);
-      
-      doc.fillColor("#059669").fontSize(12).font('Helvetica-Bold').text(`Rs. ${p.price}`, currentX + 10, currentY + 200);
-      doc.font('Helvetica'); // Reset font back to normal
+      // Price & MRP hidden — add karna ho to "rest" ke baad batao
 
       // Move Positions
       col++;
