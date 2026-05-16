@@ -209,9 +209,10 @@ router.post("/", async (req, res) => {
     // ── SERVER-SIDE AMOUNT RECALCULATION ────────────────────────────────────
     // 1. Fetch current prices from DB (never trust client-supplied prices)
     const productIds = items.map((i) => i.productId).filter(Boolean);
-    const products = await Product.find({ _id: { $in: productIds } }).select("price").lean();
+    const products = await Product.find({ _id: { $in: productIds } }).select("price gstRate").lean();
     const priceMap = {};
-    products.forEach((p) => { priceMap[String(p._id)] = p.price; });
+    const gstRateMap = {};
+    products.forEach((p) => { priceMap[String(p._id)] = p.price; gstRateMap[String(p._id)] = p.gstRate || 0; });
 
     // 2. itemsTotal (qty = inners × piecesPerUnit, already expanded by frontend)
     let serverItemsTotal = 0;
@@ -269,9 +270,16 @@ router.post("/", async (req, res) => {
     }
     // ── END SERVER-SIDE CALCULATION ──────────────────────────────────────────
 
+    // ── Enrich items with server-side price and gstRate ──────────────────────
+    const enrichedItems = items.map((item) => ({
+      ...item,
+      price: priceMap[String(item.productId)] ?? item.price,
+      gstRate: gstRateMap[String(item.productId)] ?? 0,
+    }));
+
     const order = new Order({
       customerId,
-      items,
+      items: enrichedItems,
       shippingAddress: {
         shopName: shippingAddress?.shopName || "",
         fullName: shippingAddress?.fullName || "",

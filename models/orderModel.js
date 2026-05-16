@@ -16,6 +16,7 @@ const orderItemSchema = new mongoose.Schema(
     inners: { type: Number, required: true },
     price: { type: Number, required: true },
     mrp: { type: Number, default: 0 },
+    gstRate: { type: Number, default: 0 }, // ✅ GST % inclusive in price
     image: { type: String },
   },
   { _id: false }
