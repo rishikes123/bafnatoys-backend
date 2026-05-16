@@ -29,6 +29,7 @@ const productSchema = new mongoose.Schema(
         price: { type: Number, min: 0 },
       },
     ],
+    gstRate: { type: Number, default: 12, enum: [0, 5, 12, 18, 28] }, // GST % inclusive in price
     taxFields: { type: [String], default: [] },
     order: { type: Number, default: 0 },
     slug: { type: String, unique: true, trim: true },
