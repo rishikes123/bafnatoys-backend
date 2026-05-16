@@ -524,6 +524,7 @@ const updateOrderStatus = async (req, res) => {
             A08: { length: 47,   breadth: 35.5, height: 47   },
             A31: { length: 89,   breadth: 48,   height: 40   },
             A18: { length: 44,   breadth: 20,   height: 45   },
+            B10: { length: 37.5, breadth: 23,   height: 35   }, // ✅ B10 added
           };
 
           // Har box type ko individual boxes mein expand karo
