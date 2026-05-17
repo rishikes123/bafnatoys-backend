@@ -262,6 +262,22 @@ const injectSEO = (html, { title, description, url, image }) => {
     : html.replace("<head>", `<head>\n${tags}`);
 };
 
+app.get("/", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "Toys Manufacturers in India - Bafna Toys | Wholesale Toy Supplier",
+      description: "Bafna Toys is a leading wholesale toy manufacturer in Coimbatore, India. Buy pullback cars, PVC dolls, windup toys, board games at factory-direct prices. COD available.",
+      url: "https://bafnatoys.com/",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
 app.get("/products", async (req, res) => {
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
   try {
