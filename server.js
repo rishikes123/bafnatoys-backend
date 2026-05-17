@@ -238,6 +238,78 @@ app.get("/product/:id", async (req, res) => {
   }
 });
 
+/* ====================================================================
+   ✅ SEO INJECTION — /products, /hot-deals, /categories pages
+   ==================================================================== */
+const injectSEO = (html, { title, description, url, image }) => {
+  const safeTitle = title.replace(/"/g, "'");
+  const safeDesc = description.replace(/"/g, "'").replace(/<[^>]*>/g, "").substring(0, 155);
+  const tags = `
+    <title>${safeTitle}</title>
+    <meta name="description" content="${safeDesc}" />
+    <meta property="og:title" content="${safeTitle}" />
+    <meta property="og:description" content="${safeDesc}" />
+    <meta property="og:image" content="${image}" />
+    <meta property="og:url" content="${url}" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${safeTitle}" />
+    <meta name="twitter:description" content="${safeDesc}" />
+    <meta name="twitter:image" content="${image}" />
+    <link rel="canonical" href="${url}" />`;
+  return html.includes("</head>")
+    ? html.replace("</head>", `${tags}\n</head>`)
+    : html.replace("<head>", `<head>\n${tags}`);
+};
+
+app.get("/products", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "All Toys | Bafna Toys - Wholesale Toy Manufacturer India",
+      description: "Browse our complete collection of wholesale toys — pullback cars, PVC dolls, windup toys, board games & more. Factory-direct prices from Coimbatore, India.",
+      url: "https://bafnatoys.com/products",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
+app.get("/hot-deals", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "Hot Deals & Offers | Bafna Toys Wholesale",
+      description: "Grab the best deals on wholesale toys! Discounted rates on pullback cars, PVC dolls, windup toys and more. Limited stock — order now from Bafna Toys.",
+      url: "https://bafnatoys.com/hot-deals",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
+app.get("/categories", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "Toy Categories | Bafna Toys - Pullback Cars, Dolls, Games & More",
+      description: "Explore all toy categories at Bafna Toys — pullback cars, PVC dolls, windup key toys, board games, baby rattles & educational toys at wholesale rates.",
+      url: "https://bafnatoys.com/categories",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
 /* ------------------------- FRONTEND SERVE ---------------------------- */
 app.use(express.static(path.join(__dirname, "../frontend/dist")));
 
