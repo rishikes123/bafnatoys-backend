@@ -383,6 +383,7 @@ router.post("/", async (req, res) => {
       },
       itemsPrice: serverItemsTotal,
       shippingPrice: serverShippingPrice,
+      discountAmount: serverDiscountAmount,
       total: serverGrandTotal,
       paymentMode: finalPaymentMethod,
       razorpayPaymentId: rzpPayId,
@@ -563,6 +564,36 @@ router.put("/admin/return-action/:id", async (req, res) => {
     }
   } catch (error) {
     res.status(500).send({ message: error.message });
+  }
+});
+
+/* ============================================================
+    ✅ ADVANCE ONLY SAVE (without shipping)
+    PATCH /api/orders/:id/advance
+============================================================ */
+router.patch("/:id/advance", async (req, res) => {
+  try {
+    const { advancePaid } = req.body;
+    if (advancePaid === undefined || advancePaid === null) {
+      return res.status(400).json({ message: "advancePaid is required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const advance = Math.max(0, Number(advancePaid) || 0);
+    order.advancePaid = advance;
+    order.remainingAmount = Math.max(0, order.total - advance);
+    await order.save();
+
+    res.json({
+      advancePaid: order.advancePaid,
+      remainingAmount: order.remainingAmount,
+      total: order.total,
+    });
+  } catch (err) {
+    console.error("Advance save error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
   }
 });
 
