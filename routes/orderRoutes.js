@@ -180,6 +180,66 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
+ * @route  POST /api/orders/admin/recover-from-payment
+ * @desc   Admin manually creates an order linked to an existing Razorpay payment
+ *         Used when payment was captured but order creation failed
+ */
+router.post("/admin/recover-from-payment", async (req, res) => {
+  try {
+    const { razorpayPaymentId } = req.body;
+    if (!razorpayPaymentId) return res.status(400).json({ message: "razorpayPaymentId required" });
+
+    // 1. Verify payment is captured on Razorpay
+    const rzpPayment = await razorpayInstance.payments.fetch(razorpayPaymentId);
+    if (!rzpPayment || rzpPayment.status !== "captured") {
+      return res.status(400).json({ message: "Payment not captured on Razorpay" });
+    }
+
+    // 2. Check if order already exists
+    const existing = await Order.findOne({ razorpayPaymentId });
+    if (existing) {
+      return res.status(200).json({
+        message: "Order already exists",
+        orderNumber: existing.orderNumber,
+        orderId: existing._id,
+        alreadyExists: true,
+      });
+    }
+
+    // 3. Find customer by contact number
+    const contactRaw = rzpPayment.contact || "";
+    const digits = contactRaw.replace(/\D/g, "");
+    const phone10 = digits.length >= 10 ? digits.slice(-10) : digits;
+    const customer = await Registration.findOne({ otpMobile: phone10 });
+
+    const capturedRupees = (rzpPayment.amount || 0) / 100;
+    const rzpOrderId = rzpPayment.order_id || "";
+
+    // 4. Return all known info so admin can review
+    return res.status(200).json({
+      alreadyExists: false,
+      paymentId: rzpPayment.id,
+      razorpayOrderId: rzpOrderId,
+      amountPaid: capturedRupees,
+      paymentMethod: rzpPayment.method,
+      contact: rzpPayment.contact,
+      email: rzpPayment.email,
+      description: rzpPayment.description,
+      createdAt: rzpPayment.created_at ? new Date(rzpPayment.created_at * 1000).toISOString() : null,
+      customer: customer
+        ? { _id: customer._id, shopName: customer.shopName || customer.firmName, phone: customer.otpMobile, city: customer.city, state: customer.state, address: customer.address }
+        : null,
+      message: customer
+        ? "Customer found. Call them to get order details and create manually."
+        : "Customer not found in DB. Check phone number manually.",
+    });
+  } catch (err) {
+    console.error("recover-from-payment error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
+  }
+});
+
+/**
  *@route    POST /api/orders
  *@desc     Create a new order & Notify Customer via WhatsApp
  */
@@ -192,6 +252,7 @@ router.post("/", async (req, res) => {
       paymentMethod,
       shippingAddress,
       razorpayPaymentId,
+      razorpayOrderId,   // ✅ NEW: pass this from frontend for accurate amount check
       paymentId,
       // total, itemsPrice, shippingPrice, codAdvancePaid, codRemainingAmount
       // are intentionally NOT destructured — backend recalculates them from DB
@@ -255,17 +316,39 @@ router.post("/", async (req, res) => {
       serverRemainingAmount = Math.max(serverGrandTotal - serverAdvancePaid, 0);
     }
 
-    // 6. Verify Razorpay payment amount matches server-calculated amount
+    // 6. Verify Razorpay payment amount
     if (rzpPayId) {
       const rzpPayment = await razorpayInstance.payments.fetch(rzpPayId);
       if (rzpPayment.status !== "captured") {
         return res.status(400).json({ message: "Payment not captured" });
       }
       const capturedRupees = rzpPayment.amount / 100;
-      const expectedAmount = finalPaymentMethod === "ONLINE" ? serverGrandTotal : serverAdvancePaid;
-      if (Math.abs(capturedRupees - expectedAmount) > 1) { // ₹1 rounding tolerance
-        console.error(`FRAUD ALERT: Expected ₹${expectedAmount} but captured ₹${capturedRupees}. Customer: ${customerId}`);
-        return res.status(400).json({ message: "Payment amount does not match order total" });
+
+      // ✅ FIX: Use Razorpay Order amount as the source of truth (set by server in createOrder)
+      // This avoids mismatch caused by re-calculating advance from DB settings at a different time.
+      if (razorpayOrderId) {
+        const rzpOrder = await razorpayInstance.orders.fetch(razorpayOrderId);
+        const expectedRupees = rzpOrder.amount / 100;
+        if (Math.abs(capturedRupees - expectedRupees) > 1) {
+          console.error(`FRAUD ALERT: Rzp order expected ₹${expectedRupees} but captured ₹${capturedRupees}. PaymentId: ${rzpPayId}, Customer: ${customerId}`);
+          return res.status(400).json({ message: "Payment amount does not match order total" });
+        }
+        // Sync serverAdvancePaid with what was actually charged (for COD)
+        if (finalPaymentMethod === "COD") {
+          serverAdvancePaid = capturedRupees;
+          serverRemainingAmount = Math.max(serverGrandTotal - serverAdvancePaid, 0);
+        }
+      } else {
+        // Fallback: compare against recalculated amount (old behaviour, wider tolerance)
+        const expectedAmount = finalPaymentMethod === "ONLINE" ? serverGrandTotal : serverAdvancePaid;
+        if (Math.abs(capturedRupees - expectedAmount) > 5) { // ₹5 tolerance as fallback
+          console.error(`FRAUD ALERT: Expected ₹${expectedAmount} but captured ₹${capturedRupees}. Customer: ${customerId}`);
+          return res.status(400).json({ message: "Payment amount does not match order total" });
+        }
+        if (finalPaymentMethod === "COD") {
+          serverAdvancePaid = capturedRupees;
+          serverRemainingAmount = Math.max(serverGrandTotal - serverAdvancePaid, 0);
+        }
       }
     }
     // ── END SERVER-SIDE CALCULATION ──────────────────────────────────────────

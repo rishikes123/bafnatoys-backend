@@ -294,6 +294,38 @@ app.get("/products", async (req, res) => {
   }
 });
 
+app.get("/contact", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "Contact Bafna Toys — Wholesale Toy Manufacturer Coimbatore | +91 90433 47300",
+      description: "Contact Bafna Toys for wholesale toy orders. Factory-direct prices on pullback cars, PVC dolls, windup toys. Call +91 90433 47300 or visit our Coimbatore factory.",
+      url: "https://bafnatoys.com/contact",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
+app.get("/about", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "About Us | Bafna Toys — Leading Toy Manufacturer in Coimbatore, India",
+      description: "Learn about Bafna Toys — a trusted wholesale toy manufacturer in Coimbatore, Tamil Nadu. 300+ products, 9+ years experience, pan-India delivery at factory-direct prices.",
+      url: "https://bafnatoys.com/about",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
 app.get("/hot-deals", async (req, res) => {
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
   try {

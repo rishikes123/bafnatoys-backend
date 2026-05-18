@@ -28,6 +28,8 @@ router.get("/sitemap.xml", async (req, res) => {
       { path: "/products",    freq: "daily",   priority: "0.9" },
       { path: "/hot-deals",   freq: "daily",   priority: "0.9" },
       { path: "/categories",  freq: "weekly",  priority: "0.8" },
+      { path: "/about",       freq: "monthly", priority: "0.7" },
+      { path: "/contact",     freq: "monthly", priority: "0.8" },
       { path: "/privacy-policy",    freq: "monthly", priority: "0.4" },
       { path: "/terms-conditions",  freq: "monthly", priority: "0.4" },
       { path: "/return-policy",     freq: "monthly", priority: "0.4" },
