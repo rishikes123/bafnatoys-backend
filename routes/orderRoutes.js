@@ -638,14 +638,16 @@ const updateOrderStatus = async (req, res) => {
     ============================================================ */
     if (newStatus === "shipped") {
       if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0) {
-        // Track how many times this order has been shipped (for unique order number suffix)
-        const reshipCount = (order.reshipCount || 0) + 1;
+        // Check BEFORE clearing — was order previously shipped?
+        const isReShip = !!order.trackingId;
+        const reshipCount = (order.reshipCount || 0) + (isReShip ? 1 : 0);
         order.reshipCount = reshipCount;
-        // Use suffix for re-ships so Delhivery doesn't reject duplicate order number
-        const baseOrderNumber = reshipCount === 1
-          ? order.orderNumber
-          : `${order.orderNumber}-RS${reshipCount}`;
-        // Clear old AWB if re-shipping (e.g. after Delhivery pickup cancellation)
+        // Re-ship uses suffix so Delhivery doesn't reject as duplicate order number
+        // e.g. ODR1001017-RS1, ODR1001017-RS2, etc.
+        const baseOrderNumber = isReShip
+          ? `${order.orderNumber}-RS${reshipCount}`
+          : order.orderNumber;
+        // Clear old AWB
         order.trackingId = "";
         order.splitShipments = [];
         try {
