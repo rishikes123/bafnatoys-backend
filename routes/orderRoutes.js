@@ -638,6 +638,13 @@ const updateOrderStatus = async (req, res) => {
     ============================================================ */
     if (newStatus === "shipped") {
       if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0) {
+        // Track how many times this order has been shipped (for unique order number suffix)
+        const reshipCount = (order.reshipCount || 0) + 1;
+        order.reshipCount = reshipCount;
+        // Use suffix for re-ships so Delhivery doesn't reject duplicate order number
+        const baseOrderNumber = reshipCount === 1
+          ? order.orderNumber
+          : `${order.orderNumber}-RS${reshipCount}`;
         // Clear old AWB if re-shipping (e.g. after Delhivery pickup cancellation)
         order.trackingId = "";
         order.splitShipments = [];
@@ -701,8 +708,8 @@ const updateOrderStatus = async (req, res) => {
             state:        finalState,
             country:      "India",
             phone:        finalPhone,
-            // Box 1 = main order number, Box 2+ = ODR1001013-B2, B3...
-            order:        idx === 0 ? order.orderNumber : `${order.orderNumber}-B${idx + 1}`,
+            // Box 1 = order number (with RS suffix if re-ship), Box 2+ = -B2, B3...
+            order:        idx === 0 ? baseOrderNumber : `${baseOrderNumber}-B${idx + 1}`,
             // Sirf pehle box pe COD — delivery agent wahan se collect karega
             payment_mode: idx === 0 && order.paymentMode === "COD" ? "COD" : "Prepaid",
             cod_amount:   idx === 0 ? delhiveryCodAmount : 0,
