@@ -637,7 +637,10 @@ const updateOrderStatus = async (req, res) => {
         🚚 SHIPPING & EXCLUSIVE DELHIVERY AUTO-AWB GENERATION
     ============================================================ */
     if (newStatus === "shipped") {
-      if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0 && !order.trackingId) {
+      if (courierName === "Delhivery" && packingDetails && packingDetails.length > 0) {
+        // Clear old AWB if re-shipping (e.g. after Delhivery pickup cancellation)
+        order.trackingId = "";
+        order.splitShipments = [];
         try {
           // Box dimensions map
           const BOX_DIMS = {
