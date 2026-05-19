@@ -301,6 +301,7 @@ router.post("/admin/:id/send-whatsapp", adminProtect, async (req, res) => {
       languageCode = "en_US",
       components: customComponents,
       recoveryUrl = "https://bafnatoys.com/cart",
+      overridePhone,
     } = req.body || {};
 
     if (!templateName) {
@@ -310,7 +311,7 @@ router.post("/admin/:id/send-whatsapp", adminProtect, async (req, res) => {
     const cart = await AbandonedCart.findById(id);
     if (!cart) return res.status(404).json({ message: "Cart not found" });
 
-    const to = toE164India(cart.whatsapp || cart.mobile);
+    const to = toE164India(overridePhone || cart.whatsapp || cart.mobile);
     if (!to) {
       return res.status(400).json({ message: "Customer has no valid phone" });
     }
