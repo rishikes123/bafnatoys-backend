@@ -1,4 +1,14 @@
 const mongoose = require("mongoose");
+const dns = require("dns");
+
+// ✅ Mobile Hotspot Fix: Force Node.js to use Google DNS for SRV records
+// Jio/Airtel hotspots often block MongoDB SRV resolution (ECONNREFUSED)
+try {
+  dns.setServers(["8.8.8.8", "8.8.4.4"]);
+  console.log("🌐 DNS Override applied for Mobile Hotspot compatibility.");
+} catch (err) {
+  console.warn("⚠️ Could not set DNS servers:", err.message);
+}
 
 const connectDB = async () => {
   try {

@@ -910,6 +910,70 @@ const updateOrderStatus = async (req, res) => {
 router.put("/:id/status", updateOrderStatus);
 router.patch("/:id/status", updateOrderStatus);
 
+/* ============================================================
+    ✅ ACTUAL DELIVERY CHARGE UPDATE
+============================================================ */
+router.post("/:id/fetch-actual-charge", async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order.trackingId || !order.shippingAddress?.pincode) {
+      return res.status(400).json({ message: "Order must have a Tracking ID and Pincode to fetch charges via API." });
+    }
+
+    const delhiveryService = require("../services/delhiveryService");
+    
+    // First try fetching live tracking map for accurate chargedWeight (optional but better)
+    const liveMap = {};
+    try {
+        const tracking = await delhiveryService.trackMultiple([order.trackingId]);
+        (tracking?.ShipmentData || []).forEach((entry) => {
+          const s = entry?.Shipment;
+          if (s) {
+            liveMap[s.AWB] = { chargedWeight: s.ChargedWeight || s.ActualWeight || s.Weight || s.chargedWeight || 0 };
+          }
+        });
+    } catch(e) {
+       // Ignore tracking error
+    }
+
+    const rateMap = await delhiveryService.getActualChargesForOrders([order], liveMap);
+    const chargeData = rateMap[order.trackingId];
+
+    if (!chargeData) {
+      return res.status(400).json({ message: "Could not fetch delivery charge from API. Check tracking ID or try later." });
+    }
+
+    order.actualDeliveryCharge = chargeData.totalCharge || 0;
+    await order.save();
+
+    res.json({ actualDeliveryCharge: order.actualDeliveryCharge, message: "Delivery charge fetched successfully" });
+  } catch (err) {
+    console.error("Fetch Delivery Charge Error:", err);
+    res.status(500).json({ message: err.message || "Server error while fetching delivery charge" });
+  }
+});
+
+router.patch("/:id/actual-charge", async (req, res) => {
+  try {
+    const { actualDeliveryCharge } = req.body;
+    if (actualDeliveryCharge === undefined) {
+      return res.status(400).json({ message: "actualDeliveryCharge is required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    order.actualDeliveryCharge = Math.max(0, Number(actualDeliveryCharge) || 0);
+    await order.save();
+
+    res.json({ actualDeliveryCharge: order.actualDeliveryCharge, message: "Delivery charge updated manually" });
+  } catch (err) {
+    console.error("Update Delivery Charge Error:", err);
+    res.status(500).json({ message: err.message || "Server error while updating delivery charge" });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id).lean();

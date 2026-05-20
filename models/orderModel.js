@@ -64,6 +64,7 @@ const orderSchema = new mongoose.Schema(
     },
     itemsPrice: { type: Number, default: 0 },
     shippingPrice: { type: Number, default: 0 },
+    actualDeliveryCharge: { type: Number, default: 0 }, // Actual API fetched charge
     discountAmount: { type: Number, default: 0 }, // ✅ Volume discount saved here
     total: {
       type: Number,
