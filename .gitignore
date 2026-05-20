@@ -1,2 +1,15 @@
 node_modules/
 .env
+.env.*
+
+# Sensitive credentials — NEVER commit these
+fcm-service-account.json
+google-services.json
+*.key
+*.pem
+*.p12
+*.p8
+*.jks
+*.mobileprovision
+serviceAccountKey.json
+firebase-adminsdk*.json

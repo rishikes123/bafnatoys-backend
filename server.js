@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const compression = require("compression");
+const rateLimit = require("express-rate-limit");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -54,11 +55,12 @@ app.use(
       if (
         origin.includes("localhost") ||
         origin.endsWith(".vercel.app") ||
-        origin.endsWith("bafnatoys.com")
+        origin.endsWith("bafnatoys.com") ||
+        origin.endsWith("bafnadaily.com")
       ) {
         return callback(null, true);
       }
-      callback(null, true); // allow all (same as your current)
+      callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
   })
@@ -67,6 +69,25 @@ app.use(
 /* ------------------------ BODY PARSERS ------------------------------ */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+/* ------------------------ RATE LIMITERS ------------------------------ */
+// OTP endpoints: max 5 requests per 10 minutes per IP
+const otpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  message: { error: "Too many OTP requests. Please try again after 10 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Auth/login endpoints: max 10 requests per 15 minutes per IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many login attempts. Please try again after 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 /* ------------------------ STATIC FILES ------------------------------- */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -98,16 +119,16 @@ app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/banners", require("./routes/bannerRoutes"));
 app.use("/api/home-config", require("./routes/homeConfigRoutes"));
-app.use("/api/auth", require("./routes/auth"));
+app.use("/api/auth", authLimiter, require("./routes/auth"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 
 // ✅ YEH LINE ADD KI (Register adminAuth route)
-app.use("/api/adminAuth", require("./routes/adminAuth")); 
+app.use("/api/adminAuth", authLimiter, require("./routes/adminAuth"));
 
 app.use("/api/registrations", require("./routes/registrationRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/whatsapp", require("./routes/whatsappRoutes"));
-app.use("/api/otp", require("./routes/otpRoutes"));
+app.use("/api/otp", otpLimiter, require("./routes/otpRoutes"));
 app.use("/api/addresses", require("./routes/addressRoutes"));
 app.use("/api/settings", require("./routes/settingsRoutes"));
 app.use("/api/shipping", require("./routes/shippingRoutes"));
