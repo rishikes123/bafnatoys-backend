@@ -147,6 +147,9 @@ app.use("/api/grid-layout", require("./routes/gridLayoutRoutes"));
 // ✅ CHATBOT ROUTE ADDED HERE
 app.use("/api/chatbot", require("./routes/chatbotRoutes"));
 
+// ✅ BLOG ROUTE ADDED HERE
+app.use("/api/blogs", require("./routes/blogRoutes"));
+
 // ✅ ABANDONED CART (cart recovery via WhatsApp)
 app.use("/api/abandoned-cart", require("./routes/abandonedCartRoutes"));
 
@@ -375,6 +378,47 @@ app.get("/categories", async (req, res) => {
     });
     res.send(html);
   } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
+app.get("/blogs", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    let html = fs.readFileSync(indexPath, "utf8");
+    html = injectSEO(html, {
+      title: "Bafna Toys Blog - Wholesale Toy Industry News & Insights",
+      description: "Read the latest news, trends, and business tips for toy retailers and wholesalers in India by Bafna Toys.",
+      url: "https://bafnatoys.com/blogs",
+      image: "https://bafnatoys.com/logo.webp",
+    });
+    res.send(html);
+  } catch (err) {
+    fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
+  }
+});
+
+app.get("/blog/:slug", async (req, res) => {
+  const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
+  try {
+    const Blog = require("./models/Blog");
+    const blog = await Blog.findOne({ slug: req.params.slug, published: true });
+    
+    let html = fs.readFileSync(indexPath, "utf8");
+    if (blog) {
+      const title = blog.metaTitle || `${blog.title} | Bafna Toys Blog`;
+      const description = blog.metaDescription || blog.excerpt || blog.content.replace(/<[^>]*>?/gm, "").substring(0, 150).trim();
+      const image = blog.coverImage || "https://bafnatoys.com/logo.webp";
+      html = injectSEO(html, {
+        title,
+        description,
+        url: `https://bafnatoys.com/blog/${blog.slug}`,
+        image,
+      });
+    }
+    res.send(html);
+  } catch (err) {
+    console.error("❌ Blog SEO Injection Error:", err);
     fs.existsSync(indexPath) ? res.sendFile(indexPath) : res.status(500).send("Build not found");
   }
 });

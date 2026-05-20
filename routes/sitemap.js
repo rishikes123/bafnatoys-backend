@@ -3,13 +3,16 @@ const router = express.Router();
 const Product = require("../models/Product");
 const Category = require("../models/categoryModel");
 
+const Blog = require("../models/Blog");
+
 router.get("/sitemap.xml", async (req, res) => {
   try {
     const baseUrl = "https://bafnatoys.com";
 
-    const [products, categories] = await Promise.all([
+    const [products, categories, blogs] = await Promise.all([
       Product.find().select("slug name images updatedAt").lean(),
       Category.find().select("name slug updatedAt").lean(),
+      Blog.find({ published: true }).select("slug coverImage updatedAt title").lean(),
     ]);
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
@@ -33,6 +36,7 @@ router.get("/sitemap.xml", async (req, res) => {
       { path: "/privacy-policy",    freq: "monthly", priority: "0.4" },
       { path: "/terms-conditions",  freq: "monthly", priority: "0.4" },
       { path: "/return-policy",     freq: "monthly", priority: "0.4" },
+      { path: "/blogs",             freq: "daily",   priority: "0.8" },
     ];
     staticPages.forEach(({ path, freq, priority }) => {
       xml += `  <url>
@@ -74,6 +78,28 @@ router.get("/sitemap.xml", async (req, res) => {
     ${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>${imageTag}
+  </url>\n`;
+    });
+
+    // 📝 Blogs (with image sitemap)
+    blogs.forEach((b) => {
+      const slug = b.slug;
+      const lastmod = b.updatedAt ? new Date(b.updatedAt).toISOString() : "";
+      let imageTag = "";
+      if (b.coverImage) {
+        const imgUrl = b.coverImage.startsWith("http") ? b.coverImage : `${baseUrl}/uploads/${b.coverImage}`;
+        const safeTitle = (b.title || "").replace(/[<>&"]/g, " ");
+        imageTag = `
+    <image:image>
+      <image:loc>${imgUrl}</image:loc>
+      <image:title>${safeTitle}</image:title>
+    </image:image>`;
+      }
+      xml += `  <url>
+    <loc>${baseUrl}/blog/${encodeURIComponent(slug)}</loc>
+    ${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>${imageTag}
   </url>\n`;
     });
 
