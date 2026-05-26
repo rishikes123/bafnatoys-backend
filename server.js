@@ -13,8 +13,8 @@ const Product = require("./models/Product");
 
 const app = express();
 
-// ✅ IMPORTANT: correct IP when behind proxy/CDN
-app.set("trust proxy", true);
+// ✅ IMPORTANT: correct IP when behind proxy/CDN (1 = trust first proxy only)
+app.set("trust proxy", 1);
 
 /* ------------------------- SOCKET.IO SERVER SETUP ------------------------- */
 const server = http.createServer(app);
