@@ -87,6 +87,10 @@ const authLimiter = rateLimit({
   message: { error: "Too many login attempts. Please try again after 15 minutes." },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    const ip = req.ip || req.connection.remoteAddress || "";
+    return ip === "127.0.0.1" || ip === "::1" || ip.includes("localhost");
+  },
 });
 
 /* ------------------------ STATIC FILES ------------------------------- */
