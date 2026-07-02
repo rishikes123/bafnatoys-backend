@@ -205,6 +205,9 @@ exports.listTransactions = async (req, res) => {
       if (o.razorpayPaymentId) paymentToOrderNum[o.razorpayPaymentId] = o.orderNumber;
     });
 
+    // Filter out payments that do not belong to this site (not found in DB)
+    items = items.filter((p) => paymentToOrderNum[p.id]);
+
     // Slim payload for table — convert paise->rupees, pick core fields
     const mapped = items.map((p) => ({
       id: p.id,
@@ -357,6 +360,15 @@ exports.paymentStats = async (req, res) => {
       if (arr.length < 100) break;
       skip += 100;
     }
+
+    // Filter out payments that do not belong to this site (not found in DB)
+    const paymentIds = all.map((p) => p.id).filter(Boolean);
+    const dbOrders = await Order.find(
+      { razorpayPaymentId: { $in: paymentIds } },
+      { razorpayPaymentId: 1 }
+    ).lean();
+    const dbPaymentIds = new Set(dbOrders.map((o) => o.razorpayPaymentId).filter(Boolean));
+    all = all.filter((p) => dbPaymentIds.has(p.id));
 
     const captured = all.filter((p) => p.status === "captured");
     const failed = all.filter((p) => p.status === "failed");
