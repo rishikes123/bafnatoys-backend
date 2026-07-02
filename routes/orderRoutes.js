@@ -910,41 +910,33 @@ const updateOrderStatus = async (req, res) => {
             console.warn('[NimbusPost] Serviceability check failed:', svcErr.message);
           }
 
-          // ── Try couriers one by one until AWB is created ──
+          // ── Book shipment using cheapest courier ──
           let npResp = null;
           let awbSuccess = false;
-          const couriersToTry = sortedCouriers.length > 0 ? sortedCouriers : [null];
 
-          for (const courier of couriersToTry) {
-            if (courier) {
-              npPayload.courier_id = courier.courier_id || courier.id || courier.courier_code;
-              console.log('[NimbusPost] Trying courier:', courier.courier_name || courier.name, 'ID:', npPayload.courier_id);
-            } else {
-              delete npPayload.courier_id;
+          if (sortedCouriers.length > 0) {
+            const cheapestCourier = sortedCouriers[0];
+            npPayload.courier_id = cheapestCourier.courier_id || cheapestCourier.id || cheapestCourier.courier_code;
+            console.log('[NimbusPost] Using cheapest courier:', cheapestCourier.courier_name || cheapestCourier.name, 'ID:', npPayload.courier_id);
+          }
+
+          try {
+            npResp = await axios.post(
+              'https://api.nimbuspost.com/v1/shipments',
+              npPayload,
+              { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
+            );
+            if (npResp.data?.status && npResp.data?.data?.awb_number) {
+              awbSuccess = true;
             }
-            try {
-              npResp = await axios.post(
-                'https://api.nimbuspost.com/v1/shipments',
-                npPayload,
-                { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
-              );
-              if (npResp.data?.status && npResp.data?.data?.awb_number) {
-                awbSuccess = true;
-                break;
-              }
-              const msg = npResp.data?.message || '';
-              console.warn('[NimbusPost] Courier failed:', courier?.courier_name, '→', msg);
-              const isPickupErr = /pickup not available|not serviceable|not available/i.test(msg);
-              if (!isPickupErr) break;
-            } catch (retryErr) {
-              console.warn('[NimbusPost] Courier attempt error:', retryErr.message);
-              break;
-            }
+          } catch (retryErr) {
+            console.warn('[NimbusPost] Courier shipment booking error:', retryErr.message);
           }
 
           if (awbSuccess && npResp?.data?.data?.awb_number) {
             order.trackingId = npResp.data.data.awb_number;
-            order.courierName = npResp.data.data.courier_name || 'NimbusPost';
+            const underlyingCourier = npResp.data.data.courier_name || 'Courier';
+            order.courierName = `NimbusPost (${underlyingCourier})`;
             order.packingDetails = packingDetails;
             order.isShipped = true;
           } else {
