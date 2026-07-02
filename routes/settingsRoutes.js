@@ -394,4 +394,81 @@ router.put("/shipping", adminProtect, isAdmin, async (req, res) => {
   }
 });
 
+/* ================= NIMBUSPOST SETTINGS ================= */
+
+router.get("/nimbuspost", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "nimbuspost" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "nimbuspost",
+        data: {
+          enabled: false,
+          email: "",
+          password: "",
+          pickupWarehouseName: "Primary",
+          pickupContactName: "",
+          pickupAddress: "",
+          pickupCity: "",
+          pickupState: "",
+          pickupPincode: "",
+          pickupPhone: "",
+          token: "",
+          tokenExpiry: null,
+        },
+      });
+    }
+    res.json(setting.data);
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/nimbuspost", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const {
+      enabled,
+      email,
+      password,
+      pickupWarehouseName,
+      pickupContactName,
+      pickupAddress,
+      pickupCity,
+      pickupState,
+      pickupPincode,
+      pickupPhone,
+    } = req.body;
+
+    let isEnabled = Boolean(enabled);
+
+    let setting = await Setting.findOne({ key: "nimbuspost" });
+    let existingData = setting ? setting.data : {};
+
+    const updatedData = {
+      enabled: isEnabled,
+      email: email || "",
+      password: password || "",
+      pickupWarehouseName: pickupWarehouseName || "Primary",
+      pickupContactName: pickupContactName || "",
+      pickupAddress: pickupAddress || "",
+      pickupCity: pickupCity || "",
+      pickupState: pickupState || "",
+      pickupPincode: pickupPincode || "",
+      pickupPhone: pickupPhone || "",
+      token: password === existingData.password ? (existingData.token || "") : "",
+      tokenExpiry: password === existingData.password ? (existingData.tokenExpiry || null) : null,
+    };
+
+    setting = await Setting.findOneAndUpdate(
+      { key: "nimbuspost" },
+      { $set: { key: "nimbuspost", data: updatedData } },
+      { upsert: true, new: true }
+    );
+    res.json(setting.data);
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
 module.exports = router;
+

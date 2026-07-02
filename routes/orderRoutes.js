@@ -759,7 +759,204 @@ const updateOrderStatus = async (req, res) => {
           console.error("Delhivery API Failed:", apiErr.message);
           return res.status(500).json({ message: "Failed to connect to Delhivery API." });
         }
-      } 
+      } else if (courierName === "NimbusPost" && packingDetails && packingDetails.length > 0) {
+        const isReShip = !!order.trackingId;
+        const reshipCount = (order.reshipCount || 0) + (isReShip ? 1 : 0);
+        order.reshipCount = reshipCount;
+        const baseOrderNumber = isReShip
+          ? `${order.orderNumber}-RS${reshipCount}`
+          : order.orderNumber;
+
+        order.trackingId = "";
+        order.splitShipments = [];
+
+        try {
+          const Setting = require("../models/settingModel");
+          const nimbusSetting = await Setting.findOne({ key: "nimbuspost" });
+          const np = nimbusSetting ? nimbusSetting.data : null;
+          if (!np || !np.enabled || !np.email || !np.password) {
+            return res.status(400).json({ message: "NimbusPost credentials not configured or disabled in Settings" });
+          }
+
+          // ── Step 1: Get/refresh JWT token ──
+          let npToken = np.token;
+          const tokenValid = npToken && np.tokenExpiry && new Date() < new Date(np.tokenExpiry);
+          if (!tokenValid) {
+            const loginResp = await axios.post('https://api.nimbuspost.com/v1/users/login', {
+              email: np.email,
+              password: np.password,
+            });
+            if (!loginResp.data?.status) {
+              return res.status(400).json({ message: 'NimbusPost login failed: ' + JSON.stringify(loginResp.data) });
+            }
+            npToken = loginResp.data.data;
+            // Cache token
+            await Setting.findOneAndUpdate(
+              { key: "nimbuspost" },
+              {
+                $set: {
+                  "data.token": npToken,
+                  "data.tokenExpiry": new Date(Date.now() + 23 * 60 * 60 * 1000)
+                }
+              }
+            );
+          }
+
+          // ── Step 2: Calculate weight & dims from packing details ──
+          const BOX_DIMS = {
+            A28: { length: 47,   breadth: 36,   height: 25   },
+            A06: { length: 44.5, breadth: 35,   height: 34.5 },
+            A08: { length: 47,   breadth: 35.5, height: 47   },
+            A31: { length: 89,   breadth: 48,   height: 40   },
+            A18: { length: 44,   breadth: 20,   height: 45   },
+            B10: { length: 37.5, breadth: 23,   height: 35   },
+          };
+          let totalWeightGrams = 0;
+          let dims = { length: 47, breadth: 36, height: 25 };
+          packingDetails.forEach((box) => {
+            totalWeightGrams += (Number(box.totalWeight) || 0) * 1000;
+            if (box.boxType === "custom" || box.boxType === "CUSTOM") {
+              dims = {
+                length: Number(box.length) || 10,
+                breadth: Number(box.breadth) || 10,
+                height: Number(box.height) || 10
+              };
+            } else if (BOX_DIMS[box.boxType]) {
+              dims = BOX_DIMS[box.boxType];
+            }
+          });
+
+          const addr = order.shippingAddress;
+          const finalCity  = addr.isDifferentShipping ? addr.shippingCity    : addr.city;
+          const finalState = addr.isDifferentShipping ? addr.shippingState   : addr.state;
+          const finalPin   = addr.isDifferentShipping ? addr.shippingPincode : addr.pincode;
+          const finalAdd   = addr.isDifferentShipping
+            ? `${addr.shippingStreet}, ${addr.shippingArea || ""}`
+            : `${addr.street}, ${addr.area || ""}`;
+          const finalPhone = addr.phone || order.customerId?.otpMobile || "9999999999";
+          const customerName = addr.shopName || addr.fullName || order.customerId?.shopName || "Customer";
+
+          const collectAmt = order.paymentMode === "COD"
+            ? (codAmountToCollect !== undefined ? codAmountToCollect : (order.remainingAmount || order.total))
+            : 0;
+
+          // ── Step 3: Build pickup object ──
+          const warehouseName = np.pickupWarehouseName || 'Primary';
+          const contactName = np.pickupContactName || 'Admin';
+          const contactPhone = String(np.pickupPhone || '9999999999');
+          const pickupAddress = np.pickupAddress || '';
+          const pickupCity = np.pickupCity || '';
+          const pickupState = np.pickupState || '';
+          const pickupPincode = String(np.pickupPincode || '');
+
+          const pickupObj = {
+            warehouse_name: warehouseName,
+            name: contactName,
+            contact_name: contactName,
+            phone: contactPhone,
+            address: pickupAddress,
+            city: pickupCity,
+            state: pickupState,
+            pincode: pickupPincode,
+          };
+
+          // ── Step 4: Build order_items ──
+          const orderItems = (order.items || []).map((it) => ({
+            name: it.name || 'Product',
+            qty: it.qty || 1,
+            price: it.price || 0,
+            sku: it.sku || '',
+          }));
+
+          // ── Step 5: Create shipment payload ──
+          const npPayload = {
+            order_number: baseOrderNumber,
+            payment_type: order.paymentMode === "COD" ? "cod" : "prepaid",
+            package_weight: Math.max(10, totalWeightGrams),
+            package_length: dims.length,
+            package_breadth: dims.breadth,
+            package_height: dims.height,
+            order_amount: order.total,
+            collectable_amount: collectAmt,
+            consignee: {
+              name: customerName,
+              address: finalAdd,
+              address_2: '',
+              city: finalCity,
+              state: finalState,
+              pincode: String(finalPin),
+              phone: String(finalPhone),
+            },
+            pickup: pickupObj,
+            order_items: orderItems,
+          };
+
+          // Auto-fetch cheapest courier from serviceability API
+          let sortedCouriers = [];
+          try {
+            const weightKg = totalWeightGrams / 1000;
+            const svcResp = await axios.get('https://api.nimbuspost.com/v1/courier/serviceability', {
+              params: {
+                pickup_pincode: String(pickupPincode),
+                delivery_pincode: String(finalPin),
+                weight: weightKg.toFixed(2),
+                cod: order.paymentMode === 'COD' ? 1 : 0,
+              },
+              headers: { Authorization: `Bearer ${npToken}` }
+            });
+            const couriers = svcResp.data?.data || svcResp.data?.result || [];
+            sortedCouriers = [...couriers].sort((a, b) => (Number(a.rate || a.total_charges || 0) - Number(b.rate || b.total_charges || 0)));
+          } catch (svcErr) {
+            console.warn('[NimbusPost] Serviceability check failed:', svcErr.message);
+          }
+
+          // ── Try couriers one by one until AWB is created ──
+          let npResp = null;
+          let awbSuccess = false;
+          const couriersToTry = sortedCouriers.length > 0 ? sortedCouriers : [null];
+
+          for (const courier of couriersToTry) {
+            if (courier) {
+              npPayload.courier_id = courier.courier_id || courier.id || courier.courier_code;
+              console.log('[NimbusPost] Trying courier:', courier.courier_name || courier.name, 'ID:', npPayload.courier_id);
+            } else {
+              delete npPayload.courier_id;
+            }
+            try {
+              npResp = await axios.post(
+                'https://api.nimbuspost.com/v1/shipments',
+                npPayload,
+                { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
+              );
+              if (npResp.data?.status && npResp.data?.data?.awb_number) {
+                awbSuccess = true;
+                break;
+              }
+              const msg = npResp.data?.message || '';
+              console.warn('[NimbusPost] Courier failed:', courier?.courier_name, '→', msg);
+              const isPickupErr = /pickup not available|not serviceable|not available/i.test(msg);
+              if (!isPickupErr) break;
+            } catch (retryErr) {
+              console.warn('[NimbusPost] Courier attempt error:', retryErr.message);
+              break;
+            }
+          }
+
+          if (awbSuccess && npResp?.data?.data?.awb_number) {
+            order.trackingId = npResp.data.data.awb_number;
+            order.courierName = npResp.data.data.courier_name || 'NimbusPost';
+            order.packingDetails = packingDetails;
+            order.isShipped = true;
+          } else {
+            const errMsg = npResp?.data?.message || JSON.stringify(npResp?.data);
+            console.error('[NimbusPost Error]', JSON.stringify(npResp?.data, null, 2));
+            return res.status(400).json({ message: 'NimbusPost Error: ' + errMsg });
+          }
+        } catch (apiErr) {
+          console.error('[NimbusPost API Failed]', apiErr.message);
+          return res.status(500).json({ message: 'NimbusPost API failed: ' + apiErr.message });
+        }
+      }
       
       // Fallback
       if (trackingId && !order.trackingId) {
@@ -971,6 +1168,64 @@ router.patch("/:id/actual-charge", async (req, res) => {
   } catch (err) {
     console.error("Update Delivery Charge Error:", err);
     res.status(500).json({ message: err.message || "Server error while updating delivery charge" });
+  }
+});
+
+router.get("/:id/nimbuspost-couriers", async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).populate("customerId").lean();
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const Setting = require("../models/settingModel");
+    const nimbusSetting = await Setting.findOne({ key: "nimbuspost" });
+    const np = nimbusSetting ? nimbusSetting.data : null;
+    if (!np || !np.email || !np.password) {
+      return res.status(400).json({ message: "NimbusPost credentials not configured" });
+    }
+
+    // Always get a fresh token for serviceability check
+    let npToken;
+    try {
+      const loginResp = await axios.post('https://api.nimbuspost.com/v1/users/login', {
+        email: np.email, password: np.password,
+      });
+      if (!loginResp.data?.status) {
+        return res.status(400).json({ message: 'NimbusPost login failed: ' + JSON.stringify(loginResp.data) });
+      }
+      npToken = loginResp.data.data;
+      await Setting.findOneAndUpdate(
+        { key: "nimbuspost" },
+        {
+          $set: {
+            "data.token": npToken,
+            "data.tokenExpiry": new Date(Date.now() + 23 * 60 * 60 * 1000)
+          }
+        }
+      );
+    } catch (loginErr) {
+      return res.status(400).json({ message: 'NimbusPost login error: ' + loginErr.message });
+    }
+
+    const weightKg = parseFloat(String(req.query.weight || '0.5'));
+    const addr = order.shippingAddress;
+    const deliveryPincode = String(addr?.isDifferentShipping ? addr.shippingPincode : addr?.pincode || '');
+    const pickupPincode = String(np.pickupPincode || '641007');
+    const isCod = order.paymentMode === 'COD' ? 1 : 0;
+
+    try {
+      const svcResp = await axios.get('https://api.nimbuspost.com/v1/courier/serviceability', {
+        params: { pickup_pincode: pickupPincode, delivery_pincode: deliveryPincode, weight: weightKg.toFixed(2), cod: isCod },
+        headers: { Authorization: `Bearer ${npToken}` }
+      });
+      const couriers = svcResp.data?.data || svcResp.data?.result || [];
+      couriers.sort((a, b) => Number(a.rate || a.total_charges || 0) - Number(b.rate || b.total_charges || 0));
+      res.json({ success: true, couriers, rawResponse: svcResp.data });
+    } catch (svcErr) {
+      const svcMsg = svcErr.response?.data?.message || svcErr.message;
+      res.status(400).json({ message: 'Serviceability check failed: ' + svcMsg, rawError: svcErr.response?.data });
+    }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
