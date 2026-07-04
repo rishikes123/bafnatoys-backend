@@ -1001,6 +1001,9 @@ const updateOrderStatus = async (req, res) => {
             order.courierName = `NimbusPost (${finalCourierName})`;
             order.packingDetails = packingDetails;
             order.isShipped = true;
+            // Save label URL if available in response
+            const labelUrl = npResp.data.data.label_url || npResp.data.data.pdf_label || npResp.data.data.label || '';
+            if (labelUrl) order.nimbusLabelUrl = labelUrl;
           } else {
             console.error('[NimbusPost Error]', lastErrorMessage);
             return res.status(400).json({ message: 'NimbusPost Error: ' + lastErrorMessage });
@@ -1282,122 +1285,210 @@ router.get("/:id/nimbuspost-couriers", async (req, res) => {
   }
 });
 
+router.get("/nimbuspost-label-test/:testId", async (req, res) => {
+  try {
+    const Setting = require("../models/settingModel");
+    const nimbusSetting = await Setting.findOne({ key: "nimbuspost" });
+    const np = nimbusSetting ? nimbusSetting.data : null;
+    if (!np) return res.json({ error: "No settings found" });
+
+    const loginResp = await axios.post('https://api.nimbuspost.com/v1/users/login', {
+      email: np.email, password: np.password,
+    });
+    const token = loginResp.data.data;
+    const awb = '40441740836551';
+    const results = {};
+
+    const candidates = [
+      { name: 'shipments_generate_label_awbs', url: 'https://api.nimbuspost.com/v1/shipments/generate_label', data: { awbs: [awb] } },
+      { name: 'shipments_generate_label_awb_number', url: 'https://api.nimbuspost.com/v1/shipments/generate_label', data: { awb_number: [awb] } },
+      { name: 'shipments_label_awbs', url: 'https://api.nimbuspost.com/v1/shipments/label', data: { awbs: [awb] } },
+      { name: 'shipments_bulk_label_awbs', url: 'https://api.nimbuspost.com/v1/shipments/bulk_label', data: { awbs: [awb] } },
+      { name: 'shipments_download_label_awbs', url: 'https://api.nimbuspost.com/v1/shipments/download_label', data: { awbs: [awb] } },
+      { name: 'shipments_print_awbs', url: 'https://api.nimbuspost.com/v1/shipments/print', data: { awbs: [awb] } },
+      { name: 'shipments_print_label_awbs', url: 'https://api.nimbuspost.com/v1/shipments/print_label', data: { awbs: [awb] } },
+      { name: 'shipments_manifest_awbs', url: 'https://api.nimbuspost.com/v1/shipments/manifest', data: { awbs: [awb] } },
+    ];
+
+    for (const c of candidates) {
+      try {
+        const r = await axios.post(c.url, c.data, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          validateStatus: (s) => s >= 200 && s < 500
+        });
+        results[c.name] = { status: r.status, data: r.data };
+      } catch (e) {
+        results[c.name] = { error: e.response?.data || e.message };
+      }
+    }
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/nimbuspost-label/:trackingId", async (req, res) => {
   try {
     const { trackingId } = req.params;
     if (!trackingId) return res.status(400).json({ message: "Tracking ID / AWB is required" });
 
-    const Setting = require("../models/settingModel");
-    const nimbusSetting = await Setting.findOne({ key: "nimbuspost" });
-    const np = nimbusSetting ? nimbusSetting.data : null;
-    if (!np || !np.email || !np.password) {
-      return res.status(400).json({ message: "NimbusPost credentials not configured" });
-    }
+    const PDFDocument = require("pdfkit");
+    const bwipjs = require("bwip-js");
+    const Order = require("../models/orderModel");
 
-    // ── Get/refresh JWT token ──
-    let npToken = np.token;
-    const tokenValid = npToken && np.tokenExpiry && new Date() < new Date(np.tokenExpiry);
-    if (!tokenValid) {
-      const loginResp = await axios.post('https://api.nimbuspost.com/v1/users/login', {
-        email: np.email,
-        password: np.password,
-      });
-      if (!loginResp.data?.status) {
-        return res.status(400).json({ message: 'NimbusPost login failed' });
-      }
-      npToken = loginResp.data.data;
-      await Setting.findOneAndUpdate(
-        { key: "nimbuspost" },
-        {
-          $set: {
-            "data.token": npToken,
-            "data.tokenExpiry": new Date(Date.now() + 23 * 60 * 60 * 1000)
-          }
-        }
-      );
-    }
+    // ── Fetch order from DB ──
+    const order = await Order.findOne({ trackingId }).lean();
+    if (!order) return res.status(404).json({ message: "Order not found for this tracking ID" });
 
-    // Call NimbusPost Print Label API with fallback options and redirect safety
+    const addr = order.shippingAddress || {};
+    const toName   = addr.shopName || addr.fullName || "Customer";
+    const toStreet = addr.isDifferentShipping ? (addr.shippingStreet || "") : (addr.street || "");
+    const toArea   = addr.isDifferentShipping ? (addr.shippingArea   || "") : (addr.area   || "");
+    const toCity   = addr.isDifferentShipping ? (addr.shippingCity   || "") : (addr.city   || "");
+    const toState  = addr.isDifferentShipping ? (addr.shippingState  || "") : (addr.state  || "");
+    const toPin    = addr.isDifferentShipping ? (addr.shippingPincode || "") : (addr.pincode || "");
+    const toPhone  = addr.phone || order.customerId?.otpMobile || "";
+
+    const isCOD    = order.paymentMode === "COD";
+    const codAmt   = order.remainingAmount ?? order.total ?? 0;
+    const awb      = order.trackingId || "";
+    const orderNum = order.orderNumber || "";
+    const courier  = (order.courierName || "Delhivery").replace(/NimbusPost\s*\(/, "").replace(/\)/, "").toUpperCase();
+    const orderDate = new Date(order.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+    // ── Generate barcodes as PNG buffers ──
+    let orderBarcodePng, awbBarcodePng;
     try {
-      const requestHeaders = {
-        'Authorization': `Bearer ${npToken}`,
-        'token': npToken,
-        'Content-Type': 'application/json'
-      };
+      orderBarcodePng = await bwipjs.toBuffer({ bcid: "code128", text: orderNum, scale: 3, height: 14, includetext: false });
+    } catch(e) { orderBarcodePng = null; }
+    try {
+      awbBarcodePng = await bwipjs.toBuffer({ bcid: "code128", text: awb, scale: 3, height: 18, includetext: false });
+    } catch(e) { awbBarcodePng = null; }
 
-      let labelResp = await axios.post(
-        'https://api.nimbuspost.com/v1/shipments/print_label',
-        { awb_number: [trackingId] },
-        { 
-          headers: requestHeaders,
-          maxRedirects: 0,
-          validateStatus: (status) => status >= 200 && status < 400
-        }
-      );
+    // ── Build PDF ──
+    const doc = new PDFDocument({ size: [595, 842], margin: 0 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="label-${orderNum}.pdf"`);
+    doc.pipe(res);
 
-      let pdfUrl = '';
-      if (labelResp.status >= 300 && labelResp.status < 400) {
-        pdfUrl = labelResp.headers.location;
-      } else if (labelResp.data?.status && labelResp.data?.data) {
-        pdfUrl = labelResp.data.data;
-      }
+    const lx = 30, rx = 565, pageW = rx - lx;
+    let y = 30;
 
-      // If array format fails, try single string format
-      if (!pdfUrl) {
-        try {
-          const retryResp = await axios.post(
-            'https://api.nimbuspost.com/v1/shipments/print_label',
-            { awb_number: trackingId },
-            { 
-              headers: requestHeaders,
-              maxRedirects: 0,
-              validateStatus: (status) => status >= 200 && status < 400
-            }
-          );
-          if (retryResp.status >= 300 && retryResp.status < 400) {
-            pdfUrl = retryResp.headers.location;
-          } else if (retryResp.data?.status && retryResp.data?.data) {
-            pdfUrl = retryResp.data.data;
-          }
-        } catch (e) {}
-      }
+    // Helper: draw a horizontal border line
+    const hline = (yy) => doc.moveTo(lx, yy).lineTo(rx, yy).stroke();
+    // Helper: draw outer box border
+    const border = (x1, y1, x2, y2) => doc.rect(x1, y1, x2 - x1, y2 - y1).stroke();
 
-      // Alternate endpoint /shipments/label fallback
-      if (!pdfUrl) {
-        try {
-          const retryLabel = await axios.post(
-            'https://api.nimbuspost.com/v1/shipments/label',
-            { awb_number: [trackingId] },
-            { 
-              headers: requestHeaders,
-              maxRedirects: 0,
-              validateStatus: (status) => status >= 200 && status < 400
-            }
-          );
-          if (retryLabel.status >= 300 && retryLabel.status < 400) {
-            pdfUrl = retryLabel.headers.location;
-          } else if (retryLabel.data?.status && retryLabel.data?.data) {
-            pdfUrl = retryLabel.data.data;
-          }
-        } catch (e) {}
-      }
+    // ─── SECTION 1: TO address + Order barcode ───
+    const sec1Top = y, sec1Bot = y + 115;
+    border(lx, sec1Top, rx, sec1Bot);
 
-      if (pdfUrl) {
-        console.log(`[NimbusPost Label] Successfully resolved label URL: ${pdfUrl}`);
-        return res.json({ success: true, url: pdfUrl });
-      } else {
-        const msg = labelResp.data?.message || JSON.stringify(labelResp.data);
-        return res.status(400).json({ message: 'NimbusPost Label Error: ' + msg });
-      }
-    } catch (apiErr) {
-      const errMsg = apiErr.response?.data?.message || apiErr.message;
-      return res.status(400).json({ message: 'NimbusPost Label API failed: ' + errMsg });
+    doc.fontSize(8).font("Helvetica-Bold").text("To:", lx + 8, y + 8);
+    doc.fontSize(13).font("Helvetica-Bold").text(toName, lx + 8, y + 18, { width: 320 });
+    doc.fontSize(9).font("Helvetica-Bold").text(toName.toUpperCase(), lx + 8, y + 33, { width: 320 });
+    doc.fontSize(9).font("Helvetica").text(`${toStreet}, ${toArea}`.replace(/, $/, ""), lx + 8, y + 45, { width: 320 });
+    doc.text(`${toCity}, ${toState}, India - ${toPin}`, lx + 8, y + 57, { width: 320 });
+
+    // Order barcode (right side)
+    if (orderBarcodePng) {
+      doc.image(orderBarcodePng, rx - 175, y + 8, { width: 165, height: 55 });
     }
+    doc.fontSize(8).font("Helvetica").text(orderNum, rx - 175, y + 65, { width: 165, align: "center" });
+
+    y = sec1Bot;
+
+    // ─── SECTION 2: Order Date + Invoice ───
+    const sec2Top = y, sec2Bot = y + 35;
+    border(lx, sec2Top, rx, sec2Bot);
+    doc.fontSize(9).font("Helvetica").text(`Order Date: `, lx + 8, y + 10, { continued: true });
+    doc.font("Helvetica-Bold").text(orderDate, { continued: false });
+    doc.font("Helvetica").text(`Invoice No: `, lx + 8, y + 20, { continued: true });
+    doc.font("Helvetica-Bold").text(orderNum);
+    y = sec2Bot;
+
+    // ─── SECTION 3: COD/Prepaid + AWB barcode ───
+    const sec3Top = y, sec3Bot = y + 110;
+    border(lx, sec3Top, rx, sec3Bot);
+
+    // Left: COD
+    if (isCOD) {
+      doc.fontSize(11).font("Helvetica-Bold").text("COD", lx + 8, y + 12);
+      doc.fontSize(28).font("Helvetica-Bold").text(`\u20B9${codAmt}`, lx + 8, y + 24);
+    } else {
+      doc.fontSize(14).font("Helvetica-Bold").text("PREPAID", lx + 8, y + 30);
+    }
+    doc.fontSize(9).font("Helvetica").text(`WEIGHT : ${order.totalWeightKg || "—"} KG`, lx + 8, y + 75);
+
+    // Right: Courier name + AWB barcode
+    doc.fontSize(13).font("Helvetica-Bold").text(courier, lx + 8, y + 12, { width: pageW - 16, align: "right" });
+    if (awbBarcodePng) {
+      doc.image(awbBarcodePng, rx - 195, y + 30, { width: 185, height: 50 });
+    }
+    doc.fontSize(8).font("Helvetica").text(awb, rx - 195, y + 82, { width: 185, align: "center" });
+
+    y = sec3Bot;
+
+    // ─── SECTION 4: Items table ───
+    const colX = [lx, lx + 60, lx + 350, lx + 415, rx];
+    const thH = 18;
+    const sec4Top = y;
+
+    // Header row
+    doc.rect(colX[0], y, colX[4] - colX[0], thH).fill("#f0f0f0").stroke();
+    doc.fillColor("black").fontSize(8).font("Helvetica-Bold");
+    doc.text("SKU",         colX[0] + 4, y + 5, { width: colX[1] - colX[0] - 8 });
+    doc.text("Item Name",   colX[1] + 4, y + 5, { width: colX[2] - colX[1] - 8 });
+    doc.text("Qty.",        colX[2] + 4, y + 5, { width: colX[3] - colX[2] - 8, align: "center" });
+    doc.text("Total Amt",   colX[3] + 4, y + 5, { width: colX[4] - colX[3] - 8, align: "right" });
+    y += thH;
+
+    doc.font("Helvetica").fontSize(8);
+    const items = order.items || [];
+    for (const it of items) {
+      const rH = 20;
+      border(colX[0], y, colX[4], y + rH);
+      doc.moveTo(colX[1], y).lineTo(colX[1], y + rH).stroke();
+      doc.moveTo(colX[2], y).lineTo(colX[2], y + rH).stroke();
+      doc.moveTo(colX[3], y).lineTo(colX[3], y + rH).stroke();
+      doc.text(it.sku || "",             colX[0] + 4, y + 6, { width: colX[1] - colX[0] - 8 });
+      doc.text(it.name || "",            colX[1] + 4, y + 6, { width: colX[2] - colX[1] - 8 });
+      doc.text(String(it.qty || ""),     colX[2] + 4, y + 6, { width: colX[3] - colX[2] - 8, align: "center" });
+      doc.text(String(it.price * it.qty), colX[3] + 4, y + 6, { width: colX[4] - colX[3] - 8, align: "right" });
+      y += rH;
+    }
+
+    // Total row
+    const totH = 20;
+    border(colX[0], y, colX[4], y + totH);
+    doc.moveTo(colX[3], y).lineTo(colX[3], y + totH).stroke();
+    doc.font("Helvetica-Bold").text("Order Total", colX[0] + 4, y + 6, { width: colX[3] - colX[0] - 8 });
+    doc.text(`\u20B9${order.total}`, colX[3] + 4, y + 6, { width: colX[4] - colX[3] - 8, align: "right" });
+    y += totH;
+
+    // ─── SECTION 5: Pickup + Footer ───
+    const sec5Top = y, sec5Bot = y + 115;
+    border(lx, sec5Top, rx, sec5Bot);
+
+    doc.fontSize(9).font("Helvetica-Bold").text("Pickup and Return Address:", lx + 8, y + 8);
+    doc.font("Helvetica-Bold").text("Bafnatoys", lx + 8, y + 20);
+    doc.font("Helvetica").fontSize(8)
+      .text("9080114528 1-12, Sundapalayam Rd, Coimbatore, Kalikkanaicken Palayam,", lx + 8, y + 30, { width: pageW - 16 })
+      .text("Tamil Nadu 641007 Prasant mill gate COIMBATE, Tamil Nadu, India - 641007", lx + 8, y + 40, { width: pageW - 16 })
+      .text("Mobile No.: 9080114528", lx + 8, y + 50);
+
+    doc.moveTo(lx + 8, y + 64).lineTo(rx - 8, y + 64).dash(1, { space: 3 }).stroke();
+    doc.undash();
+    doc.fontSize(7).font("Helvetica").fillColor("#555")
+      .text("This is computer generated document, hence does not required signature.", lx + 8, y + 68, { width: pageW - 16 })
+      .text("Note: All matters shall be handled as per the Seller's Agreement and T&C. Goods once sold will only be taken back or exchanged as per the store's exchange/return policy.", lx + 8, y + 78, { width: pageW - 16 });
+
+    doc.end();
   } catch (err) {
     console.error("Print Label Error:", err);
-    res.status(500).json({ message: err.message });
+    if (!res.headersSent) res.status(500).json({ message: err.message });
   }
 });
+
 
 router.delete("/:id", async (req, res) => {
   try {
