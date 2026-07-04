@@ -1282,6 +1282,123 @@ router.get("/:id/nimbuspost-couriers", async (req, res) => {
   }
 });
 
+router.get("/nimbuspost-label/:trackingId", async (req, res) => {
+  try {
+    const { trackingId } = req.params;
+    if (!trackingId) return res.status(400).json({ message: "Tracking ID / AWB is required" });
+
+    const Setting = require("../models/settingModel");
+    const nimbusSetting = await Setting.findOne({ key: "nimbuspost" });
+    const np = nimbusSetting ? nimbusSetting.data : null;
+    if (!np || !np.email || !np.password) {
+      return res.status(400).json({ message: "NimbusPost credentials not configured" });
+    }
+
+    // ── Get/refresh JWT token ──
+    let npToken = np.token;
+    const tokenValid = npToken && np.tokenExpiry && new Date() < new Date(np.tokenExpiry);
+    if (!tokenValid) {
+      const loginResp = await axios.post('https://api.nimbuspost.com/v1/users/login', {
+        email: np.email,
+        password: np.password,
+      });
+      if (!loginResp.data?.status) {
+        return res.status(400).json({ message: 'NimbusPost login failed' });
+      }
+      npToken = loginResp.data.data;
+      await Setting.findOneAndUpdate(
+        { key: "nimbuspost" },
+        {
+          $set: {
+            "data.token": npToken,
+            "data.tokenExpiry": new Date(Date.now() + 23 * 60 * 60 * 1000)
+          }
+        }
+      );
+    }
+
+    // Call NimbusPost Print Label API with fallback options and redirect safety
+    try {
+      const requestHeaders = {
+        'Authorization': `Bearer ${npToken}`,
+        'token': npToken,
+        'Content-Type': 'application/json'
+      };
+
+      let labelResp = await axios.post(
+        'https://api.nimbuspost.com/v1/shipments/print_label',
+        { awb_number: [trackingId] },
+        { 
+          headers: requestHeaders,
+          maxRedirects: 0,
+          validateStatus: (status) => status >= 200 && status < 400
+        }
+      );
+
+      let pdfUrl = '';
+      if (labelResp.status >= 300 && labelResp.status < 400) {
+        pdfUrl = labelResp.headers.location;
+      } else if (labelResp.data?.status && labelResp.data?.data) {
+        pdfUrl = labelResp.data.data;
+      }
+
+      // If array format fails, try single string format
+      if (!pdfUrl) {
+        try {
+          const retryResp = await axios.post(
+            'https://api.nimbuspost.com/v1/shipments/print_label',
+            { awb_number: trackingId },
+            { 
+              headers: requestHeaders,
+              maxRedirects: 0,
+              validateStatus: (status) => status >= 200 && status < 400
+            }
+          );
+          if (retryResp.status >= 300 && retryResp.status < 400) {
+            pdfUrl = retryResp.headers.location;
+          } else if (retryResp.data?.status && retryResp.data?.data) {
+            pdfUrl = retryResp.data.data;
+          }
+        } catch (e) {}
+      }
+
+      // Alternate endpoint /shipments/label fallback
+      if (!pdfUrl) {
+        try {
+          const retryLabel = await axios.post(
+            'https://api.nimbuspost.com/v1/shipments/label',
+            { awb_number: [trackingId] },
+            { 
+              headers: requestHeaders,
+              maxRedirects: 0,
+              validateStatus: (status) => status >= 200 && status < 400
+            }
+          );
+          if (retryLabel.status >= 300 && retryLabel.status < 400) {
+            pdfUrl = retryLabel.headers.location;
+          } else if (retryLabel.data?.status && retryLabel.data?.data) {
+            pdfUrl = retryLabel.data.data;
+          }
+        } catch (e) {}
+      }
+
+      if (pdfUrl) {
+        console.log(`[NimbusPost Label] Successfully resolved label URL: ${pdfUrl}`);
+        return res.json({ success: true, url: pdfUrl });
+      } else {
+        const msg = labelResp.data?.message || JSON.stringify(labelResp.data);
+        return res.status(400).json({ message: 'NimbusPost Label Error: ' + msg });
+      }
+    } catch (apiErr) {
+      const errMsg = apiErr.response?.data?.message || apiErr.message;
+      return res.status(400).json({ message: 'NimbusPost Label API failed: ' + errMsg });
+    }
+  } catch (err) {
+    console.error("Print Label Error:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id).lean();
