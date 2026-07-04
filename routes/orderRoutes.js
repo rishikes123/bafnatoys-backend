@@ -603,7 +603,7 @@ router.patch("/:id/advance", async (req, res) => {
 const updateOrderStatus = async (req, res) => {
   try {
     // 👇 Yahan manualAdvance aur codAmountToCollect ko req.body se nikala hai
-    const { status, trackingId, courierName, cancelledBy, packingDetails, manualAdvance, codAmountToCollect } = req.body;
+    const { status, trackingId, courierName, cancelledBy, packingDetails, manualAdvance, codAmountToCollect, nimbusCourierId } = req.body;
     if (!status) return res.status(400).json({ message: "Status is required" });
 
     const newStatus = String(status).toLowerCase();
@@ -910,39 +910,100 @@ const updateOrderStatus = async (req, res) => {
             console.warn('[NimbusPost] Serviceability check failed:', svcErr.message);
           }
 
-          // ── Book shipment using cheapest courier ──
+          // ── Book shipment using cheapest courier with fallback ──
           let npResp = null;
           let awbSuccess = false;
+          let finalCourierName = 'Courier';
+          let lastErrorMessage = '';
 
-          if (sortedCouriers.length > 0) {
-            const cheapestCourier = sortedCouriers[0];
-            npPayload.courier_id = cheapestCourier.courier_id || cheapestCourier.id || cheapestCourier.courier_code;
-            console.log('[NimbusPost] Using cheapest courier:', cheapestCourier.courier_name || cheapestCourier.name, 'ID:', npPayload.courier_id);
-          }
-
-          try {
-            npResp = await axios.post(
-              'https://api.nimbuspost.com/v1/shipments',
-              npPayload,
-              { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
-            );
-            if (npResp.data?.status && npResp.data?.data?.awb_number) {
-              awbSuccess = true;
+          if (nimbusCourierId) {
+            console.log(`[NimbusPost] Manually selected courier ID: ${nimbusCourierId}. Attempting booking...`);
+            const chosen = sortedCouriers.find(c => String(c.courier_id || c.id || c.courier_code) === String(nimbusCourierId));
+            const courierNameLabel = chosen ? (chosen.courier_name || chosen.name) : `Courier #${nimbusCourierId}`;
+            
+            npPayload.courier_id = nimbusCourierId;
+            try {
+              const attemptResp = await axios.post(
+                'https://api.nimbuspost.com/v1/shipments',
+                npPayload,
+                { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
+              );
+              if (attemptResp.data?.status && attemptResp.data?.data?.awb_number) {
+                npResp = attemptResp;
+                awbSuccess = true;
+                finalCourierName = attemptResp.data.data.courier_name || courierNameLabel;
+                console.log(`[NimbusPost] Successfully booked manually selected courier AWB ${npResp.data.data.awb_number} (${finalCourierName})`);
+              } else {
+                const reason = attemptResp.data?.message || JSON.stringify(attemptResp.data);
+                console.warn(`[NimbusPost] Manual courier ${courierNameLabel} failed: ${reason}`);
+                lastErrorMessage = `${courierNameLabel}: ${reason}`;
+              }
+            } catch (err) {
+              const reason = err.response?.data?.message || err.message;
+              console.warn(`[NimbusPost] Manual courier ${courierNameLabel} request error: ${reason}`);
+              lastErrorMessage = `${courierNameLabel}: ${reason}`;
             }
-          } catch (retryErr) {
-            console.warn('[NimbusPost] Courier shipment booking error:', retryErr.message);
+          } else if (sortedCouriers.length > 0) {
+            console.log(`[NimbusPost] Found ${sortedCouriers.length} serviceable couriers. Attempting booking...`);
+            for (let i = 0; i < sortedCouriers.length; i++) {
+              const courierObj = sortedCouriers[i];
+              const courierId = courierObj.courier_id || courierObj.id || courierObj.courier_code;
+              const courierNameLabel = courierObj.courier_name || courierObj.name || `Courier #${courierId}`;
+              
+              npPayload.courier_id = courierId;
+              console.log(`[NimbusPost] Attempting courier ${i + 1}/${sortedCouriers.length}: ${courierNameLabel} (ID: ${courierId})`);
+              
+              try {
+                const attemptResp = await axios.post(
+                  'https://api.nimbuspost.com/v1/shipments',
+                  npPayload,
+                  { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
+                );
+                
+                if (attemptResp.data?.status && attemptResp.data?.data?.awb_number) {
+                  npResp = attemptResp;
+                  awbSuccess = true;
+                  finalCourierName = attemptResp.data.data.courier_name || courierNameLabel;
+                  console.log(`[NimbusPost] Successfully booked AWB ${attemptResp.data.data.awb_number} using ${finalCourierName}`);
+                  break; // Exit loop on success
+                } else {
+                  const reason = attemptResp.data?.message || JSON.stringify(attemptResp.data);
+                  console.warn(`[NimbusPost] Courier ${courierNameLabel} failed: ${reason}`);
+                  lastErrorMessage = `${courierNameLabel}: ${reason}`;
+                }
+              } catch (attemptErr) {
+                const reason = attemptErr.response?.data?.message || attemptErr.message;
+                console.warn(`[NimbusPost] Courier ${courierNameLabel} request error: ${reason}`);
+                lastErrorMessage = `${courierNameLabel}: ${reason}`;
+              }
+            }
+          } else {
+            console.log('[NimbusPost] No serviceable couriers found in rate check. Making default shipment booking...');
+            try {
+              npResp = await axios.post(
+                'https://api.nimbuspost.com/v1/shipments',
+                npPayload,
+                { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
+              );
+              if (npResp.data?.status && npResp.data?.data?.awb_number) {
+                awbSuccess = true;
+                finalCourierName = npResp.data.data.courier_name || 'Courier';
+              } else {
+                lastErrorMessage = npResp.data?.message || JSON.stringify(npResp.data);
+              }
+            } catch (err) {
+              lastErrorMessage = err.response?.data?.message || err.message;
+            }
           }
 
           if (awbSuccess && npResp?.data?.data?.awb_number) {
             order.trackingId = npResp.data.data.awb_number;
-            const underlyingCourier = npResp.data.data.courier_name || 'Courier';
-            order.courierName = `NimbusPost (${underlyingCourier})`;
+            order.courierName = `NimbusPost (${finalCourierName})`;
             order.packingDetails = packingDetails;
             order.isShipped = true;
           } else {
-            const errMsg = npResp?.data?.message || JSON.stringify(npResp?.data);
-            console.error('[NimbusPost Error]', JSON.stringify(npResp?.data, null, 2));
-            return res.status(400).json({ message: 'NimbusPost Error: ' + errMsg });
+            console.error('[NimbusPost Error]', lastErrorMessage);
+            return res.status(400).json({ message: 'NimbusPost Error: ' + lastErrorMessage });
           }
         } catch (apiErr) {
           console.error('[NimbusPost API Failed]', apiErr.message);
