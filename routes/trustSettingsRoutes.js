@@ -48,6 +48,7 @@ router.put('/', adminProtect, isAdmin, upload.fields([
     if (req.body.instagramLink !== undefined) settings.instagramLink = req.body.instagramLink;
     if (req.body.facebookLink !== undefined) settings.facebookLink = req.body.facebookLink;
     if (req.body.linkedinLink !== undefined) settings.linkedinLink = req.body.linkedinLink;
+    if (req.body.whatsappChannelLink !== undefined) settings.whatsappChannelLink = req.body.whatsappChannelLink;
 
     // 2. Single Static Images (Factory Image & Make In India Logo)
     if (req.files && req.files['factoryImage']) {

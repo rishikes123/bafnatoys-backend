@@ -34,7 +34,8 @@ const trustSettingsSchema = new mongoose.Schema({
   youtubeLink: { type: String, default: '' },
   instagramLink: { type: String, default: '' },
   facebookLink: { type: String, default: '' },
-  linkedinLink: { type: String, default: '' }
+  linkedinLink: { type: String, default: '' },
+  whatsappChannelLink: { type: String, default: '' }
 
 }, { timestamps: true });
 
