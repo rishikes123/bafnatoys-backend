@@ -944,38 +944,35 @@ const updateOrderStatus = async (req, res) => {
               lastErrorMessage = `${courierNameLabel}: ${reason}`;
             }
           } else if (sortedCouriers.length > 0) {
-            console.log(`[NimbusPost] Found ${sortedCouriers.length} serviceable couriers. Attempting booking...`);
-            for (let i = 0; i < sortedCouriers.length; i++) {
-              const courierObj = sortedCouriers[i];
-              const courierId = courierObj.courier_id || courierObj.id || courierObj.courier_code;
-              const courierNameLabel = courierObj.courier_name || courierObj.name || `Courier #${courierId}`;
+            console.log(`[NimbusPost] Found ${sortedCouriers.length} serviceable couriers. Attempting booking with cheapest courier...`);
+            const courierObj = sortedCouriers[0];
+            const courierId = courierObj.courier_id || courierObj.id || courierObj.courier_code;
+            const courierNameLabel = courierObj.courier_name || courierObj.name || `Courier #${courierId}`;
+            
+            npPayload.courier_id = courierId;
+            console.log(`[NimbusPost] Attempting booking with cheapest courier: ${courierNameLabel} (ID: ${courierId})`);
+            
+            try {
+              const attemptResp = await axios.post(
+                'https://api.nimbuspost.com/v1/shipments',
+                npPayload,
+                { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
+              );
               
-              npPayload.courier_id = courierId;
-              console.log(`[NimbusPost] Attempting courier ${i + 1}/${sortedCouriers.length}: ${courierNameLabel} (ID: ${courierId})`);
-              
-              try {
-                const attemptResp = await axios.post(
-                  'https://api.nimbuspost.com/v1/shipments',
-                  npPayload,
-                  { headers: { Authorization: `Bearer ${npToken}`, 'Content-Type': 'application/json' } }
-                );
-                
-                if (attemptResp.data?.status && attemptResp.data?.data?.awb_number) {
-                  npResp = attemptResp;
-                  awbSuccess = true;
-                  finalCourierName = attemptResp.data.data.courier_name || courierNameLabel;
-                  console.log(`[NimbusPost] Successfully booked AWB ${attemptResp.data.data.awb_number} using ${finalCourierName}`);
-                  break; // Exit loop on success
-                } else {
-                  const reason = attemptResp.data?.message || JSON.stringify(attemptResp.data);
-                  console.warn(`[NimbusPost] Courier ${courierNameLabel} failed: ${reason}`);
-                  lastErrorMessage = `${courierNameLabel}: ${reason}`;
-                }
-              } catch (attemptErr) {
-                const reason = attemptErr.response?.data?.message || attemptErr.message;
-                console.warn(`[NimbusPost] Courier ${courierNameLabel} request error: ${reason}`);
+              if (attemptResp.data?.status && attemptResp.data?.data?.awb_number) {
+                npResp = attemptResp;
+                awbSuccess = true;
+                finalCourierName = attemptResp.data.data.courier_name || courierNameLabel;
+                console.log(`[NimbusPost] Successfully booked AWB ${attemptResp.data.data.awb_number} using ${finalCourierName}`);
+              } else {
+                const reason = attemptResp.data?.message || JSON.stringify(attemptResp.data);
+                console.warn(`[NimbusPost] Courier ${courierNameLabel} failed: ${reason}`);
                 lastErrorMessage = `${courierNameLabel}: ${reason}`;
               }
+            } catch (attemptErr) {
+              const reason = attemptErr.response?.data?.message || attemptErr.message;
+              console.warn(`[NimbusPost] Courier ${courierNameLabel} request error: ${reason}`);
+              lastErrorMessage = `${courierNameLabel}: ${reason}`;
             }
           } else {
             console.log('[NimbusPost] No serviceable couriers found in rate check. Making default shipment booking...');
