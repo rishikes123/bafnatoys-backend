@@ -19,6 +19,7 @@ const { sendWhatsAppTemplate } = require("../services/whatsappService");
 const { notifyAdminNewOrder } = require("../services/adminNotifyService");
 const { sendPurchaseEvent } = require("../services/metaCapiService");
 const Registration = require("../models/Registration");
+const { createOrder } = require("../controllers/orderController");
 
 // ✅ Phone sanitizer (India)
 function sanitizePhone(phone) {
@@ -243,7 +244,11 @@ router.post("/admin/recover-from-payment", async (req, res) => {
  *@route    POST /api/orders
  *@desc     Create a new order & Notify Customer via WhatsApp
  */
-router.post("/", async (req, res) => {
+router.post("/", createOrder);
+
+// Kept temporarily for reference while the shared idempotent order service is
+// rolled out. This function is deliberately not registered as an API route.
+const legacyCreateOrder = async (req, res) => {
   try {
     const {
       customerId,
@@ -509,7 +514,7 @@ router.post("/", async (req, res) => {
       });
     }
   }
-});
+};
 
 /* ============================================================
     ✅ RETURN REQUEST ROUTES

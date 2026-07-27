@@ -10,6 +10,9 @@ const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const Product = require("./models/Product");
+const {
+  reconcileCapturedCheckouts,
+} = require("./services/checkoutRecoveryService");
 
 const app = express();
 
@@ -67,7 +70,16 @@ app.use(
 );
 
 /* ------------------------ BODY PARSERS ------------------------------ */
-app.use(express.json({ limit: "10mb" }));
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req, _res, buffer) => {
+      if (req.originalUrl.startsWith("/api/payments/webhook")) {
+        req.rawBody = Buffer.from(buffer);
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /* ------------------------ RATE LIMITERS ------------------------------ */
@@ -447,6 +459,37 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   try {
     await connectDB();
+
+    const runCheckoutRecovery = () => {
+      reconcileCapturedCheckouts()
+        .then((count) => {
+          if (count > 0) {
+            console.log(
+              `[Checkout recovery] Created ${count} missing order(s)`
+            );
+          }
+        })
+        .catch((error) =>
+          console.error(
+            "[Checkout recovery] Worker failed:",
+            error.message
+          )
+        );
+    };
+
+    // Webhook is primary; this worker is a second safety net if webhook
+    // delivery is delayed or temporarily unavailable.
+    const firstRecoveryTimer = setTimeout(
+      runCheckoutRecovery,
+      15000
+    );
+    const recoveryTimer = setInterval(
+      runCheckoutRecovery,
+      2 * 60 * 1000
+    );
+    firstRecoveryTimer.unref?.();
+    recoveryTimer.unref?.();
+
     server.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 Server running on port ${PORT} with Real-time Sockets`);
     });

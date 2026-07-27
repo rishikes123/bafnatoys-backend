@@ -4,6 +4,8 @@ const multer = require("multer");
 const {
   createOrder,
   verifyPayment,
+  finalizePayment,
+  razorpayWebhook,
   listTransactions,
   transactionDetail,
   paymentStats,
@@ -23,6 +25,13 @@ router.post("/create-order", createOrder);
 
 // Payment Verify: POST /api/payments/verify
 router.post("/verify", verifyPayment);
+
+// Finalize the persisted checkout into an order (safe to retry).
+router.post("/finalize", finalizePayment);
+
+// Razorpay Dashboard webhook URL:
+// https://api.bafnatoys.com/api/payments/webhook
+router.post("/webhook", razorpayWebhook);
 
 /* ------------------------ ADMIN — RAZORPAY ------------------------ */
 // All transactions (paginated, filterable) — pulls live from Razorpay API

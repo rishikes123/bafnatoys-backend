@@ -4,6 +4,10 @@ const Order = require("../models/orderModel");
 const Product = require("../models/Product");
 const ShippingSettings = require("../models/ShippingSettings");
 const Setting = require("../models/settingModel");
+const CheckoutAttempt = require("../models/CheckoutAttempt");
+const {
+  finalizeCheckoutAttempt,
+} = require("../services/checkoutRecoveryService");
 
 // Razorpay Initialization using your specific .env keys
 const razorpayInstance = new Razorpay({
@@ -17,17 +21,49 @@ const razorpayInstance = new Razorpay({
    ======================================================================== */
 exports.createOrder = async (req, res) => {
   try {
-    const { items, paymentMode } = req.body;
+    const {
+      items,
+      paymentMode,
+      customerId,
+      shippingAddress,
+    } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Items are required" });
     }
 
+    if (customerId && shippingAddress) {
+      const requiredAddressFields = [
+        "fullName",
+        "phone",
+        "street",
+        "city",
+        "state",
+        "pincode",
+      ];
+      const missingField = requiredAddressFields.find(
+        (field) => !String(shippingAddress[field] || "").trim()
+      );
+      if (missingField) {
+        return res.status(400).json({
+          message: `Shipping address ${missingField} is required`,
+        });
+      }
+    }
+
     // 1. Fetch prices from DB (never trust client-supplied prices)
     const productIds = items.map((i) => i.productId).filter(Boolean);
-    const products = await Product.find({ _id: { $in: productIds } }).select("price").lean();
+    const products = await Product.find({ _id: { $in: productIds } })
+      .select(
+        "name sku price mrp gstRate piecesPerUnit unit images"
+      )
+      .lean();
     const priceMap = {};
-    products.forEach((p) => { priceMap[String(p._id)] = p.price; });
+    const productMap = {};
+    products.forEach((p) => {
+      priceMap[String(p._id)] = p.price;
+      productMap[String(p._id)] = p;
+    });
 
     // 2. itemsTotal using DB prices (qty = inners × piecesPerUnit, already expanded by frontend)
     let itemsTotal = 0;
@@ -36,7 +72,13 @@ exports.createOrder = async (req, res) => {
       if (unitPrice === undefined) {
         return res.status(400).json({ message: `Product not found: ${item.productId}` });
       }
-      itemsTotal += unitPrice * (Number(item.qty) || 0);
+      const qty = Number(item.qty) || 0;
+      if (qty <= 0) {
+        return res.status(400).json({
+          message: `Invalid quantity for product: ${item.productId}`,
+        });
+      }
+      itemsTotal += unitPrice * qty;
     }
 
     // 3. Shipping from DB settings
@@ -80,10 +122,67 @@ exports.createOrder = async (req, res) => {
       amount: Math.round(amountToCharge * 100), // paise
       currency: "INR",
       receipt: `receipt_${Date.now()}`,
+      notes: customerId
+        ? {
+            customerId: String(customerId),
+            paymentMode: paymentMode || "ONLINE",
+          }
+        : undefined,
     });
+
+    // New clients send the complete checkout snapshot. It is persisted before
+    // Razorpay opens, so a webhook/background worker can create the order even
+    // if the customer's browser or app disappears after payment.
+    let recoveryReady = false;
+    if (customerId && shippingAddress) {
+      const recoveryItems = items.map((item) => {
+        const product = productMap[String(item.productId)];
+        const qty = Number(item.qty) || 0;
+        const innerQty =
+          Number(item.innerQty) ||
+          Number(product?.piecesPerUnit) ||
+          1;
+        return {
+          productId: item.productId,
+          name: product?.name || item.name || "Product",
+          sku: product?.sku || item.sku || "",
+          qty,
+          innerQty,
+          inners:
+            Number(item.inners) ||
+            Math.round(qty / innerQty) ||
+            1,
+          price: product?.price ?? item.price ?? 0,
+          mrp: product?.mrp ?? item.mrp ?? 0,
+          gstRate: product?.gstRate || 0,
+          unit: product?.unit || item.unit || "Piece",
+          image:
+            product?.images?.[0] ||
+            item.image ||
+            "",
+        };
+      });
+
+      await CheckoutAttempt.create({
+        razorpayOrderId: order.id,
+        customerId,
+        items: recoveryItems,
+        shippingAddress,
+        paymentMode: paymentMode || "ONLINE",
+        calculation: {
+          itemsTotal,
+          shippingCharge,
+          discountAmount,
+          grandTotal,
+          amountToCharge,
+        },
+      });
+      recoveryReady = true;
+    }
 
     res.status(200).json({
       ...order,
+      recoveryReady,
       _serverCalc: { itemsTotal, shippingCharge, discountAmount, grandTotal, amountToCharge },
     });
   } catch (error) {
@@ -135,6 +234,137 @@ exports.verifyPayment = async (req, res) => {
   } catch (error) {
     console.error("Verification Error:", error);
     res.status(500).json({ message: "Internal Server Error", error });
+  }
+};
+
+/* ========================================================================
+   3. Finalize a paid checkout (idempotent)
+   Called by web/mobile immediately after Razorpay returns success.
+   The webhook and recovery worker use the same finalization service.
+   ======================================================================== */
+exports.finalizePayment = async (req, res) => {
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    } = req.body || {};
+
+    if (
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
+      return res.status(400).json({
+        message: "Razorpay order, payment, and signature are required",
+      });
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    const supplied = Buffer.from(String(razorpay_signature), "utf8");
+    const expected = Buffer.from(expectedSignature, "utf8");
+    if (
+      supplied.length !== expected.length ||
+      !crypto.timingSafeEqual(supplied, expected)
+    ) {
+      return res.status(400).json({
+        message: "Invalid payment signature",
+      });
+    }
+
+    const result = await finalizeCheckoutAttempt({
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      req,
+    });
+    return res
+      .status(result.alreadyExists ? 200 : 201)
+      .json(result);
+  } catch (error) {
+    console.error("Payment finalization error:", error);
+    return res.status(error.statusCode || 500).json({
+      message: error.message || "Could not finalize paid order",
+    });
+  }
+};
+
+/* ========================================================================
+   Razorpay webhook fallback
+   Requires RAZORPAY_WEBHOOK_SECRET and the exact raw request body.
+   ======================================================================== */
+exports.razorpayWebhook = async (req, res) => {
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error("RAZORPAY_WEBHOOK_SECRET is not configured");
+    return res.status(503).json({ message: "Webhook not configured" });
+  }
+
+  try {
+    const rawBody = req.rawBody;
+    const suppliedSignature = String(
+      req.headers["x-razorpay-signature"] || ""
+    );
+    if (!rawBody || !suppliedSignature) {
+      return res.status(400).json({ message: "Invalid webhook request" });
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", webhookSecret)
+      .update(rawBody)
+      .digest("hex");
+    const supplied = Buffer.from(suppliedSignature, "utf8");
+    const expected = Buffer.from(expectedSignature, "utf8");
+    if (
+      supplied.length !== expected.length ||
+      !crypto.timingSafeEqual(supplied, expected)
+    ) {
+      return res.status(400).json({ message: "Invalid webhook signature" });
+    }
+
+    const event = req.body || {};
+    if (
+      event.event !== "payment.captured" &&
+      event.event !== "order.paid"
+    ) {
+      return res.status(200).json({ received: true, ignored: true });
+    }
+
+    const payment = event.payload?.payment?.entity;
+    const razorpayOrderId =
+      payment?.order_id || event.payload?.order?.entity?.id;
+    if (!razorpayOrderId) {
+      return res.status(200).json({ received: true, ignored: true });
+    }
+
+    try {
+      await finalizeCheckoutAttempt({
+        razorpayOrderId,
+        razorpayPaymentId: payment?.id,
+        req,
+      });
+    } catch (error) {
+      // A legacy checkout may not have a recovery snapshot. A concurrent
+      // browser finalization may also hold the lock. Both are safe to retry,
+      // and the scheduled recovery worker remains as a second fallback.
+      if (error.statusCode !== 404 && error.statusCode !== 409) {
+        throw error;
+      }
+      console.warn(
+        `Webhook finalization skipped for ${razorpayOrderId}:`,
+        error.message
+      );
+    }
+
+    return res.status(200).json({ received: true });
+  } catch (error) {
+    console.error("Razorpay webhook error:", error);
+    return res.status(500).json({
+      message: error.message || "Webhook processing failed",
+    });
   }
 };
 
