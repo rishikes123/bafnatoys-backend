@@ -172,6 +172,9 @@ app.use("/api/abandoned-cart", require("./routes/abandonedCartRoutes"));
 // ✅ BULK WHATSAPP CAMPAIGNS (broadcast to customers / excel upload)
 app.use("/api/campaigns", require("./routes/campaignRoutes"));
 
+// ✅ META ADS PANEL (live Facebook/Instagram ads: view + edit budget/status)
+app.use("/api/meta-ads", require("./routes/metaAdsRoutes"));
+
 app.use("/", require("./routes/sitemap"));
 
 /* ====================================================================
