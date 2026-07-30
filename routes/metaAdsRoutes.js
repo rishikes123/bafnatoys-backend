@@ -1644,7 +1644,9 @@ router.get("/audience-sources", adminProtect, isAdmin, async (req, res) => {
     const sources = await audienceService.sourceCounts();
 
     let audiences = [];
+    let tos = null;
     if (cfg.accessToken && cfg.adAccountId) {
+      tos = await audienceService.checkCustomerListTos(cfg);
       try {
         audiences = (await audienceService.listAudiences(cfg)).map((a) => ({
           id: a.id,
@@ -1657,7 +1659,7 @@ router.get("/audience-sources", adminProtect, isAdmin, async (req, res) => {
         }));
       } catch {}
     }
-    res.json({ sources, audiences });
+    res.json({ sources, audiences, tos });
   } catch (err) {
     res.status(400).json({ message: metaError(err) });
   }
@@ -1665,8 +1667,9 @@ router.get("/audience-sources", adminProtect, isAdmin, async (req, res) => {
 
 // Ek source ke number Meta pe bhejo (audience na ho to bana do)
 router.post("/audience-sync", adminProtect, isAdmin, async (req, res) => {
+  let cfg = null;
   try {
-    const cfg = await getConfig();
+    cfg = await getConfig();
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua" });
     }
@@ -1674,6 +1677,16 @@ router.post("/audience-sync", adminProtect, isAdmin, async (req, res) => {
     const name = audienceService.AUDIENCE_NAMES[source];
     if (!name) {
       return res.status(400).json({ message: "Source galat hai (registered / buyers / abandoned)" });
+    }
+
+    // Terms accept nahi hui to Meta sirf "Permissions error" deta hai —
+    // pehle hi check karke seedha link de dete hain
+    const tos = await audienceService.checkCustomerListTos(cfg);
+    if (tos.known && !tos.accepted) {
+      return res.status(400).json({
+        message: `Customer List Terms accept karna baaki hai. Ye link kholo aur Accept dabao, phir dobara try karo: ${tos.url}`,
+        tosUrl: tos.url,
+      });
     }
 
     const { phones, rows, skipped } = await audienceService.collectPhones(source);
@@ -1708,14 +1721,15 @@ router.post("/audience-sync", adminProtect, isAdmin, async (req, res) => {
       note: "Meta ko match karne me 15-60 minute lagte hain. Uske baad audience size dikhega.",
     });
   } catch (err) {
-    res.status(400).json({ ok: false, message: audienceService.audienceError(err) });
+    res.status(400).json({ ok: false, message: audienceService.audienceError(err, cfg) });
   }
 });
 
 // Lookalike banao — Meta source audience jaise naye log dhoondhta hai
 router.post("/audience-lookalike", adminProtect, isAdmin, async (req, res) => {
+  let cfg = null;
   try {
-    const cfg = await getConfig();
+    cfg = await getConfig();
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua" });
     }
@@ -1733,7 +1747,7 @@ router.post("/audience-lookalike", adminProtect, isAdmin, async (req, res) => {
       note: "Lookalike taiyaar hone me 6-24 ghante lagte hain. Uske baad ad me use kar sakte ho.",
     });
   } catch (err) {
-    res.status(400).json({ ok: false, message: audienceService.audienceError(err) });
+    res.status(400).json({ ok: false, message: audienceService.audienceError(err, cfg) });
   }
 });
 

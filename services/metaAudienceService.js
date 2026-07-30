@@ -108,6 +108,36 @@ async function sourceCounts() {
   return out;
 }
 
+/*
+  CUSTOMER LIST TERMS check.
+  Meta ke do alag ToS hote hain:
+    web_custom_audience_tos -> pixel/website audiences (ye aam taur pe accept hoti hai)
+    custom_audience_tos     -> customer list upload (mobile number wali) — ye alag se chahiye
+  Ye accept na ho to Meta sirf "Permissions error" bhejta hai, jisse kuch samajh
+  nahi aata. Isliye pehle hi check karke saaf message dete hain.
+*/
+function tosUrl(adAccountId) {
+  return `https://business.facebook.com/ads/manage/customaudiences/tos/?act=${adAccountId}`;
+}
+
+async function checkCustomerListTos(cfg) {
+  try {
+    const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}`, {
+      params: { fields: "tos_accepted", access_token: cfg.accessToken },
+    });
+    const tos = data.tos_accepted || {};
+    return {
+      known: true,
+      accepted: Boolean(tos.custom_audience_tos),
+      websiteAccepted: Boolean(tos.web_custom_audience_tos),
+      url: tosUrl(cfg.adAccountId),
+    };
+  } catch {
+    // Padh nahi paye to rok nahi lagate — Meta khud bata dega
+    return { known: false, accepted: true, websiteAccepted: false, url: tosUrl(cfg.adAccountId) };
+  }
+}
+
 // Meta pe already bani audiences (naam se dhoondhne ke liye)
 async function listAudiences(cfg) {
   const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}/customaudiences`, {
@@ -186,13 +216,16 @@ async function createLookalike(cfg, originAudienceId, { name, ratio = 0.01, coun
   Meta ki do galtiyan bahut aam hain — unko saaf Hinglish me badal dete hain,
   warna admin ko samajh nahi aata ki karna kya hai.
 */
-function audienceError(err) {
+function audienceError(err, cfg) {
   const e = err?.response?.data?.error;
   const msg = e?.message || err?.message || "";
   const sub = e?.error_subcode;
+  const link = cfg?.adAccountId ? tosUrl(cfg.adAccountId) : "business.facebook.com → Audiences";
 
-  if (sub === 2654 || /Terms of Service|custom audience terms/i.test(msg)) {
-    return "Custom Audience Terms accept nahi hui hain. business.facebook.com → Settings → Ad accounts → apna account → 'Custom Audience Terms of Service' accept karo, phir dobara try karo.";
+  // "Permissions error" Meta ka sabse aam (aur sabse bekaar) jawab hai jab
+  // customer-list terms accept nahi hui hoti
+  if (sub === 2654 || /Terms of Service|custom audience terms|Permissions error/i.test(msg)) {
+    return `Customer List Terms accept nahi hui hain — isliye mobile number wali audience nahi ban rahi. Ye link kholo aur Accept dabao: ${link}  (Website/pixel wali terms already accept hain, customer list wali alag hoti hai.)`;
   }
   if (/not have permission|ads_management/i.test(msg)) {
     return "Token ke paas ads_management permission nahi hai. System user ka token dobara generate karo (ads_management tick karke).";
@@ -206,6 +239,8 @@ module.exports = {
   hashPhone,
   collectPhones,
   sourceCounts,
+  checkCustomerListTos,
+  tosUrl,
   listAudiences,
   ensureCustomerListAudience,
   uploadPhones,
