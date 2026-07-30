@@ -13,3 +13,6 @@ google-services.json
 *.mobileprovision
 serviceAccountKey.json
 firebase-adminsdk*.json
+
+# Meta Ads system-user token — NEVER commit
+meta-token
