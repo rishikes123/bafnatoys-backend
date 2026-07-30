@@ -493,6 +493,27 @@ const startServer = async () => {
     firstRecoveryTimer.unref?.();
     recoveryTimer.unref?.();
 
+    // Meta Ads budget guard — kharch zyada aur order zero wale campaign
+    // khud pause kar deta hai. Panel me band ho to kuch nahi karta.
+    const runMetaGuard = () => {
+      require("./services/metaGuardService")
+        .runGuard({ trigger: "auto" })
+        .then((r) => {
+          if (r.ran && r.actions?.length) {
+            console.log(
+              `[Meta guard] ${r.pausedCount} campaign paused (${r.activeChecked} checked)`
+            );
+          }
+        })
+        .catch((error) =>
+          console.error("[Meta guard] Worker failed:", error.message)
+        );
+    };
+    const firstGuardTimer = setTimeout(runMetaGuard, 60 * 1000);
+    const guardTimer = setInterval(runMetaGuard, 30 * 60 * 1000);
+    firstGuardTimer.unref?.();
+    guardTimer.unref?.();
+
     server.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 Server running on port ${PORT} with Real-time Sockets`);
     });

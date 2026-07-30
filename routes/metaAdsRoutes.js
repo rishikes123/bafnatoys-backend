@@ -1,7 +1,16 @@
 const router = require("express").Router();
 const axios = require("axios");
-const Setting = require("../models/settingModel");
 const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
+const {
+  META_GRAPH_VERSION,
+  GRAPH,
+  getConfig,
+  saveAccounts,
+  metaError,
+} = require("../services/metaAdsConfig");
+const gemini = require("../services/geminiService");
+const audienceService = require("../services/metaAudienceService");
+const guardService = require("../services/metaGuardService");
 
 /*
   META ADS PANEL
@@ -16,50 +25,11 @@ const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
   Permissions: ads_read (dekhne) + ads_management (edit) + read_insights
 */
 
-const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v21.0";
-const GRAPH = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
-const SETTING_KEY = "meta-ads";
-
 /*
-  MULTI-ACCOUNT: ab config me accounts ki list hoti hai:
-    { accounts: [{ adAccountId, accessToken, label }], activeId }
-  Purana single-account data mile to khud migrate ho jata hai.
-  Saare read/edit endpoints hamesha ACTIVE account use karte hain.
+  Config (getConfig / saveAccounts / metaError / GRAPH) ab
+  services/metaAdsConfig.js me hai — budget guard aur audience sync bhi
+  wahi use karte hain, isliye ek hi jagah rakha.
 */
-async function getConfig() {
-  let setting = await Setting.findOne({ key: SETTING_KEY });
-  if (!setting) {
-    setting = await Setting.create({ key: SETTING_KEY, data: { accounts: [], activeId: "" } });
-  }
-  const raw = setting.data || {};
-  let accounts = Array.isArray(raw.accounts) ? raw.accounts : [];
-  // Purana shape { adAccountId, accessToken } -> migrate
-  if (!accounts.length && raw.adAccountId && raw.accessToken) {
-    accounts = [{ adAccountId: raw.adAccountId, accessToken: raw.accessToken, label: "Account 1" }];
-  }
-  let activeId = raw.activeId;
-  if (!activeId || !accounts.find((a) => a.adAccountId === activeId)) {
-    activeId = accounts.length ? accounts[0].adAccountId : "";
-  }
-  const active = accounts.find((a) => a.adAccountId === activeId) || null;
-  return {
-    accounts,
-    activeId,
-    adAccountId: active ? active.adAccountId : "",
-    accessToken: active ? active.accessToken : "",
-    businessId: active ? active.businessId || "" : "",
-    catalogIds: active && Array.isArray(active.catalogIds) ? active.catalogIds : [],
-    enabled: Boolean(active),
-  };
-}
-
-async function saveAccounts(accounts, activeId) {
-  await Setting.findOneAndUpdate(
-    { key: SETTING_KEY },
-    { $set: { key: SETTING_KEY, data: { accounts, activeId } } },
-    { upsert: true, new: true }
-  );
-}
 
 // Frontend ko bhejne wala safe shape (tokens kabhi nahi jaate)
 function publicConfig(cfg) {
@@ -73,13 +43,6 @@ function publicConfig(cfg) {
     enabled: cfg.enabled,
     hasToken: Boolean(cfg.accessToken),
   };
-}
-
-// Meta ki galti ko saaf message me badalta hai
-function metaError(err) {
-  const m = err?.response?.data?.error?.message;
-  if (m) return m;
-  return err?.message || "Meta API error";
 }
 
 // actions[] array me se ek action ki value nikalta hai
@@ -195,13 +158,8 @@ function compareInsights(current, previous) {
   return out;
 }
 
-function parseJsonObject(text) {
-  const clean = String(text || "").replace(/```json|```/gi, "").trim();
-  const start = clean.indexOf("{");
-  const end = clean.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("AI response JSON format me nahi aaya");
-  return JSON.parse(clean.slice(start, end + 1));
-}
+// AI ke jawab me se JSON nikalna — geminiService me hai
+const parseJsonObject = gemini.parseJsonObject;
 
 /* ============ CONFIG ============ */
 
@@ -328,7 +286,7 @@ router.get("/overview", adminProtect, isAdmin, async (req, res) => {
       anomalies.push({
         code: "ATC_OVER_LPV",
         severity: "warning",
-        message: `Add to cart (${current.addToCart}) landing page views (${current.landingPageViews}) se zyada hai. Pixel/CAPI deduplication check karo.`,
+        message: `Add to cart events (${current.addToCart}) landing page views (${current.landingPageViews}) se zyada hain. Wholesale me ek buyer bahut products daalta hai, isliye ye normal ho sakta hai — par pixel double-fire bhi ho sakta hai, ek baar check kar lo.`,
       });
     }
     if (current.clicks > 0 && current.landingPageViews / current.clicks < 0.65) {
@@ -727,8 +685,6 @@ router.post("/audience-estimate", adminProtect, isAdmin, async (req, res) => {
 
 router.post("/ai-b2b-plan", adminProtect, isAdmin, async (req, res) => {
   try {
-    const key = getGeminiKey();
-    if (!key) return res.status(400).json({ message: "GEMINI_API_KEY .env me nahi mili" });
     const cfg = await getConfig();
     if (!cfg.accessToken || !cfg.adAccountId) return res.status(400).json({ message: "Meta Ads configure nahi hua" });
     const {
@@ -781,16 +737,12 @@ Website: ${website}
 Locations: ${targetLocations}
 Copy language: ${language}
 Real Meta data: ${JSON.stringify(realSignals)}`;
-    const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
-    const gr = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.45 },
-      },
-      { headers: { "Content-Type": "application/json" }, timeout: 60000 }
-    );
-    const plan = parseJsonObject(gr.data?.candidates?.[0]?.content?.parts?.[0]?.text);
+    // Busy hone par khud retry + doosre model pe fallback ho jata hai
+    const { text, model } = await gemini.generate(prompt, {
+      responseMimeType: "application/json",
+      temperature: 0.45,
+    });
+    const plan = parseJsonObject(text);
     const interestTerms = (plan.interestKeywords || []).slice(0, 6);
     const jobTerms = (plan.jobTitleKeywords || []).slice(0, 6);
     const [interestSearches, jobSearches] = await Promise.all([
@@ -810,7 +762,7 @@ Real Meta data: ${JSON.stringify(realSignals)}`;
       plan: { ...plan, interests, jobTitles },
     });
   } catch (err) {
-    res.status(400).json({ message: err?.response?.data?.error?.message || metaError(err) });
+    res.status(400).json({ message: err.friendly || err?.response?.data?.error?.message || metaError(err) });
   }
 });
 
@@ -1605,27 +1557,8 @@ router.post("/update-entity", adminProtect, isAdmin, async (req, res) => {
   Poore account ka data ikattha karke Gemini se Hindi me analysis + advice
   mangta hai. GEMINI_API_KEY .env me honi chahiye.
 */
-// Windows system env me purani/junk GEMINI key ho sakti hai jo .env ko
-// dabaa deti hai — isliye .env FILE ki value ko hamesha priority dete hain
-function getGeminiKey() {
-  try {
-    const envPath = require("path").join(__dirname, "..", ".env");
-    const line = require("fs")
-      .readFileSync(envPath, "utf8")
-      .split(/\r?\n/)
-      .find((l) => l.trim().startsWith("GEMINI_API_KEY="));
-    const v = line && line.split("=").slice(1).join("=").trim();
-    if (v) return v;
-  } catch {}
-  return process.env.GEMINI_API_KEY;
-}
-
 router.post("/ai-analysis", adminProtect, isAdmin, async (req, res) => {
   try {
-    const key = getGeminiKey();
-    if (!key) {
-      return res.status(400).json({ message: "GEMINI_API_KEY .env me nahi mili" });
-    }
     const cfg = await getConfig();
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua" });
@@ -1687,24 +1620,150 @@ Campaigns: ${JSON.stringify(camps)}
 Age breakdown: ${JSON.stringify(byAge)}
 Platform breakdown: ${JSON.stringify(byPlatform)}`;
 
-    // "gemini-flash-latest" alias hamesha newest flash model pe chalta hai
-    const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
-    const gr = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-      { contents: [{ parts: [{ text: prompt }] }] },
-      { headers: { "Content-Type": "application/json" }, timeout: 60000 }
-    );
-    const text = gr.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return res.status(400).json({ message: "Gemini se jawab nahi mila" });
-    res.json({ ok: true, analysis: text, model });
+    // Gemini busy ho to khud 3 baar retry, phir agle model pe fallback
+    const { text, model, attempts } = await gemini.generate(prompt);
+    res.json({ ok: true, analysis: text, model, attempts });
   } catch (err) {
-    const gMsg = err?.response?.data?.error?.message;
-    if (gMsg && /API key not valid/i.test(gMsg)) {
+    res.status(400).json({
+      message: err.friendly || err?.response?.data?.error?.message || metaError(err),
+    });
+  }
+});
+
+/* ============ FIRST-PARTY AUDIENCE + LOOKALIKE ============ */
+/*
+  Hamare 400+ registered retailers aur asli buyers ke number Meta ko dekar
+  Lookalike banate hain — Meta "aise hi aur log" dhoondh kar deta hai.
+  Number plain me kabhi nahi jaata, sirf SHA-256 hash.
+*/
+
+// Kis source me kitne number hain + Meta pe pehle se kaunsi audience bani hai
+router.get("/audience-sources", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const cfg = await getConfig();
+    const sources = await audienceService.sourceCounts();
+
+    let audiences = [];
+    if (cfg.accessToken && cfg.adAccountId) {
+      try {
+        audiences = (await audienceService.listAudiences(cfg)).map((a) => ({
+          id: a.id,
+          name: a.name,
+          subtype: a.subtype,
+          lower: Number(a.approximate_count_lower_bound || 0),
+          upper: Number(a.approximate_count_upper_bound || 0),
+          deliveryStatus: a.delivery_status?.description || null,
+          updatedAt: a.time_updated || null,
+        }));
+      } catch {}
+    }
+    res.json({ sources, audiences });
+  } catch (err) {
+    res.status(400).json({ message: metaError(err) });
+  }
+});
+
+// Ek source ke number Meta pe bhejo (audience na ho to bana do)
+router.post("/audience-sync", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const cfg = await getConfig();
+    if (!cfg.accessToken || !cfg.adAccountId) {
+      return res.status(400).json({ message: "Meta Ads configure nahi hua" });
+    }
+    const source = String(req.body.source || "");
+    const name = audienceService.AUDIENCE_NAMES[source];
+    if (!name) {
+      return res.status(400).json({ message: "Source galat hai (registered / buyers / abandoned)" });
+    }
+
+    const { phones, rows, skipped } = await audienceService.collectPhones(source);
+    if (!phones.length) {
+      return res.status(400).json({ message: "Is source me ek bhi valid mobile number nahi mila" });
+    }
+    // Meta 100 se kam matched logon pe audience use hi nahi karne deta
+    if (phones.length < 100) {
       return res.status(400).json({
-        message: "Gemini API key invalid hai. Nayi key lo: aistudio.google.com/apikey → .env me GEMINI_API_KEY update karo → backend restart",
+        message: `Sirf ${phones.length} number mile. Meta ko kam se kam 100 chahiye — thode aur customer aane par try karo.`,
       });
     }
-    res.status(400).json({ message: gMsg || metaError(err) });
+
+    const { id, created } = await audienceService.ensureCustomerListAudience(
+      cfg,
+      name,
+      `Bafnatoys panel — ${source}`
+    );
+    const { sent, batches } = await audienceService.uploadPhones(cfg, id, phones);
+
+    res.json({
+      ok: true,
+      source,
+      audienceId: id,
+      audienceName: name,
+      created,
+      rowsScanned: rows,
+      uploaded: phones.length,
+      accepted: sent,
+      skippedNoPhone: skipped,
+      batches: batches.length,
+      note: "Meta ko match karne me 15-60 minute lagte hain. Uske baad audience size dikhega.",
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: audienceService.audienceError(err) });
+  }
+});
+
+// Lookalike banao — Meta source audience jaise naye log dhoondhta hai
+router.post("/audience-lookalike", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const cfg = await getConfig();
+    if (!cfg.accessToken || !cfg.adAccountId) {
+      return res.status(400).json({ message: "Meta Ads configure nahi hua" });
+    }
+    const { sourceAudienceId, ratio, country, name } = req.body;
+    if (!sourceAudienceId) return res.status(400).json({ message: "sourceAudienceId do" });
+
+    const out = await audienceService.createLookalike(cfg, sourceAudienceId, {
+      name,
+      ratio,
+      country: country || "IN",
+    });
+    res.json({
+      ok: true,
+      ...out,
+      note: "Lookalike taiyaar hone me 6-24 ghante lagte hain. Uske baad ad me use kar sakte ho.",
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: audienceService.audienceError(err) });
+  }
+});
+
+/* ============ BUDGET GUARD (auto-pause) ============ */
+
+router.get("/guard", adminProtect, isAdmin, async (req, res) => {
+  try {
+    res.json(await guardService.getGuard());
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/guard", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const current = await guardService.getGuard();
+    const saved = await guardService.saveGuard({ ...current, ...req.body, log: current.log });
+    res.json(saved);
+  } catch (err) {
+    res.status(400).json({ message: err.message || "Guard save nahi hua" });
+  }
+});
+
+// Abhi chala kar dekho (settings band ho to bhi chalega — admin khud maang raha hai)
+router.post("/guard/run", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const result = await guardService.runGuard({ trigger: "manual" });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ message: metaError(err) });
   }
 });
 
