@@ -330,9 +330,11 @@ router.get("/meta-pixel", async (req, res) => {
       });
     }
     const data = setting.data || {};
+    // Ye route public hai (website ka pixel loader isse padhta hai), isliye
+    // accessToken kabhi bahar nahi bhejte — sirf batate hain ki set hai ya nahi.
     res.json({
       pixelId: data.pixelId || "",
-      accessToken: data.accessToken || "",
+      hasToken: Boolean(data.accessToken),
       enabled: Boolean(data.enabled),
       events: { ...DEFAULT_PIXEL_EVENTS, ...(data.events || {}) },
     });
@@ -345,6 +347,10 @@ router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
   try {
     const { pixelId, accessToken, enabled, events } = req.body;
     const cleanPixelId = String(pixelId || "").replace(/\D/g, "").trim();
+    // Admin panel ab token wapas nahi padh sakta, isliye khaali bheje to purana rakho
+    const existing = await Setting.findOne({ key: "meta-pixel" });
+    const newToken = (accessToken || "").trim();
+    const finalToken = newToken || existing?.data?.accessToken || "";
     const setting = await Setting.findOneAndUpdate(
       { key: "meta-pixel" },
       {
@@ -352,7 +358,7 @@ router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
           key: "meta-pixel",
           data: {
             pixelId: cleanPixelId,
-            accessToken: (accessToken || "").trim(),
+            accessToken: finalToken,
             enabled: Boolean(enabled) && cleanPixelId.length > 0,
             events: { ...DEFAULT_PIXEL_EVENTS, ...(events || {}) },
           },
@@ -360,9 +366,16 @@ router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
       },
       { upsert: true, new: true }
     );
+    // Socket sab clients tak jata hai aur response admin panel ko — dono me token nahi bhejte
+    const safeData = {
+      pixelId: setting.data.pixelId,
+      hasToken: Boolean(setting.data.accessToken),
+      enabled: setting.data.enabled,
+      events: setting.data.events,
+    };
     const io = req.app.get("io");
-    if (io) io.emit("settingsUpdated", { type: "meta-pixel", data: setting.data });
-    res.json(setting.data);
+    if (io) io.emit("settingsUpdated", { type: "meta-pixel", data: safeData });
+    res.json(safeData);
   } catch (err) {
     res.status(500).json({ message: "Server Error" });
   }
