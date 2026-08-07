@@ -128,7 +128,7 @@ router.get("/", async (req, res) => {
     const [rawOrders, total] = await Promise.all([
       Order.find(filter)
         .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
-        .populate("items.productId", "sku mrp")
+        .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -164,7 +164,7 @@ router.get("/:id", async (req, res) => {
   try {
     let order = await Order.findById(req.params.id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
-      .populate("items.productId", "sku mrp") // ✅ YAHAN MRP ADD KIYA HAI
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } }) // ✅ YAHAN MRP ADD KIYA HAI
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -437,7 +437,7 @@ const legacyCreateOrder = async (req, res) => {
 
     let populatedOrder = await Order.findById(savedOrder._id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
-      .populate("items.productId", "sku mrp") // ✅ YAHAN MRP ADD KIYA HAI
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } }) // ✅ YAHAN MRP ADD KIYA HAI
       .lean();
 
     // ✅ SKU and MRP Attach kar rahe hain
@@ -1149,7 +1149,7 @@ const updateOrderStatus = async (req, res) => {
 
     let populatedOrder = await Order.findById(order._id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
-      .populate("items.productId", "sku mrp") // ✅ YAHAN BHI MRP ADD KIYA HAI
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } }) // ✅ YAHAN BHI MRP ADD KIYA HAI
       .lean();
 
     // ✅ SKU and MRP Attach kar rahe hain

@@ -44,7 +44,7 @@ async function populateOrder(orderId) {
       "customerId",
       "firmName shopName otpMobile whatsapp city state zip visitingCardUrl email"
     )
-    .populate("items.productId", "sku mrp")
+    .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
     .lean();
   return attachSkuToItems(order);
 }
