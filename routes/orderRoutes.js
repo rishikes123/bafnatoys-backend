@@ -1433,7 +1433,6 @@ router.get("/nimbuspost-label/:trackingId", async (req, res) => {
     // ─── SECTION 4: Items table ───
     const colX = [lx, lx + 60, lx + 350, lx + 415, rx];
     const thH = 18;
-    const sec4Top = y;
 
     // Header row
     doc.rect(colX[0], y, colX[4] - colX[0], thH).fill("#f0f0f0").stroke();
@@ -1464,7 +1463,7 @@ router.get("/nimbuspost-label/:trackingId", async (req, res) => {
     border(colX[0], y, colX[4], y + totH);
     doc.moveTo(colX[3], y).lineTo(colX[3], y + totH).stroke();
     doc.font("Helvetica-Bold").text("Order Total", colX[0] + 4, y + 6, { width: colX[3] - colX[0] - 8 });
-    doc.text(`\u20B9${order.total}`, colX[3] + 4, y + 6, { width: colX[4] - colX[3] - 8, align: "right" });
+    doc.text(`Rs. ${order.total}`, colX[3] + 4, y + 6, { width: colX[4] - colX[3] - 8, align: "right" });
     y += totH;
 
     // ─── SECTION 5: Pickup + Footer ───
@@ -1491,6 +1490,294 @@ router.get("/nimbuspost-label/:trackingId", async (req, res) => {
   }
 });
 
+/* ============================================================
+    ✅ TAX INVOICE PDF GENERATION (PDFKit Stream)
+============================================================ */
+router.get("/:id/invoice-pdf", async (req, res) => {
+  try {
+    let order = await Order.findById(req.params.id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip")
+      .populate({ path: "items.productId", select: "sku mrp category gstRate", populate: { path: "category", select: "name" } })
+      .lean();
+
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    order = attachSkuToItems(order);
+
+    const addr = order.shippingAddress || {};
+    const billName = addr.shopName || order.customerId?.shopName || addr.fullName || "Customer";
+    const shipName = addr.fullName || billName;
+    const shipStreet = addr.isDifferentShipping ? (addr.shippingStreet || "") : (addr.street || "");
+    const shipArea   = addr.isDifferentShipping ? (addr.shippingArea   || "") : (addr.area   || "");
+    const shipCity   = addr.isDifferentShipping ? (addr.shippingCity   || "") : (addr.city   || "");
+    const shipState  = addr.isDifferentShipping ? (addr.shippingState  || "") : (addr.state  || "");
+    const shipPin    = addr.isDifferentShipping ? (addr.shippingPincode || "") : (addr.pincode || "");
+    const shipPhone  = addr.phone || order.customerId?.otpMobile || "";
+    const orderNum   = order.orderNumber || order._id.toString().slice(-6);
+    const orderDate  = new Date(order.createdAt || Date.now()).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    });
+
+    const isCOD = order.paymentMode === "COD";
+    const advancePaid = order.advancePaid || 0;
+    const collectAmt = order.remainingAmount ?? (order.total - advancePaid);
+
+    // GST breakdown per rate
+    const gstMap = {};
+    (order.items || []).forEach(it => {
+      const rate = it.productId?.gstRate || it.gstRate || 0;
+      const total = (it.qty || 1) * (it.price || 0);
+      const base = total / (1 + rate / 100);
+      const gst = total - base;
+      if (!gstMap[rate]) gstMap[rate] = { base: 0, gst: 0 };
+      gstMap[rate].base += base;
+      gstMap[rate].gst += gst;
+    });
+
+    const subtotal = order.itemsPrice || (order.items || []).reduce((s, i) => s + (i.qty || 1) * (i.price || 0), 0);
+    const shipping = order.shippingPrice || 0;
+    const storedDiscount = order.discountAmount || 0;
+    const impliedDiscount = storedDiscount > 0 ? storedDiscount : Math.max(0, Math.round(subtotal + shipping - order.total));
+
+    function cleanPdfText(str) {
+      if (!str) return "";
+      return String(str)
+        .normalize("NFKD")
+        .replace(/[^\x00-\x7F]/g, "")
+        .replace(/[\r\n]+/g, " ")
+        .trim();
+    }
+
+    function numToWords(num) {
+      const a = ["", "One ", "Two ", "Three ", "Four ", "Five ", "Six ", "Seven ", "Eight ", "Nine ", "Ten ", "Eleven ", "Twelve ", "Thirteen ", "Fourteen ", "Fifteen ", "Sixteen ", "Seventeen ", "Eighteen ", "Nineteen "];
+      const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+      const n = ("000000000" + Math.round(num)).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+      if (!n) return "";
+      let str = "";
+      str += (Number(n[1]) !== 0) ? (a[Number(n[1])] || b[n[1][0]] + " " + a[n[1][1]]) + "Crore " : "";
+      str += (Number(n[2]) !== 0) ? (a[Number(n[2])] || b[n[2][0]] + " " + a[n[2][1]]) + "Lakh " : "";
+      str += (Number(n[3]) !== 0) ? (a[Number(n[3])] || b[n[3][0]] + " " + a[n[3][1]]) + "Thousand " : "";
+      str += (Number(n[4]) !== 0) ? (a[Number(n[4])] || b[n[4][0]] + " " + a[n[4][1]]) + "Hundred " : "";
+      str += (Number(n[5]) !== 0) ? ((str !== "") ? "and " : "") + (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]]) : "";
+      return str.trim() + " Rupees Only";
+    }
+
+    const PDFDocument = require("pdfkit");
+    const doc = new PDFDocument({ size: "A4", margin: 18, bufferPages: true });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="Invoice_${orderNum}.pdf"`);
+    doc.pipe(res);
+
+    const lx = 18, rx = 577, pageW = rx - lx;
+    let y = 18;
+
+    const items = order.items || [];
+    const isCompact = items.length > 8;
+
+    // ── BRAND TOP HEADER ──
+    const headerH = isCompact ? 42 : 48;
+    doc.roundedRect(lx, y, pageW, headerH, 4).fill("#0f2744");
+    doc.rect(lx, y + headerH - 3, pageW, 3).fill("#2563eb");
+
+    const brandY = isCompact ? y + 13 : y + 15;
+    doc.fillColor("#ffffff").fontSize(isCompact ? 18 : 20).font("Helvetica-Bold").text("BAFNATOYS", lx + 12, brandY);
+
+    doc.fillColor("#ffffff").fontSize(isCompact ? 12 : 14).font("Helvetica-Bold").text("TAX INVOICE", lx, y + 7, { width: pageW - 12, align: "right" });
+    doc.fontSize(8.5).font("Helvetica-Bold").fillColor("#f8fafc").text(`INVOICE #: ${orderNum}`, lx, y + (isCompact ? 20 : 23), { width: pageW - 12, align: "right" });
+    doc.fontSize(7).font("Helvetica").fillColor("#94a3b8").text(`Date: ${orderDate}`, lx, y + (isCompact ? 30 : 34), { width: pageW - 12, align: "right" });
+
+    y += headerH + (isCompact ? 6 : 8);
+
+    // ── 3-COLUMN METADATA CARDS ──
+    const gap = 6;
+    const boxW = (pageW - (gap * 2)) / 3;
+    const col1X = lx;
+    const col2X = lx + boxW + gap;
+    const col3X = lx + (boxW * 2) + (gap * 2);
+
+    const fullShipAddress = cleanPdfText(`${shipStreet}, ${shipArea}, ${shipCity}, ${shipState} - ${shipPin}`.replace(/, ,/g, ", ").replace(/^, /, ""));
+    doc.fontSize(7).font("Helvetica");
+    const addrH = doc.heightOfString(fullShipAddress, { width: boxW - 14, lineGap: 0 });
+    const metaH = isCompact ? 68 : 80;
+
+    // Card 1: BILL TO
+    doc.roundedRect(col1X, y, boxW, metaH, 3).fill("#ffffff").stroke("#cbd5e1");
+    doc.rect(col1X, y, boxW, 14).fill("#f1f5f9");
+    doc.fillColor("#1e293b").fontSize(7).font("Helvetica-Bold").text("BILL TO", col1X + 6, y + 3.5);
+    doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text(cleanPdfText(billName), col1X + 6, y + 17, { width: boxW - 12 });
+    let bY = y + 28;
+    doc.fillColor("#475569").fontSize(7).font("Helvetica")
+      .text(`GSTIN: ${addr.gstNumber || "N/A"}`, col1X + 6, bY)
+      .text(`Phone: ${order.customerId?.otpMobile || shipPhone || "—"}`, col1X + 6, bY + 9)
+      .text(`WhatsApp: ${order.customerId?.whatsapp || "—"}`, col1X + 6, bY + 18);
+
+    // Card 2: SHIP TO
+    doc.roundedRect(col2X, y, boxW, metaH, 3).fill("#ffffff").stroke("#cbd5e1");
+    doc.rect(col2X, y, boxW, 14).fill("#f1f5f9");
+    doc.fillColor("#1e293b").fontSize(7).font("Helvetica-Bold").text("SHIP TO", col2X + 6, y + 3.5);
+    doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text(cleanPdfText(shipName), col2X + 6, y + 17, { width: boxW - 12 });
+    let sY = y + 28;
+    doc.fillColor("#475569").fontSize(7).font("Helvetica");
+    doc.text(fullShipAddress, col2X + 6, sY, { width: boxW - 12, lineGap: 0 });
+    doc.text(`Phone: ${shipPhone}`, col2X + 6, sY + addrH + 2);
+
+    // Card 3: ORDER SUMMARY
+    doc.roundedRect(col3X, y, boxW, metaH, 3).fill("#ffffff").stroke("#cbd5e1");
+    doc.rect(col3X, y, boxW, 14).fill("#f1f5f9");
+    doc.fillColor("#1e293b").fontSize(7).font("Helvetica-Bold").text("ORDER SUMMARY", col3X + 6, y + 3.5);
+    let dY = y + 18;
+    doc.fillColor("#475569").fontSize(7).font("Helvetica")
+      .text("Payment:", col3X + 6, dY)
+      .font("Helvetica-Bold").fillColor("#0f172a").text(order.paymentMode === "COD" ? "COD" : order.paymentMode, col3X + 56, dY);
+
+    if (isCOD && advancePaid > 0) {
+      doc.font("Helvetica").fillColor("#475569").text("Advance:", col3X + 6, dY + 10);
+      doc.font("Helvetica-Bold").fillColor("#16a34a").text(`Rs. ${advancePaid.toLocaleString()}`, col3X + 56, dY + 10);
+
+      doc.font("Helvetica").fillColor("#475569").text("Collect:", col3X + 6, dY + 20);
+      doc.font("Helvetica-Bold").fillColor("#dc2626").text(`Rs. ${collectAmt.toLocaleString()}`, col3X + 56, dY + 20);
+    }
+    if (order.trackingId) {
+      doc.font("Helvetica").fillColor("#475569").text("AWB:", col3X + 6, dY + (isCOD && advancePaid > 0 ? 30 : 10));
+      doc.font("Helvetica-Bold").fillColor("#7c3aed").text(order.trackingId, col3X + 56, dY + (isCOD && advancePaid > 0 ? 30 : 10));
+    }
+
+    y += metaH + 6;
+
+    // ── TABLE ──
+    const colT = [lx, lx + 20, lx + 350, lx + 390, lx + 465, rx];
+    const thH = 15;
+    const drawTableHeader = (atY) => {
+      doc.rect(lx, atY, pageW, thH).fill("#0f2744");
+      doc.fillColor("#ffffff").fontSize(7).font("Helvetica-Bold");
+      doc.text("#", colT[0], atY + 4, { width: colT[1] - colT[0], align: "center" });
+      doc.text("ITEM / PRODUCT DESCRIPTION", colT[1] + 6, atY + 4, { width: colT[2] - colT[1] - 8 });
+      doc.text("QTY", colT[2], atY + 4, { width: colT[3] - colT[2], align: "center" });
+      doc.text("RATE", colT[3], atY + 4, { width: colT[4] - colT[3] - 6, align: "right" });
+      doc.text("AMOUNT", colT[4], atY + 4, { width: colT[5] - colT[4] - 6, align: "right" });
+    };
+
+    drawTableHeader(y);
+    y += thH;
+
+    // Table Rows
+    items.forEach((it, idx) => {
+      const cleanNameStr = cleanPdfText(it.name);
+      const cleanSkuStr = cleanPdfText(it.sku);
+      const amt = (it.qty || 1) * (it.price || 0);
+
+      doc.fontSize(7.2).font("Helvetica-Bold");
+      const nameH = doc.heightOfString(cleanNameStr, { width: colT[2] - colT[1] - 10, lineGap: 0 });
+      const rowH = Math.max(16, nameH + (cleanSkuStr ? 8 : 0) + 3);
+
+      if (y + rowH > 805) {
+        doc.addPage();
+        y = 18;
+        drawTableHeader(y);
+        y += thH;
+      }
+
+      if (idx % 2 === 1) {
+        doc.rect(lx, y, pageW, rowH).fill("#f8fafc");
+      }
+      doc.rect(lx, y, pageW, rowH).stroke("#e2e8f0");
+
+      // Col 0: #
+      doc.fillColor("#64748b").fontSize(6.8).font("Helvetica").text(String(idx + 1), colT[0], y + 3, { width: colT[1] - colT[0], align: "center" });
+
+      // Col 1: Product + SKU
+      doc.fillColor("#0f172a").fontSize(7.2).font("Helvetica-Bold").text(cleanNameStr, colT[1] + 5, y + 2.5, { width: colT[2] - colT[1] - 10, lineGap: 0 });
+      if (cleanSkuStr) {
+        doc.fillColor("#64748b").fontSize(6).font("Helvetica").text(`SKU: ${cleanSkuStr}`, colT[1] + 5, y + 2.5 + nameH + 0.5, { width: colT[2] - colT[1] - 10 });
+      }
+
+      // Col 2: Qty
+      doc.fillColor("#334155").fontSize(7.2).font("Helvetica-Bold").text(String(it.qty || 1), colT[2], y + 3, { width: colT[3] - colT[2], align: "center" });
+
+      // Col 3: Rate
+      doc.fillColor("#334155").fontSize(7.2).font("Helvetica").text(`Rs. ${(it.price || 0).toLocaleString()}`, colT[3], y + 3, { width: colT[4] - colT[3] - 6, align: "right" });
+
+      // Col 4: Amount
+      doc.fillColor("#0f172a").fontSize(7.2).font("Helvetica-Bold").text(`Rs. ${amt.toLocaleString()}`, colT[4], y + 3, { width: colT[5] - colT[4] - 6, align: "right" });
+
+      y += rowH;
+    });
+
+    // ── BOTTOM SUMMARY BLOCK ──
+    if (y + 60 > 805) {
+      doc.addPage();
+      y = 18;
+    }
+
+    y += 4;
+
+    // Left Box: Amount in words & Notes
+    const leftW = 270;
+    const sumBoxH = 48;
+    doc.roundedRect(lx, y, leftW, sumBoxH, 3).fill("#f8fafc").stroke("#e2e8f0");
+    doc.fillColor("#64748b").fontSize(6.5).font("Helvetica-Bold").text("AMOUNT IN WORDS", lx + 6, y + 4);
+    doc.fillColor("#0f172a").fontSize(7).font("Helvetica-Bold").text(numToWords(order.total), lx + 6, y + 12, { width: leftW - 12 });
+
+    doc.fillColor("#64748b").fontSize(6.5).font("Helvetica-Bold").text("TERMS & CONDITIONS", lx + 6, y + 25);
+    doc.fillColor("#475569").fontSize(6).font("Helvetica")
+      .text("* Goods once sold will only be replaced/credited as per policy.", lx + 6, y + 33, { width: leftW - 12 })
+      .text("* Computer-generated tax invoice, no signature required.", lx + 6, y + 40, { width: leftW - 12 });
+
+    // Right Box: Calculations
+    const sumW = 245;
+    const sumX = rx - sumW;
+    const lineH = 10.5;
+
+    doc.fillColor("#475569").fontSize(7.2).font("Helvetica");
+    doc.text("Subtotal:", sumX + 6, y, { width: 90 });
+    doc.text(`Rs. ${subtotal.toLocaleString()}`, sumX + 90, y, { width: sumW - 90 - 6, align: "right" });
+    y += lineH;
+
+    if (shipping > 0) {
+      doc.text("Shipping:", sumX + 6, y, { width: 90 });
+      doc.text(`Rs. ${shipping.toLocaleString()}`, sumX + 90, y, { width: sumW - 90 - 6, align: "right" });
+      y += lineH;
+    }
+
+    if (impliedDiscount > 0) {
+      doc.fillColor("#16a34a").font("Helvetica-Bold").text("Volume Discount:", sumX + 6, y, { width: 90 });
+      doc.text(`-Rs. ${impliedDiscount.toLocaleString()}`, sumX + 90, y, { width: sumW - 90 - 6, align: "right" });
+      y += lineH;
+    }
+
+    // Separate GST lines
+    Object.entries(gstMap)
+      .filter(([, v]) => v.gst > 0)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .forEach(([rate]) => {
+        doc.fillColor("#059669").font("Helvetica-Bold").fontSize(6.8);
+        doc.text(`GST ${rate}% Already included in Price`, sumX + 6, y, { width: sumW - 12, align: "right" });
+        y += lineH - 1;
+      });
+
+    y += 1;
+    // Grand Total
+    doc.roundedRect(sumX, y, sumW, 18, 3).fill("#0f2744");
+    doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold");
+    doc.text("GRAND TOTAL:", sumX + 8, y + 4.5, { width: 100 });
+    doc.text(`Rs. ${order.total.toLocaleString()}`, sumX + 100, y + 4.5, { width: sumW - 108, align: "right" });
+
+    y += 24;
+
+    // ── FOOTER ──
+    doc.rect(lx, y, pageW, 18).fill("#f1f5f9").stroke("#cbd5e1");
+    doc.fillColor("#0f172a").fontSize(7).font("Helvetica-Bold").text("Thank You For Your Business with BafnaToys!", lx, y + 3, { width: pageW, align: "center" });
+    doc.fillColor("#64748b").fontSize(6).font("Helvetica").text("1-12, Thondamuthur Road, Kalikkanaicken Palayam, Coimbatore - 641007 | Support: +91 9043347300 | www.bafnatoys.com", lx, y + 10, { width: pageW, align: "center" });
+
+    doc.end();
+  } catch (err) {
+    console.error("Generate Invoice PDF Error:", err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+});
 
 router.delete("/:id", async (req, res) => {
   try {
