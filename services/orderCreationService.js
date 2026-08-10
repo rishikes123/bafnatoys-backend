@@ -3,6 +3,7 @@ const Razorpay = require("razorpay");
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
 const ShippingSettings = require("../models/ShippingSettings");
+const { calculateShippingCharge } = require("./shippingPricingService");
 const Setting = require("../models/settingModel");
 const { sendWhatsAppTemplate } = require("./whatsappService");
 const { notifyAdminNewOrder } = require("./adminNotifyService");
@@ -184,10 +185,10 @@ async function createOrderFromPayload(payload, options = {}) {
   }
 
   const shippingSettings = await ShippingSettings.findOne().lean();
-  const flatRate = shippingSettings?.shippingCharge || 0;
-  const freeAbove = shippingSettings?.freeShippingThreshold || 0;
-  const serverShippingPrice =
-    freeAbove > 0 && serverItemsTotal >= freeAbove ? 0 : flatRate;
+  const serverShippingPrice = calculateShippingCharge(
+    serverItemsTotal,
+    shippingSettings
+  );
 
   const discountRules = shippingSettings?.discountRules || [];
   const sortedRules = [...discountRules].sort(

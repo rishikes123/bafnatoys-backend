@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
 const ShippingSettings = require("../models/ShippingSettings");
+const { calculateShippingCharge } = require("../services/shippingPricingService");
 const Setting = require("../models/settingModel");
 const CheckoutAttempt = require("../models/CheckoutAttempt");
 const {
@@ -83,9 +84,7 @@ exports.createOrder = async (req, res) => {
 
     // 3. Shipping from DB settings
     const shippingSettings = await ShippingSettings.findOne().lean();
-    const flatRate = shippingSettings?.shippingCharge || 0;
-    const freeAbove = shippingSettings?.freeShippingThreshold || 0;
-    const shippingCharge = freeAbove > 0 && itemsTotal >= freeAbove ? 0 : flatRate;
+    const shippingCharge = calculateShippingCharge(itemsTotal, shippingSettings);
 
     // 4. Discount from DB rules
     const discountRules = shippingSettings?.discountRules || [];

@@ -384,11 +384,18 @@ router.put("/meta-pixel", adminProtect, isAdmin, async (req, res) => {
 /* ================= SHIPPING SETTINGS ================= */
 
 const ShippingSettings = require("../models/ShippingSettings");
+const {
+  normalizeShippingSettings,
+  validateShippingSettings,
+} = require("../services/shippingPricingService");
 
 router.get("/shipping", async (req, res) => {
   try {
-    let s = await ShippingSettings.findOne();
-    res.json(s || {});
+    const settings = await ShippingSettings.findOne().lean();
+    res.json({
+      ...(settings || {}),
+      ...normalizeShippingSettings(settings || {}),
+    });
   } catch (err) {
     res.status(500).json({ message: "Server Error" });
   }
@@ -396,14 +403,15 @@ router.get("/shipping", async (req, res) => {
 
 router.put("/shipping", adminProtect, isAdmin, async (req, res) => {
   try {
+    const shippingSettings = validateShippingSettings(req.body);
     const updated = await ShippingSettings.findOneAndUpdate(
       {},
-      { $set: req.body },
+      { $set: shippingSettings },
       { upsert: true, new: true }
-    );
-    res.json(updated);
+    ).lean();
+    res.json({ ...updated, ...normalizeShippingSettings(updated) });
   } catch (err) {
-    res.status(500).json({ message: "Server Error" });
+    res.status(400).json({ message: err.message || "Invalid shipping settings" });
   }
 });
 
@@ -484,4 +492,3 @@ router.put("/nimbuspost", adminProtect, isAdmin, async (req, res) => {
 });
 
 module.exports = router;
-

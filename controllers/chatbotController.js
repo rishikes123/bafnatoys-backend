@@ -2,6 +2,7 @@ const Order = require('../models/orderModel');
 const Product = require('../models/Product'); 
 const Setting = require('../models/settingModel'); 
 const ShippingSettings = require('../models/ShippingSettings'); 
+const { normalizeShippingSettings } = require('../services/shippingPricingService');
 const Category = require('../models/categoryModel');
 const Banner = require('../models/bannerModel');
 const HomeConfig = require('../models/homeConfigModel'); 
@@ -118,7 +119,7 @@ exports.handleChatMessage = async (req, res) => {
       - **Who is this for:** Exclusively for retailers, resellers & shop owners. NOT for single-piece retail.
       - **Damages/Returns:** Inspect within 24 hours. Returns accepted ONLY for incorrect/defective items.
       - **Mix Products:** Yes, can mix and match freely across all categories.
-      - **Minimum Order Value:** No strict minimum. Free delivery above ₹3000. Orders below ₹3000 have ₹500 shipping charge.
+      - **Minimum Order Value:** No strict minimum. Shipping charges cart value ke slab ke hisaab se lagte hain; exact current charges ke liye get_store_policies tool use karo.
 
       📂 **CATEGORIES, OFFERS & DEALS:**
       - Agar user puche "Kya kya milta hai?", "Konsi categories hain?", ya "Toys dikhao", toh 'get_all_categories' tool use karo.
@@ -232,15 +233,18 @@ exports.handleChatMessage = async (req, res) => {
       else if (toolName === "get_store_policies") {
         const codSettings = await Setting.findOne({ key: 'cod' });
         const shipSettings = await ShippingSettings.findOne();
+        const normalizedShipping = normalizeShippingSettings(shipSettings?.toObject?.() || shipSettings || {});
 
         dbResultObj = {
           found: true,
           paymentPolicy: codSettings ? codSettings.data : { message: "Online and COD available." },
-          shippingPolicy: shipSettings ? {
-            baseCharge: shipSettings.shippingCharge,
-            freeShippingAbove: shipSettings.freeShippingThreshold,
-            discountRules: shipSettings.discountRules
-          } : { message: "Standard shipping applies." }
+          shippingPolicy: {
+            slabsEnabled: normalizedShipping.shippingSlabsEnabled,
+            slabs: normalizedShipping.shippingSlabs,
+            baseCharge: normalizedShipping.shippingCharge,
+            freeShippingAbove: normalizedShipping.freeShippingThreshold,
+            discountRules: shipSettings?.discountRules || []
+          }
         };
       }
 

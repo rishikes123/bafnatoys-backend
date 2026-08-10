@@ -66,19 +66,31 @@ function shapeInsights(row) {
   if (!row) {
     return {
       spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0,
+      linkClicks: 0, linkCtr: 0, costPerLinkClick: 0,
       reach: 0, frequency: 0, roas: 0,
       purchases: 0, purchaseValue: 0, addToCart: 0, checkout: 0, landingPageViews: 0,
     };
   }
   const actions = row.actions || [];
   const values = row.action_values || [];
+  const spend = Number(row.spend) || 0;
+  const impressions = Number(row.impressions) || 0;
+  // Total clicks me reactions aur doosre clicks bhi hote hain. Funnel ke liye
+  // website/app destination tak jaane wale outbound/link clicks hi use karo.
+  const linkClicks =
+    pickAction(row.outbound_clicks, ["outbound_click"]) ||
+    Number(row.inline_link_clicks) ||
+    pickAction(actions, ["link_click"]);
   return {
-    spend: Number(row.spend) || 0,
-    impressions: Number(row.impressions) || 0,
+    spend,
+    impressions,
     clicks: Number(row.clicks) || 0,
     ctr: Number(row.ctr) || 0,
     cpc: Number(row.cpc) || 0,
     cpm: Number(row.cpm) || 0,
+    linkClicks,
+    linkCtr: impressions > 0 ? Number(((linkClicks / impressions) * 100).toFixed(4)) : 0,
+    costPerLinkClick: linkClicks > 0 ? Number((spend / linkClicks).toFixed(4)) : 0,
     reach: Number(row.reach) || 0,
     frequency: Number(row.frequency) || 0,
     roas: pickRoas(row),
@@ -91,7 +103,7 @@ function shapeInsights(row) {
 }
 
 const INSIGHT_FIELDS =
-  "spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,action_values,purchase_roas";
+  "spend,impressions,clicks,inline_link_clicks,outbound_clicks,ctr,cpc,cpm,reach,frequency,actions,action_values,purchase_roas";
 
 const VALID_PRESETS = [
   "today", "yesterday", "last_7d", "last_14d", "last_30d",
@@ -106,9 +118,25 @@ function isoDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function presetRanges(preset) {
-  const now = new Date();
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+function dateInTimeZone(timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return new Date(Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day)));
+  } catch (_) {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  }
+}
+
+function presetRanges(preset, timeZone = "Asia/Kolkata") {
+  // Meta ka reporting day ad-account timezone ke hisaab se badalta hai.
+  const end = dateInTimeZone(timeZone);
   let days = 30;
   if (preset === "today" || preset === "yesterday") days = 1;
   else if (preset === "last_7d") days = 7;
@@ -152,10 +180,19 @@ function changePercent(current, previous) {
 
 function compareInsights(current, previous) {
   const out = {};
-  for (const key of ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "reach", "frequency", "roas", "purchases", "purchaseValue", "addToCart", "checkout", "landingPageViews"]) {
+  for (const key of ["spend", "impressions", "clicks", "linkClicks", "linkCtr", "costPerLinkClick", "ctr", "cpc", "cpm", "reach", "frequency", "roas", "purchases", "purchaseValue", "addToCart", "checkout", "landingPageViews"]) {
     out[key] = changePercent(current[key], previous[key]);
   }
   return out;
+}
+
+function insightRowForRange(rows, range, excludedRow = null) {
+  if (!range) return null;
+  return rows.find((row) =>
+    row !== excludedRow &&
+    row.date_start === range.since &&
+    row.date_stop === range.until
+  ) || null;
 }
 
 // AI ke jawab me se JSON nikalna — geminiService me hai
@@ -264,36 +301,36 @@ router.get("/overview", adminProtect, isAdmin, async (req, res) => {
     }
     const preset = safePreset(req.query.datePreset);
     const ACT = `act_${cfg.adAccountId}`;
-    const ranges = presetRanges(preset);
+    const accountR = await axios.get(`${GRAPH}/${ACT}`, {
+      params: {
+        fields: "id,name,currency,timezone_name,account_status,disable_reason,amount_spent,balance,spend_cap,business{id,name}",
+        access_token: cfg.accessToken,
+      },
+    });
+    const account = accountR.data || {};
+    const ranges = presetRanges(preset, account.timezone_name || "Asia/Kolkata");
     const insightParams = ranges
       ? { fields: INSIGHT_FIELDS, time_ranges: JSON.stringify([ranges.current, ranges.previous]), access_token: cfg.accessToken }
       : { fields: INSIGHT_FIELDS, date_preset: preset, access_token: cfg.accessToken };
-    const [insightsR, accountR] = await Promise.all([
-      axios.get(`${GRAPH}/${ACT}/insights`, { params: insightParams }),
-      axios.get(`${GRAPH}/${ACT}`, {
-        params: {
-          fields: "id,name,currency,timezone_name,account_status,disable_reason,amount_spent,balance,spend_cap,business{id,name}",
-          access_token: cfg.accessToken,
-        },
-      }),
-    ]);
+    const insightsR = await axios.get(`${GRAPH}/${ACT}/insights`, { params: insightParams });
     const rows = insightsR.data.data || [];
-    const current = shapeInsights(rows[0]);
-    const previous = ranges ? shapeInsights(rows[1]) : null;
-    const account = accountR.data || {};
+    const currentRow = ranges ? insightRowForRange(rows, ranges.current) : rows[0];
+    const previousRow = ranges ? insightRowForRange(rows, ranges.previous, currentRow) : null;
+    const current = shapeInsights(currentRow);
+    const previous = ranges ? shapeInsights(previousRow) : null;
     const anomalies = [];
     if (current.addToCart > current.landingPageViews && current.landingPageViews > 0) {
       anomalies.push({
         code: "ATC_OVER_LPV",
-        severity: "warning",
-        message: `Add to cart events (${current.addToCart}) landing page views (${current.landingPageViews}) se zyada hain. Wholesale me ek buyer bahut products daalta hai, isliye ye normal ho sakta hai — par pixel double-fire bhi ho sakta hai, ek baar check kar lo.`,
+        severity: "info",
+        message: `Add to cart (${current.addToCart}) event count hai, customers ki ginti nahi. Wholesale buyer kai products daalta hai, isliye ye landing page views (${current.landingPageViews}) se zyada ho sakta hai; is number ko customer conversion rate na mano.`,
       });
     }
-    if (current.clicks > 0 && current.landingPageViews / current.clicks < 0.65) {
+    if (current.linkClicks > 0 && current.landingPageViews / current.linkClicks < 0.65) {
       anomalies.push({
         code: "LOW_LPV_RATE",
         severity: "warning",
-        message: `Sirf ${Math.round((current.landingPageViews / current.clicks) * 100)}% clicks landing page tak pahuche. Website speed ya accidental clicks check karo.`,
+        message: `Sirf ${Math.round((current.landingPageViews / current.linkClicks) * 100)}% website link clicks landing page tak pahuche. Website speed, redirect ya accidental clicks check karo.`,
       });
     }
     res.json({

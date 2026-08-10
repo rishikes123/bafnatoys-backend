@@ -6,6 +6,7 @@ const Razorpay = require("razorpay");
 const Order = require("../models/orderModel");
 const Product = require("../models/Product");
 const ShippingSettings = require("../models/ShippingSettings");
+const { calculateShippingCharge } = require("../services/shippingPricingService");
 const Setting = require("../models/settingModel");
 
 const razorpayInstance = new Razorpay({
@@ -292,9 +293,10 @@ const legacyCreateOrder = async (req, res) => {
 
     // 3. Shipping from DB settings
     const shippingSettings = await ShippingSettings.findOne().lean();
-    const flatRate = shippingSettings?.shippingCharge || 0;
-    const freeAbove = shippingSettings?.freeShippingThreshold || 0;
-    const serverShippingPrice = freeAbove > 0 && serverItemsTotal >= freeAbove ? 0 : flatRate;
+    const serverShippingPrice = calculateShippingCharge(
+      serverItemsTotal,
+      shippingSettings
+    );
 
     // 4. Discount from DB rules
     const discountRules = shippingSettings?.discountRules || [];
