@@ -15,6 +15,7 @@ const Product = require("../models/Product.js");
 const Review = require("../models/Review.js");
 const Registration = require("../models/Registration.js");
 const { sendPushNotification } = require("../services/notificationService");
+const { getProductCatalogId } = require("../services/metaCatalogId");
 
 // 🧠 Multer setup
 const storage = multer.memoryStorage();
@@ -712,7 +713,8 @@ router.get("/feed/facebook-catalog", async (req, res) => {
     let csv = headers.join(',') + '\n';
 
     finalProducts.forEach((product) => {
-      const id = product.sku || product._id.toString();
+      // Must match browser Pixel + CAPI content_ids exactly.
+      const id = getProductCatalogId(product);
       
       // Clean up title and description (remove HTML, handle quotes)
       const cleanTitle = (product.name || 'Bafna Toy').replace(/<[^>]*>?/gm, '').replace(/"/g, '""');

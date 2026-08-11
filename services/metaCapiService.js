@@ -1,5 +1,6 @@
 const axios = require("axios");
 const crypto = require("crypto");
+const { getOrderItemCatalogId, getOrderCatalogIds } = require("./metaCatalogId");
 
 // Hash user data for Meta CAPI (must be SHA256)
 const hashData = (data) => {
@@ -68,6 +69,15 @@ const sendPurchaseEvent = async (order, customer, metaSetting, req) => {
     if (customer?.state) userData.st = [hashData(customer.state)];
     if (customer?.zip) userData.zp = [hashData(customer.zip)];
 
+    const contentIds = getOrderCatalogIds(order.items);
+    const contents = (order.items || [])
+      .map((item) => ({
+        id: getOrderItemCatalogId(item),
+        quantity: Number(item.qty || item.quantity) || 1,
+        item_price: Number(item.price) || 0,
+      }))
+      .filter((item) => item.id);
+
     const payload = {
       data: [
         {
@@ -79,7 +89,8 @@ const sendPurchaseEvent = async (order, customer, metaSetting, req) => {
           custom_data: {
             currency: "INR",
             value: order.total,
-            content_ids: order.items.map(i => i.sku || i.productId?.toString() || ""),
+            content_ids: contentIds,
+            contents,
             content_type: "product"
           }
         }
