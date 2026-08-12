@@ -412,70 +412,89 @@ exports.listTransactions = async (req, res) => {
     if (status) {
       items = items.filter((p) => (p.status || "").toLowerCase() === String(status).toLowerCase());
     }
-    if (search) {
-      const q = String(search).trim().toLowerCase();
-      items = items.filter(
-        (p) =>
-          (p.email || "").toLowerCase().includes(q) ||
-          (p.contact || "").toLowerCase().includes(q) ||
-          (p.id || "").toLowerCase().includes(q) ||
-          (p.order_id || "").toLowerCase().includes(q)
-      );
-    }
-
-    // DB lookup: payment IDs se website order numbers dhundo
+    // DB lookup: payment IDs se website orders dhundo to get customerName & siteOrderNumber
     const paymentIds = items.map((p) => p.id).filter(Boolean);
     const dbOrders = await Order.find(
       { razorpayPaymentId: { $in: paymentIds } },
-      { razorpayPaymentId: 1, orderNumber: 1 }
-    ).lean();
-    const paymentToOrderNum = {};
+      { razorpayPaymentId: 1, orderNumber: 1, shippingAddress: 1, customerId: 1 }
+    ).populate("customerId", "fullName name shopName email phone firmName").lean();
+
+    const paymentToOrderInfo = {};
     dbOrders.forEach((o) => {
-      if (o.razorpayPaymentId) paymentToOrderNum[o.razorpayPaymentId] = o.orderNumber;
+      if (o.razorpayPaymentId) {
+        const cust = o.customerId || {};
+        const customerName =
+          o.shippingAddress?.fullName ||
+          o.shippingAddress?.shopName ||
+          cust.fullName ||
+          cust.shopName ||
+          cust.firmName ||
+          cust.name ||
+          "";
+        paymentToOrderInfo[o.razorpayPaymentId] = {
+          orderNumber: o.orderNumber,
+          customerName: customerName,
+        };
+      }
     });
 
     // Filter out payments that do not belong to this site (not found in DB)
-    items = items.filter((p) => paymentToOrderNum[p.id]);
+    items = items.filter((p) => paymentToOrderInfo[p.id]);
 
     // Slim payload for table — convert paise->rupees, pick core fields
-    const mapped = items.map((p) => ({
-      id: p.id,
-      orderId: p.order_id,
-      siteOrderNumber: paymentToOrderNum[p.id] || null,
-      amount: (p.amount || 0) / 100,
-      currency: p.currency,
-      status: p.status,
-      method: p.method,
-      captured: p.captured,
-      email: p.email,
-      contact: p.contact,
-      fee: (p.fee || 0) / 100,
-      tax: (p.tax || 0) / 100,
-      errorCode: p.error_code,
-      errorDescription: p.error_description,
-      international: p.international,
-      createdAt: p.created_at ? new Date(p.created_at * 1000).toISOString() : null,
-      // Card info if payment is card
-      card: p.card
-        ? {
-            last4: p.card.last4,
-            network: p.card.network,
-            type: p.card.type, // debit/credit
-          }
-        : null,
-      // UPI vpa
-      vpa: p.vpa || null,
-      // Bank for netbanking
-      bank: p.bank || null,
-      // Refund summary
-      amountRefunded: (p.amount_refunded || 0) / 100,
-      refundStatus: p.refund_status || null,
-    }));
+    let mapped = items.map((p) => {
+      const info = paymentToOrderInfo[p.id] || {};
+      const customerName = info.customerName || p.notes?.name || p.notes?.customer_name || p.notes?.fullName || null;
+      return {
+        id: p.id,
+        orderId: p.order_id,
+        siteOrderNumber: info.orderNumber || null,
+        customerName: customerName,
+        amount: (p.amount || 0) / 100,
+        currency: p.currency,
+        status: p.status,
+        method: p.method,
+        captured: p.captured,
+        email: p.email,
+        contact: p.contact,
+        fee: (p.fee || 0) / 100,
+        tax: (p.tax || 0) / 100,
+        errorCode: p.error_code,
+        errorDescription: p.error_description,
+        international: p.international,
+        createdAt: p.created_at ? new Date(p.created_at * 1000).toISOString() : null,
+        card: p.card
+          ? {
+              last4: p.card.last4,
+              network: p.card.network,
+              type: p.card.type,
+            }
+          : null,
+        vpa: p.vpa || null,
+        bank: p.bank || null,
+        amountRefunded: (p.amount_refunded || 0) / 100,
+        refundStatus: p.refund_status || null,
+      };
+    });
+
+    // Apply search filter after attaching customerName & siteOrderNumber
+    if (search) {
+      const q = String(search).trim().toLowerCase();
+      mapped = mapped.filter(
+        (p) =>
+          (p.customerName || "").toLowerCase().includes(q) ||
+          (p.email || "").toLowerCase().includes(q) ||
+          (p.contact || "").toLowerCase().includes(q) ||
+          (p.id || "").toLowerCase().includes(q) ||
+          (p.orderId || "").toLowerCase().includes(q) ||
+          (p.siteOrderNumber || "").toLowerCase().includes(q)
+      );
+    }
 
     res.json({
       items: mapped,
       count: mapped.length,
-      hasMore: (result.items || []).length >= params.count, // rough hint
+      hasMore: (result.items || []).length >= params.count,
     });
   } catch (err) {
     console.error("Razorpay listTransactions error:", err);
