@@ -43,16 +43,16 @@ const protect = async (req, res, next) => {
 // ==========================================
 const adminProtect = async (req, res, next) => {
   try {
+    let token = "";
     const authHeader = req.header("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ message: "No valid token provided" });
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.substring(7);
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
     }
 
-    const token = authHeader.substring(7);
-
-    // ✅ FIX: Admin token safety check
     if (!token || token === "null" || token === "undefined") {
-      return res.status(401).json({ message: "Admin token is null or undefined" });
+      return res.status(401).json({ message: "No valid token provided" });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);

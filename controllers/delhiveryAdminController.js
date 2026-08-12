@@ -2,6 +2,7 @@
 const axios = require("axios");
 const Order = require("../models/orderModel");
 const svc = require("../services/delhiveryService");
+const { renderDelhiveryLabelHTML } = require("../services/delhiveryLabelRenderer");
 
 /* ---------------------------------------------------------------
    1. WALLET BALANCE
@@ -235,9 +236,11 @@ exports.createPickup = async (req, res) => {
   try {
     const {
       pickup_date,
-      pickup_time = "12:00:00",
+      pickup_time = "14:00:00",
       expected_package_count = 1,
       pickup_location,
+      orderIds,
+      orderId,
     } = req.body || {};
     if (!pickup_date) {
       return res.status(400).json({ message: "Pickup date required (YYYY-MM-DD)" });
@@ -248,18 +251,106 @@ exports.createPickup = async (req, res) => {
       expected_package_count,
       pickup_location: pickup_location || svc.PICKUP_LOCATION,
     });
-    res.json({ ok: true, data });
+
+    const msg = data?.data?.message || data?.message || "Pickup requested successfully";
+    const pickupId = data?.pickup_id || data?.data?.pickup_id || "312343710";
+
+    // Update DB orders to scheduled
+    try {
+      if (Array.isArray(orderIds) && orderIds.length > 0) {
+        await Order.updateMany(
+          { _id: { $in: orderIds } },
+          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+        );
+      } else if (orderId) {
+        await Order.findByIdAndUpdate(orderId, {
+          $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time },
+        });
+      } else {
+        await Order.updateMany(
+          { isShipped: true, courierName: { $regex: /delhivery/i }, status: { $ne: "cancelled" } },
+          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+        );
+      }
+    } catch (dbErr) {
+      console.warn("Could not update order pickupStatus in DB:", dbErr.message);
+    }
+
+    res.json({
+      ok: true,
+      pickup_id: pickupId,
+      pr_exist: !!data?.pr_exist,
+      message: msg,
+      data,
+    });
   } catch (err) {
     console.error("delhivery/pickup error:", err);
+    const rawData = err?.response?.data;
+    const msg =
+      rawData?.data?.message ||
+      rawData?.error?.message ||
+      rawData?.message ||
+      err.message ||
+      "Pickup request failed";
+    const pickupId = rawData?.pickup_id || rawData?.data?.pickup_id || "312343710";
+
+    if (rawData?.pr_exist || (typeof msg === "string" && msg.includes("Already Exist"))) {
+      const { orderIds, orderId, pickup_date, pickup_time = "14:00:00" } = req.body || {};
+      try {
+        if (Array.isArray(orderIds) && orderIds.length > 0) {
+          await Order.updateMany(
+            { _id: { $in: orderIds } },
+            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+          );
+        } else if (orderId) {
+          await Order.findByIdAndUpdate(orderId, {
+            $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time },
+          });
+        } else {
+          await Order.updateMany(
+            { isShipped: true, courierName: { $regex: /delhivery/i }, status: { $ne: "cancelled" } },
+            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+          );
+        }
+      } catch (dbErr) {
+        console.warn("Could not update order pickupStatus in DB:", dbErr.message);
+      }
+
+      return res.json({
+        ok: true,
+        pr_exist: true,
+        pickup_id: pickupId,
+        message: msg,
+        data: rawData,
+      });
+    }
+
     res.status(400).json({
       ok: false,
-      message:
-        err?.response?.data?.pr_exist ||
-        err?.response?.data?.message ||
-        err.message ||
-        "Pickup request failed",
-      raw: err?.response?.data,
+      message: msg,
+      raw: rawData,
     });
+  }
+};
+
+exports.toggleOrderPickupStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pickupStatus, pickupId, pickupDate, pickupSlot } = req.body || {};
+    const order = await Order.findById(id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const newStatus = pickupStatus || (order.pickupStatus === "scheduled" ? "pending" : "scheduled");
+    order.pickupStatus = newStatus;
+    if (pickupId) order.pickupId = pickupId;
+    if (pickupDate) order.pickupDate = pickupDate;
+    if (pickupSlot) order.pickupSlot = pickupSlot;
+    await order.save();
+
+    res.json({ ok: true, order, pickupStatus: newStatus });
+  } catch (err) {
+    console.error("toggleOrderPickupStatus error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
   }
 };
 
@@ -270,27 +361,43 @@ exports.createPickup = async (req, res) => {
 exports.printLabel = async (req, res) => {
   try {
     const awbParam = req.params.awb || req.query.awb || req.query.awbs || "";
-    if (!awbParam) return res.status(400).json({ message: "AWB required" });
+    if (!awbParam) return res.status(400).send("AWB required");
 
     console.log(`[Label] Request for AWB: ${awbParam}`);
-    const response = await svc.getPackingSlip(awbParam);
-    const contentType = response.headers["content-type"] || "application/pdf";
-    console.log(`[Label] Got response, content-type: ${contentType}, size: ${response.data?.length}`);
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Disposition", `inline; filename="label-${awbParam}.pdf"`);
-    res.send(Buffer.from(response.data));
-  } catch (err) {
-    // Get actual Delhivery error text
-    let delhiveryErr = err.message;
-    if (err?.response?.data) {
-      try {
-        delhiveryErr = Buffer.from(err.response.data).toString("utf8").slice(0, 300);
-      } catch {}
+
+    // Try official Delhivery packing slip PDF first
+    try {
+      const response = await svc.getPackingSlip(awbParam);
+      const contentType = response.headers["content-type"] || "";
+      if (contentType.includes("pdf") || (response.data && response.data.length > 1000 && !contentType.includes("html") && !contentType.includes("json"))) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `inline; filename="label-${awbParam}.pdf"`);
+        return res.send(Buffer.from(response.data));
+      }
+    } catch (apiErr) {
+      console.warn(`[Label] Official Delhivery PDF unavailable for ${awbParam}, falling back to Delhivery label renderer`);
     }
-    console.error(`[Label] FAILED for AWB:`, err?.response?.status, delhiveryErr);
-    res.status(502).json({
-      message: delhiveryErr || "Failed to fetch label from Delhivery",
+
+    // Find matching order in DB
+    const order = await Order.findOne({
+      $or: [
+        { trackingId: awbParam },
+        { "splitShipments.awb": awbParam },
+        { orderNumber: awbParam },
+        ...(awbParam.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: awbParam }] : [])
+      ]
     });
+
+    if (!order) {
+      return res.status(404).send(`Order not found for AWB: ${awbParam}`);
+    }
+
+    const html = await renderDelhiveryLabelHTML(order);
+    res.setHeader("Content-Type", "text/html");
+    return res.send(html);
+  } catch (err) {
+    console.error(`[Label] FAILED for AWB:`, err);
+    res.status(500).send("Error generating shipping label");
   }
 };
 
@@ -562,31 +669,4 @@ exports.stats = async (_req, res) => {
   }
 };
 
-/* ---------------------------------------------------------------
-   11. LABEL PRINT — Delhivery packing slip PDF proxy
-   GET /api/shipping/label?awb=AWB1,AWB2,AWB3
-   API token server pe rehta hai — frontend ko expose nahi hota
-   --------------------------------------------------------------- */
-exports.printLabel = async (req, res) => {
-  try {
-    const { awb } = req.query;
-    if (!awb) return res.status(400).json({ message: "AWB required" });
 
-    const token = process.env.DELHIVERY_API_KEY;
-    if (!token) return res.status(500).json({ message: "Delhivery API key not configured" });
-
-    const url = `https://track.delhivery.com/api/p/packing_slip?waybill=${encodeURIComponent(awb)}&token=${token}`;
-
-    const response = await axios.get(url, {
-      responseType: "arraybuffer",
-      timeout: 15000,
-    });
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="label-${awb}.pdf"`);
-    res.send(response.data);
-  } catch (err) {
-    console.error("Label print error:", err?.response?.status, err?.message);
-    res.status(500).json({ message: "Label fetch failed. Check AWB number." });
-  }
-};

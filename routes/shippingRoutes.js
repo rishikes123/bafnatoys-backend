@@ -34,6 +34,9 @@ router.post("/delhivery/rate", adminProtect, dh.rate);
 // Pickup request
 router.post("/delhivery/pickup", adminProtect, dh.createPickup);
 
+// Toggle or update order pickup status
+router.patch("/delhivery/order-pickup-status/:id", adminProtect, dh.toggleOrderPickupStatus);
+
 // NDR dashboard
 router.get("/delhivery/ndr", adminProtect, dh.ndrList);
 

@@ -125,6 +125,14 @@ const orderSchema = new mongoose.Schema(
       ],
       default: []
     },
+    pickupStatus: {
+      type: String,
+      enum: ["pending", "scheduled", "picked_up"],
+      default: "pending",
+    },
+    pickupId: { type: String, default: "" },
+    pickupDate: { type: String, default: "" },
+    pickupSlot: { type: String, default: "" },
     trackingToken: { type: String, default: "" },
     wa: {
       orderConfirmedSent: { type: Boolean, default: false },

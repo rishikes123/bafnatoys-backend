@@ -125,7 +125,7 @@ async function getShippingRate({
    --------------------------------------------------------------- */
 async function createPickupRequest({
   pickup_date, // YYYY-MM-DD
-  pickup_time = "12:00:00", // HH:MM:SS
+  pickup_time = "14:00:00", // HH:MM:SS
   pickup_location = PICKUP_LOCATION,
   expected_package_count = 1,
 }) {
@@ -134,12 +134,13 @@ async function createPickupRequest({
     pickup_location,
     pickup_date,
     pickup_time,
-    expected_package_count,
+    expected_package_count: Number(expected_package_count) || 1,
   };
   const { data } = await axios.post(url, body, {
     headers: {
       ...headers(),
       "Content-Type": "application/json",
+      Accept: "application/json",
     },
     timeout: 15000,
   });

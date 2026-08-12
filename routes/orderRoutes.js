@@ -760,11 +760,35 @@ const updateOrderStatus = async (req, res) => {
             }
           } else {
             console.error("Delhivery API Rejected:", response.data);
-            return res.status(400).json({ message: "Delhivery API Error: " + JSON.stringify(response.data.error || response.data.rmk) });
+            const firstPkg = response.data?.packages?.[0];
+            let rawRemark =
+              (Array.isArray(firstPkg?.remarks) ? firstPkg.remarks[0] : firstPkg?.remarks) ||
+              response.data?.rmk ||
+              response.data?.error ||
+              "Delhivery rejected the shipment request.";
+
+            let friendlyMsg = typeof rawRemark === "string" ? rawRemark : JSON.stringify(rawRemark);
+            if (
+              friendlyMsg.toLowerCase().includes("non serviceable") ||
+              friendlyMsg.toLowerCase().includes("embargo") ||
+              firstPkg?.serviceable === false
+            ) {
+              friendlyMsg = `Delhivery Error: Pincode (${finalPin}) is currently non-serviceable / under embargo by Delhivery. Please select NimbusPost or another courier partner.`;
+            } else if (friendlyMsg.includes("Crashing while saving package")) {
+              friendlyMsg = friendlyMsg.replace(/Crashing while saving package due to exception\s*['"]?/gi, "").replace(/['"]?\.\s*Package might have been.*/gi, "");
+            }
+            return res.status(400).json({ message: friendlyMsg });
           }
         } catch (apiErr) {
-          console.error("Delhivery API Failed:", apiErr.message);
-          return res.status(500).json({ message: "Failed to connect to Delhivery API." });
+          console.error("Delhivery API Failed:", apiErr?.response?.data || apiErr.message);
+          const errDetail =
+            apiErr?.response?.data?.packages?.[0]?.remarks?.[0] ||
+            apiErr?.response?.data?.rmk ||
+            apiErr?.response?.data?.error ||
+            apiErr?.response?.data?.message ||
+            apiErr.message ||
+            "Failed to connect to Delhivery API.";
+          return res.status(500).json({ message: "Delhivery Error: " + errDetail });
         }
       } else if (courierName === "NimbusPost" && packingDetails && packingDetails.length > 0) {
         const isReShip = !!order.trackingId;
