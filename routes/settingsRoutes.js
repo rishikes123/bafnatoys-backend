@@ -491,4 +491,66 @@ router.put("/nimbuspost", adminProtect, isAdmin, async (req, res) => {
   }
 });
 
+/* ================= ORDER EDIT SECURITY PASSWORD ================= */
+
+router.get("/order-edit-password", async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "order-edit-password" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "order-edit-password",
+        data: { enabled: false, password: "" },
+      });
+    }
+    res.json({
+      enabled: Boolean(setting.data?.enabled),
+      password: setting.data?.password || "",
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/order-edit-password", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const { enabled, password } = req.body;
+    const setting = await Setting.findOneAndUpdate(
+      { key: "order-edit-password" },
+      {
+        $set: {
+          key: "order-edit-password",
+          data: {
+            enabled: Boolean(enabled),
+            password: password ? String(password).trim() : "",
+          },
+        },
+      },
+      { upsert: true, new: true }
+    );
+    res.json({
+      ok: true,
+      message: "Order edit security password updated successfully",
+      data: setting.data,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.post("/verify-order-edit-password", async (req, res) => {
+  try {
+    const { password } = req.body;
+    const setting = await Setting.findOne({ key: "order-edit-password" });
+    if (!setting || !setting.data || !setting.data.enabled || !setting.data.password) {
+      return res.json({ ok: true, unlocked: true, message: "Protection is disabled or not set." });
+    }
+    if (setting.data.password === String(password || "").trim()) {
+      return res.json({ ok: true, unlocked: true, message: "Password verified!" });
+    }
+    return res.status(400).json({ ok: false, unlocked: false, message: "Incorrect password! Please enter the correct password." });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
 module.exports = router;

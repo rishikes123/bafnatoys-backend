@@ -1781,6 +1781,194 @@ router.get("/:id/invoice-pdf", async (req, res) => {
   }
 });
 
+/* ============================================================
+    ✅ REPLACE / SWAP ORDER ITEM (Admin Stock Exchange)
+============================================================ */
+router.put("/:id/replace-item", async (req, res) => {
+  try {
+    const { itemIndex, newProductId, newQty, newPrice } = req.body;
+    if (itemIndex === undefined || !newProductId) {
+      return res.status(400).json({ message: "itemIndex and newProductId are required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const idx = Number(itemIndex);
+    if (!order.items || idx < 0 || idx >= order.items.length) {
+      return res.status(400).json({ message: "Invalid item index" });
+    }
+
+    const newProduct = await Product.findById(newProductId).lean();
+    if (!newProduct) return res.status(404).json({ message: "New product not found" });
+
+    const oldItem = order.items[idx];
+    const qty = (newQty !== undefined && Number(newQty) > 0) ? Number(newQty) : (oldItem.qty || 1);
+    const price = (newPrice !== undefined && Number(newPrice) >= 0) ? Number(newPrice) : (newProduct.price || 0);
+
+    const replacementItem = {
+      productId: newProduct._id,
+      name: newProduct.name,
+      qty: qty,
+      unit: newProduct.unit || "Piece",
+      innerQty: newProduct.innerQty || 1,
+      inners: Math.ceil(qty / (newProduct.innerQty || 1)),
+      price: price,
+      mrp: newProduct.mrp || 0,
+      gstRate: newProduct.gstRate || 0,
+      image: (newProduct.images && newProduct.images[0]) ? newProduct.images[0] : (newProduct.image || "")
+    };
+
+    order.items[idx] = replacementItem;
+
+    // Recalculate itemsPrice
+    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
+    order.itemsPrice = newItemsPrice;
+
+    // Recalculate total: itemsPrice + shippingPrice - discountAmount
+    const shipping = order.shippingPrice || 0;
+    const discount = order.discountAmount || 0;
+    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
+
+    // If COD, recalculate remainingAmount
+    if (order.paymentMode === "COD") {
+      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
+    }
+
+    await order.save();
+
+    // Fetch updated order populated
+    let updatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    updatedOrder = attachSkuToItems(updatedOrder);
+
+    res.json({
+      ok: true,
+      message: `Item #${idx + 1} replaced successfully with "${newProduct.name}"`,
+      order: updatedOrder
+    });
+  } catch (err) {
+    console.error("Replace Item Error:", err);
+    res.status(500).json({ message: err.message || "Failed to replace order item" });
+  }
+});
+
+// Update item quantity or price in order
+router.put("/:id/update-item-qty", async (req, res) => {
+  try {
+    const { itemIndex, newQty, newPrice } = req.body;
+    if (itemIndex === undefined || newQty === undefined || Number(newQty) <= 0) {
+      return res.status(400).json({ message: "Valid itemIndex and positive newQty are required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const idx = Number(itemIndex);
+    if (!order.items || idx < 0 || idx >= order.items.length) {
+      return res.status(400).json({ message: "Invalid item index" });
+    }
+
+    const qty = Number(newQty);
+    order.items[idx].qty = qty;
+    order.items[idx].inners = Math.ceil(qty / (order.items[idx].innerQty || 1));
+    if (newPrice !== undefined && Number(newPrice) >= 0) {
+      order.items[idx].price = Number(newPrice);
+    }
+
+    // Recalculate itemsPrice
+    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
+    order.itemsPrice = newItemsPrice;
+
+    // Recalculate total: itemsPrice + shippingPrice - discountAmount
+    const shipping = order.shippingPrice || 0;
+    const discount = order.discountAmount || 0;
+    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
+
+    // If COD, recalculate remainingAmount
+    if (order.paymentMode === "COD") {
+      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
+    }
+
+    await order.save();
+
+    let updatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    updatedOrder = attachSkuToItems(updatedOrder);
+
+    res.json({
+      ok: true,
+      message: `Quantity for "${order.items[idx].name}" updated to ${qty}`,
+      order: updatedOrder
+    });
+  } catch (err) {
+    console.error("Update Item Qty Error:", err);
+    res.status(500).json({ message: err.message || "Failed to update item quantity" });
+  }
+});
+
+// Remove single item from order
+router.put("/:id/remove-item", async (req, res) => {
+  try {
+    const { itemIndex } = req.body;
+    if (itemIndex === undefined) {
+      return res.status(400).json({ message: "itemIndex is required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const idx = Number(itemIndex);
+    if (!order.items || idx < 0 || idx >= order.items.length) {
+      return res.status(400).json({ message: "Invalid item index" });
+    }
+
+    if (order.items.length <= 1) {
+      return res.status(400).json({ message: "Cannot remove the only item in the order. Please cancel or delete the order instead." });
+    }
+
+    const removed = order.items.splice(idx, 1)[0];
+
+    // Recalculate itemsPrice
+    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
+    order.itemsPrice = newItemsPrice;
+
+    // Recalculate total: itemsPrice + shippingPrice - discountAmount
+    const shipping = order.shippingPrice || 0;
+    const discount = order.discountAmount || 0;
+    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
+
+    // If COD, recalculate remainingAmount
+    if (order.paymentMode === "COD") {
+      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
+    }
+
+    await order.save();
+
+    let updatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    updatedOrder = attachSkuToItems(updatedOrder);
+
+    res.json({
+      ok: true,
+      message: `Item "${removed.name}" removed from order successfully`,
+      order: updatedOrder
+    });
+  } catch (err) {
+    console.error("Remove Item Error:", err);
+    res.status(500).json({ message: err.message || "Failed to remove item" });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id).lean();

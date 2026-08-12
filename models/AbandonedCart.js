@@ -57,6 +57,9 @@ const abandonedCartSchema = new mongoose.Schema(
     shopName: { type: String, default: "" },
     mobile: { type: String, default: "" }, // primary OTP mobile
     whatsapp: { type: String, default: "" }, // preferred WhatsApp number (falls back to mobile)
+    city: { type: String, default: "" },
+    state: { type: String, default: "" },
+    address: { type: String, default: "" },
 
     // Cart snapshot
     items: { type: [abandonedItemSchema], default: [] },
@@ -84,6 +87,21 @@ const abandonedCartSchema = new mongoose.Schema(
     whatsappSent: { type: [whatsappLogSchema], default: [] },
     lastWhatsappAt: { type: Date, default: null },
     reminderCount: { type: Number, default: 0 },
+
+    // Follow-up tracking (Call / WhatsApp Follow-up)
+    followUpStatus: {
+      type: String,
+      enum: ["pending", "called", "messaged", "completed", "not_interested"],
+      default: "pending",
+      index: true,
+    },
+    followUpNotes: { type: String, default: "" },
+    lastContactedAt: { type: Date, default: null },
+    contactMethod: {
+      type: String,
+      enum: ["none", "call", "whatsapp", "both"],
+      default: "none",
+    },
   },
   { timestamps: true }
 );

@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 
 const AbandonedCart = require("../models/AbandonedCart");
 const Registration = require("../models/Registration");
+const Address = require("../models/Address");
 const { protect, adminProtect } = require("../middleware/authMiddleware");
 const { sendWhatsAppTemplate } = require("../services/whatsappService");
 
@@ -58,6 +59,28 @@ function sanitizeItems(items = []) {
     .filter((it) => it.name && it.price >= 0 && it.quantity >= 1);
 }
 
+function parseCustomerAddress(str = "") {
+  if (!str || typeof str !== "string") return { city: "", state: "", fullAddress: "" };
+  const sMatch = str.match(/State\s*:\s*([^\n\r,]+)/i);
+  const cMatch = str.match(/City\s*:\s*([^\n\r,]+)/i);
+  const aMatch = str.match(/Address\s*:\s*([^\n\r]+)/i);
+  const pMatch = str.match(/Pin\s*Code\s*:\s*([^\n\r]+)/i);
+
+  const state = sMatch ? sMatch[1].trim() : "";
+  const city = cMatch ? cMatch[1].trim() : "";
+  const street = aMatch ? aMatch[1].trim() : "";
+  const pincode = pMatch ? pMatch[1].trim() : "";
+
+  let fullAddress = str;
+  if (state || city || street) {
+    fullAddress = [street, city, state, pincode].filter(Boolean).join(", ");
+  } else {
+    fullAddress = str.replace(/[\n\r]+/g, ", ").trim();
+  }
+
+  return { city, state, fullAddress };
+}
+
 /* ========================================================================
    CUSTOMER-FACING
    ======================================================================== */
@@ -91,6 +114,20 @@ router.post("/sync", protect, async (req, res) => {
     const totalValue = items.reduce((s, it) => s + it.price * it.quantity, 0);
     const itemCount = items.reduce((s, it) => s + it.quantity, 0);
 
+    // Look up default or latest address for city/state
+    const userAddress = await Address.findOne({ user: userId })
+      .sort({ isDefault: -1, updatedAt: -1 })
+      .lean();
+    const parsed = parseCustomerAddress(user?.address || "");
+
+    const city = userAddress?.city || parsed.city || "";
+    const state = userAddress?.state || parsed.state || "";
+    const fullAddress = userAddress
+      ? [userAddress.street, userAddress.area, userAddress.city, userAddress.state, userAddress.pincode]
+          .filter(Boolean)
+          .join(", ")
+      : (parsed.fullAddress || user?.address || "");
+
     const doc = await AbandonedCart.findOneAndUpdate(
       { userId },
       {
@@ -99,6 +136,9 @@ router.post("/sync", protect, async (req, res) => {
           shopName: user.shopName || "",
           mobile: user.otpMobile || "",
           whatsapp: user.whatsapp || user.otpMobile || "",
+          city,
+          state,
+          address: fullAddress,
           items,
           totalValue,
           itemCount,
@@ -164,12 +204,15 @@ router.get("/admin/list", adminProtect, async (req, res) => {
       minValue,
       hours,
       search,
+      state,
+      followUpStatus,
       page = 1,
       limit = 25,
     } = req.query;
 
     const filter = {};
     if (status && status !== "all") filter.status = status;
+    if (followUpStatus && followUpStatus !== "all") filter.followUpStatus = followUpStatus;
 
     if (minValue) {
       const v = Number(minValue);
@@ -185,28 +228,116 @@ router.get("/admin/list", adminProtect, async (req, res) => {
 
     if (search) {
       const rx = new RegExp(String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [{ shopName: rx }, { mobile: rx }, { whatsapp: rx }];
+      filter.$or = [
+        { shopName: rx },
+        { mobile: rx },
+        { whatsapp: rx },
+        { city: rx },
+        { state: rx },
+        { address: rx },
+      ];
     }
 
     const p = Math.max(1, parseInt(page));
     const l = Math.min(100, Math.max(1, parseInt(limit)));
     const skip = (p - 1) * l;
 
-    const [items, total] = await Promise.all([
+    // First fetch all matching carts
+    const [rawItems, allCartsForStates] = await Promise.all([
       AbandonedCart.find(filter)
+        .populate("userId", "shopName address otpMobile whatsapp")
         .sort({ lastActivityAt: -1 })
-        .skip(skip)
-        .limit(l)
         .lean(),
-      AbandonedCart.countDocuments(filter),
+      AbandonedCart.find({ status: status !== "all" ? status : { $exists: true } })
+        .populate("userId", "shopName address")
+        .lean(),
     ]);
+
+    // Fetch matching addresses for all users
+    const allUserIds = Array.from(
+      new Set(
+        [...rawItems, ...allCartsForStates]
+          .map((it) => it.userId?._id || it.userId)
+          .filter(Boolean)
+          .map(String)
+      )
+    );
+
+    const addresses = await Address.find({ user: { $in: allUserIds } })
+      .sort({ isDefault: -1, updatedAt: -1 })
+      .lean();
+
+    const addressMap = {};
+    for (const addr of addresses) {
+      const uid = String(addr.user);
+      if (!addressMap[uid]) {
+        addressMap[uid] = addr;
+      }
+    }
+
+    // Helper to resolve state/city
+    const resolveLocation = (it) => {
+      const uid = String(it.userId?._id || it.userId);
+      const addr = addressMap[uid];
+      const userObj = it.userId && typeof it.userId === "object" ? it.userId : null;
+      const parsed = parseCustomerAddress(userObj?.address || "");
+
+      const city = it.city || addr?.city || parsed.city || "";
+      const st = it.state || addr?.state || parsed.state || "";
+      const fullAddress =
+        it.address ||
+        (addr
+          ? [addr.street, addr.area, addr.city, addr.state, addr.pincode]
+              .filter(Boolean)
+              .join(", ")
+          : parsed.fullAddress || userObj?.address || "");
+
+      return {
+        ...it,
+        shopName: it.shopName || userObj?.shopName || "",
+        mobile: it.mobile || userObj?.otpMobile || "",
+        whatsapp: it.whatsapp || userObj?.whatsapp || userObj?.otpMobile || "",
+        city,
+        state: st,
+        address: fullAddress,
+        followUpStatus: it.followUpStatus || "pending",
+        followUpNotes: it.followUpNotes || "",
+        contactMethod: it.contactMethod || "none",
+        lastContactedAt: it.lastContactedAt || null,
+      };
+    };
+
+    // Extract all unique available states
+    const stateSet = new Set();
+    allCartsForStates.forEach((c) => {
+      const resolved = resolveLocation(c);
+      if (resolved.state && resolved.state.trim()) {
+        stateSet.add(resolved.state.trim());
+      }
+    });
+    const availableStates = Array.from(stateSet).sort((a, b) => a.localeCompare(b));
+
+    // Resolve all raw items
+    let resolvedItems = rawItems.map(resolveLocation);
+
+    // Apply state filter if selected
+    if (state && state !== "all") {
+      const targetState = String(state).trim().toLowerCase();
+      resolvedItems = resolvedItems.filter(
+        (it) => (it.state || "").trim().toLowerCase() === targetState
+      );
+    }
+
+    const total = resolvedItems.length;
+    const items = resolvedItems.slice(skip, skip + l);
 
     res.json({
       items,
       total,
       page: p,
       limit: l,
-      pages: Math.ceil(total / l),
+      pages: Math.ceil(total / l) || 1,
+      availableStates,
     });
   } catch (err) {
     console.error("abandoned-cart/admin/list error:", err);
@@ -364,6 +495,11 @@ router.post("/admin/:id/send-whatsapp", adminProtect, async (req, res) => {
     if (!errorMsg) {
       cart.lastWhatsappAt = logEntry.sentAt;
       cart.reminderCount = (cart.reminderCount || 0) + 1;
+      if (cart.followUpStatus === "pending") {
+        cart.followUpStatus = "messaged";
+        cart.contactMethod = cart.contactMethod === "call" ? "both" : "whatsapp";
+        cart.lastContactedAt = new Date();
+      }
     }
     await cart.save();
 
@@ -373,6 +509,44 @@ router.post("/admin/:id/send-whatsapp", adminProtect, async (req, res) => {
     res.json({ ok: true, log: logEntry, wa: result });
   } catch (err) {
     console.error("abandoned-cart/admin/send-whatsapp error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
+  }
+});
+
+/**
+ * PATCH /api/abandoned-cart/admin/:id/follow-up
+ * Body: { followUpStatus, followUpNotes?, contactMethod? }
+ * Statuses: 'pending' | 'called' | 'messaged' | 'completed' | 'not_interested'
+ */
+router.patch("/admin/:id/follow-up", adminProtect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: "Invalid id" });
+    }
+    const { followUpStatus, followUpNotes, contactMethod } = req.body || {};
+    const allowed = ["pending", "called", "messaged", "completed", "not_interested"];
+    if (followUpStatus && !allowed.includes(followUpStatus)) {
+      return res.status(400).json({ message: "Invalid followUpStatus" });
+    }
+
+    const update = {};
+    if (followUpStatus) update.followUpStatus = followUpStatus;
+    if (typeof followUpNotes === "string") update.followUpNotes = followUpNotes;
+    if (contactMethod) update.contactMethod = contactMethod;
+    if (["called", "messaged", "completed"].includes(followUpStatus)) {
+      update.lastContactedAt = new Date();
+    }
+
+    const doc = await AbandonedCart.findByIdAndUpdate(
+      id,
+      { $set: update },
+      { new: true }
+    );
+    if (!doc) return res.status(404).json({ message: "Not found" });
+    res.json({ ok: true, doc });
+  } catch (err) {
+    console.error("abandoned-cart/admin/follow-up error:", err);
     res.status(500).json({ message: err.message || "Server error" });
   }
 });
