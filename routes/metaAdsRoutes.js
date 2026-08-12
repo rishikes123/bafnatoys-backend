@@ -854,10 +854,53 @@ Website title: ${JSON.stringify(website.title)}
 Website meta description: ${JSON.stringify(website.description)}
 Visible website text: ${JSON.stringify(website.text)}`;
 
-    const generated = await gemini.generate(prompt, {
-      responseMimeType: "application/json",
-      temperature: 0.65,
-    });
+    let generated;
+    try {
+      generated = await gemini.generate(prompt, {
+        responseMimeType: "application/json",
+        temperature: 0.65,
+      });
+    } catch (geminiErr) {
+      console.warn("Gemini API call failed, using Bafna AI Ad Copy Engine fallback:", geminiErr.message);
+      const focusText = focus ? ` Focus: ${focus}.` : "";
+      generated = {
+        model: "Bafna AI Engine (Fallback)",
+        text: JSON.stringify({
+          websiteSummary: website.description || website.title || "Bafna Toys - Leading Indian Toy Manufacturer & Wholesaler",
+          detectedAudience: "Toy Retailers, Wholesalers, Shop Owners and Bulk Buyers across India",
+          primaryTexts: [
+            `🔥 Retailers & Wholesalers! High margin pullback cars, educational toys & gift sets directly from manufacturer.${focusText} Bulk orders & fast dispatch across India!`,
+            `🚀 Apne toy store ke liye best-selling toys direct factory rates par mangwayein! 100% Quality checked trending toys for kids.${focusText}`,
+            `📦 Stock your shop with India's most popular toy collection! Direct B2B pricing, premium quality toys, and doorstep delivery for shop owners.${focusText}`,
+            `⚡ Bafna Toys - High margin toys for retailers & distributors. Explore our exclusive pullback racing cars & gift sets today!`,
+            `🎉 Wholesale toy shopping made simple! Get premium toy inventory at unbeatable manufacturer prices with nationwide delivery.`
+          ],
+          headlines: [
+            "Direct Factory Prices - Bafna Toys",
+            "High Margin Toys for Shop Owners",
+            "Best-Selling Toy Collections for Retailers",
+            "Bulk Toy Orders - Fast Shipping",
+            "Factory Direct Toy Wholesaler",
+            "Trending Pullback Cars & Gift Sets",
+            "Top Quality Toys at Wholesale Rates",
+            "Boost Store Sales with Bafna Toys"
+          ],
+          descriptions: [
+            "100% Quality Assured Toys | Fast Dispatch",
+            "Direct Factory Pricing for Retailers",
+            "Doorstep Nationwide Delivery | Order Now",
+            "High Margins for Toy Shop Owners",
+            "Exclusive B2B Toy Wholesaler India"
+          ],
+          recommendedCtas: [objective === "LEADS" ? "CONTACT_US" : "SHOP_NOW", "LEARN_MORE"],
+          complianceNotes: [
+            "Ensure ad copy claims match active product inventory.",
+            "Include clear GST invoicing details for B2B buyers."
+          ]
+        })
+      };
+    }
+
     const parsed = parseJsonObject(generated.text);
     const primaryTexts = cleanAiCopyList(parsed.primaryTexts, 5, 350);
     const headlines = cleanAiCopyList(parsed.headlines, 8, 40);

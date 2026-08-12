@@ -33,21 +33,28 @@ function getGeminiKey() {
 function modelChain() {
   const chain = [
     process.env.GEMINI_MODEL,
-    "gemini-flash-latest",
     "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
     "gemini-2.0-flash",
+    "gemini-flash-latest",
   ].filter(Boolean);
   return [...new Set(chain)];
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function isQuotaError(err) {
+  const msg = String(err?.response?.data?.error?.message || err?.message || "");
+  return /prepayment credits|quota|RESOURCE_EXHAUSTED|depleted|billing/i.test(msg);
+}
+
 // Ye galtiyan thodi der baad theek ho jaati hain — inpe retry karna chahiye
 function isBusyError(err) {
   const status = err?.response?.status;
   const msg = String(err?.response?.data?.error?.message || err?.message || "");
   if (status === 429 || status === 500 || status === 503 || status === 504) return true;
-  return /high demand|overload|unavailable|try again|rate limit|quota|timeout|ECONNRESET|ETIMEDOUT/i.test(msg);
+  return /high demand|overload|unavailable|try again|rate limit|timeout|ECONNRESET|ETIMEDOUT/i.test(msg);
 }
 
 function isKeyError(err) {
@@ -67,7 +74,7 @@ async function generate(prompt, generationConfig, options = {}) {
     throw e;
   }
 
-  const attemptsPerModel = Number(options.attemptsPerModel) || 3;
+  const attemptsPerModel = Number(options.attemptsPerModel) || 2;
   const timeout = Number(options.timeout) || 60000;
   const models = modelChain();
   let lastErr = null;
@@ -89,7 +96,6 @@ async function generate(prompt, generationConfig, options = {}) {
       } catch (err) {
         lastErr = err;
 
-        // Galat key pe retry ka koi fayda nahi — turant bata do
         if (isKeyError(err)) {
           const e = new Error(
             "Gemini API key invalid hai. Nayi key lo: aistudio.google.com/apikey → .env me GEMINI_API_KEY update karo → backend restart"
@@ -97,16 +103,32 @@ async function generate(prompt, generationConfig, options = {}) {
           e.friendly = e.message;
           throw e;
         }
-        if (!isBusyError(err)) break; // is model ki asli dikkat hai, agle model pe jao
 
-        // 0.8s, 1.6s, 3.2s — thoda ruk kar dobara
-        if (attempt < attemptsPerModel - 1) await sleep(800 * Math.pow(2, attempt));
+        if (isQuotaError(err)) {
+          const e = new Error(
+            "Google Gemini API Key ke free credits khatam ho gaye hain (Quota Depleted). Kripya aistudio.google.com/apikey se NAYI KEY lekar backend .env me GEMINI_API_KEY update karein."
+          );
+          e.friendly = e.message;
+          throw e;
+        }
+
+        if (!isBusyError(err)) break;
+
+        if (attempt < attemptsPerModel - 1) await sleep(600 * Math.pow(2, attempt));
       }
     }
   }
 
+  if (isQuotaError(lastErr)) {
+    const e = new Error(
+      "Google Gemini API Key ke free credits khatam ho gaye hain (Quota Depleted). Kripya aistudio.google.com/apikey se NAYI KEY lekar backend .env me GEMINI_API_KEY update karein."
+    );
+    e.friendly = e.message;
+    throw e;
+  }
+
   const e = new Error(
-    "Gemini abhi busy hai (saare models try kiye). 1-2 minute baad dobara try karo."
+    "Gemini API busy hai ya credits depleted hain. Kripya aistudio.google.com/apikey se NAYI KEY generate karke .env me GEMINI_API_KEY update karein."
   );
   e.friendly = e.message;
   e.cause = lastErr;
