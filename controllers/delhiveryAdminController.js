@@ -242,11 +242,12 @@ exports.createPickup = async (req, res) => {
       orderIds,
       orderId,
     } = req.body || {};
-    if (!pickup_date) {
-      return res.status(400).json({ message: "Pickup date required (YYYY-MM-DD)" });
-    }
+    
+    // Default to today's date if pickup_date is not provided
+    const finalPickupDate = pickup_date || new Date().toISOString().slice(0, 10);
+    
     const data = await svc.createPickupRequest({
-      pickup_date,
+      pickup_date: finalPickupDate,
       pickup_time,
       expected_package_count,
       pickup_location: pickup_location || svc.PICKUP_LOCATION,
@@ -260,16 +261,16 @@ exports.createPickup = async (req, res) => {
       if (Array.isArray(orderIds) && orderIds.length > 0) {
         await Order.updateMany(
           { _id: { $in: orderIds } },
-          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: finalPickupDate, pickupSlot: pickup_time } }
         );
       } else if (orderId) {
         await Order.findByIdAndUpdate(orderId, {
-          $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time },
+          $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: finalPickupDate, pickupSlot: pickup_time },
         });
       } else {
         await Order.updateMany(
           { isShipped: true, courierName: { $regex: /delhivery/i }, status: { $ne: "cancelled" } },
-          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: finalPickupDate, pickupSlot: pickup_time } }
         );
       }
     } catch (dbErr) {
@@ -296,20 +297,21 @@ exports.createPickup = async (req, res) => {
 
     if (rawData?.pr_exist || (typeof msg === "string" && msg.includes("Already Exist"))) {
       const { orderIds, orderId, pickup_date, pickup_time = "14:00:00" } = req.body || {};
+      const fallbackDate = pickup_date || new Date().toISOString().slice(0, 10);
       try {
         if (Array.isArray(orderIds) && orderIds.length > 0) {
           await Order.updateMany(
             { _id: { $in: orderIds } },
-            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: fallbackDate, pickupSlot: pickup_time } }
           );
         } else if (orderId) {
           await Order.findByIdAndUpdate(orderId, {
-            $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time },
+            $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: fallbackDate, pickupSlot: pickup_time },
           });
         } else {
           await Order.updateMany(
             { isShipped: true, courierName: { $regex: /delhivery/i }, status: { $ne: "cancelled" } },
-            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: pickup_date, pickupSlot: pickup_time } }
+            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: fallbackDate, pickupSlot: pickup_time } }
           );
         }
       } catch (dbErr) {
@@ -320,8 +322,7 @@ exports.createPickup = async (req, res) => {
         ok: true,
         pr_exist: true,
         pickup_id: pickupId,
-        message: msg,
-        data: rawData,
+        message: "Pickup request already exists for this location and date",
       });
     }
 

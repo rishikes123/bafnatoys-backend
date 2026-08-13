@@ -140,7 +140,6 @@ router.get("/", async (req, res) => {
     const orders = rawOrders.map(attachSkuToItems);
 
     // If customerId is provided (customer fetching own orders), return plain array
-    // so existing frontend code doesn't break. Otherwise return paginated object.
     if (customerId) {
       return res.json(orders);
     }
@@ -165,12 +164,11 @@ router.get("/:id", async (req, res) => {
   try {
     let order = await Order.findById(req.params.id)
       .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
-      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } }) // ✅ YAHAN MRP ADD KIYA HAI
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
     
-    // ✅ SKU and MRP Attach kar rahe hain
     order = attachSkuToItems(order);
 
     res.json(order);
@@ -601,6 +599,99 @@ router.patch("/:id/advance", async (req, res) => {
   } catch (err) {
     console.error("Advance save error:", err);
     res.status(500).json({ message: err.message || "Server error" });
+  }
+});
+
+/* ============================================================
+    ✅ UPDATE SHIPPING ADDRESS & CUSTOMER INFO
+    PUT /api/orders/:id/shipping-address
+============================================================ */
+router.put("/:id/shipping-address", async (req, res) => {
+  try {
+    const {
+      fullName,
+      phone,
+      street,
+      area,
+      city,
+      state,
+      pincode,
+      gstNumber,
+      shopName,
+    } = req.body;
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (!order.shippingAddress) {
+      order.shippingAddress = {};
+    }
+
+    if (fullName !== undefined) order.shippingAddress.fullName = fullName;
+    if (phone !== undefined) order.shippingAddress.phone = phone;
+    if (street !== undefined) order.shippingAddress.street = street;
+    if (area !== undefined) order.shippingAddress.area = area;
+    if (city !== undefined) order.shippingAddress.city = city;
+    if (state !== undefined) order.shippingAddress.state = state;
+    if (pincode !== undefined) order.shippingAddress.pincode = pincode;
+    if (gstNumber !== undefined) order.shippingAddress.gstNumber = gstNumber;
+    if (shopName !== undefined) order.shippingAddress.shopName = shopName;
+
+    // Handle different shipping address fields if used
+    if (order.shippingAddress.isDifferentShipping) {
+      if (fullName !== undefined) order.shippingAddress.fullName = fullName;
+      if (street !== undefined) order.shippingAddress.shippingStreet = street;
+      if (area !== undefined) order.shippingAddress.shippingArea = area;
+      if (city !== undefined) order.shippingAddress.shippingCity = city;
+      if (state !== undefined) order.shippingAddress.shippingState = state;
+      if (pincode !== undefined) order.shippingAddress.shippingPincode = pincode;
+    }
+
+    order.markModified("shippingAddress");
+    await order.save();
+
+    const updatedPopulatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    res.json({
+      message: "Shipping Address Updated Successfully",
+      order: updatedPopulatedOrder,
+    });
+  } catch (err) {
+    console.error("Update Shipping Address Error:", err);
+    res.status(500).json({ message: err.message || "Failed to update shipping address" });
+  }
+});
+
+/* ============================================================
+    ✅ UPDATE PACKING DETAILS / BOX HISTORY
+    PATCH /api/orders/:id/packing-details
+============================================================ */
+router.patch("/:id/packing-details", async (req, res) => {
+  try {
+    const { packingDetails } = req.body;
+    if (!Array.isArray(packingDetails)) {
+      return res.status(400).json({ message: "packingDetails array is required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    order.packingDetails = packingDetails;
+    order.markModified("packingDetails");
+    await order.save();
+
+    const updatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    res.json({ message: "Packing Details Updated Successfully", order: updatedOrder });
+  } catch (err) {
+    console.error("Update Packing Details Error:", err);
+    res.status(500).json({ message: err.message || "Failed to update packing details" });
   }
 });
 
