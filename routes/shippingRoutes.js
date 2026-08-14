@@ -32,6 +32,8 @@ router.get("/delhivery/pincode/:pin", adminProtect, dh.pincode);
 router.post("/delhivery/rate", adminProtect, dh.rate);
 
 // Pickup request
+router.get("/delhivery/pickup-config", adminProtect, dh.pickupConfig);
+router.get("/delhivery/pickup-orders", adminProtect, dh.pickupOrders);
 router.post("/delhivery/pickup", adminProtect, dh.createPickup);
 
 // Toggle or update order pickup status

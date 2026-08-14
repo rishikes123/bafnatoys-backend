@@ -23,6 +23,7 @@ const { notifyAdminNewOrder } = require("../services/adminNotifyService");
 const { sendPurchaseEvent } = require("../services/metaCapiService");
 const Registration = require("../models/Registration");
 const { createOrder } = require("../controllers/orderController");
+const { attachLedgerBilling } = require("../services/delhiveryBillingService");
 
 // ✅ Phone sanitizer (India)
 function sanitizePhone(phone) {
@@ -139,12 +140,14 @@ router.get("/", async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    const orders = rawOrders.map(attachSkuToItems);
+    const ordersWithSku = rawOrders.map(attachSkuToItems);
 
     // If customerId is provided (customer fetching own orders), return plain array
     if (customerId) {
-      return res.json(orders);
+      return res.json(ordersWithSku);
     }
+
+    const orders = await attachLedgerBilling(ordersWithSku);
 
     res.json({
       orders,
@@ -172,6 +175,7 @@ router.get("/:id", async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
     
     order = attachSkuToItems(order);
+    [order] = await attachLedgerBilling([order]);
 
     res.json(order);
   } catch (err) {
@@ -1319,48 +1323,38 @@ router.put("/:id/cancel", protect, (req, res) => {
 /* ============================================================
     ✅ ACTUAL DELIVERY CHARGE UPDATE
 ============================================================ */
-router.post("/:id/fetch-actual-charge", async (req, res) => {
+router.post("/:id/fetch-actual-charge", adminProtect, isAdmin, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
-    if (!order.trackingId || !order.shippingAddress?.pincode) {
-      return res.status(400).json({ message: "Order must have a Tracking ID and Pincode to fetch charges via API." });
+
+    // Invoice transaction CSV is the only accepted source of real billed cost.
+    const [ledgerBackedOrder] = await attachLedgerBilling([order.toObject()]);
+    if (ledgerBackedOrder?.deliveryChargeStatus === "final") {
+      order.actualDeliveryCharge = ledgerBackedOrder.actualDeliveryCharge;
+      order.deliveryChargeStatus = "final";
+      order.deliveryChargeSource = "ledger_csv";
+      order.deliveryChargeDetails = ledgerBackedOrder.deliveryChargeDetails;
+      await order.save();
+      return res.json({
+        actualDeliveryCharge: order.actualDeliveryCharge,
+        deliveryChargeStatus: order.deliveryChargeStatus,
+        deliveryChargeSource: order.deliveryChargeSource,
+        deliveryChargeDetails: order.deliveryChargeDetails,
+        message: "Final billed charge synced from Delhivery ledger",
+      });
     }
 
-    const delhiveryService = require("../services/delhiveryService");
-    
-    // First try fetching live tracking map for accurate chargedWeight (optional but better)
-    const liveMap = {};
-    try {
-        const tracking = await delhiveryService.trackMultiple([order.trackingId]);
-        (tracking?.ShipmentData || []).forEach((entry) => {
-          const s = entry?.Shipment;
-          if (s) {
-            liveMap[s.AWB] = { chargedWeight: s.ChargedWeight || s.ActualWeight || s.Weight || s.chargedWeight || 0 };
-          }
-        });
-    } catch(e) {
-       // Ignore tracking error
-    }
-
-    const rateMap = await delhiveryService.getActualChargesForOrders([order], liveMap);
-    const chargeData = rateMap[order.trackingId];
-
-    if (!chargeData) {
-      return res.status(400).json({ message: "Could not fetch delivery charge from API. Check tracking ID or try later." });
-    }
-
-    order.actualDeliveryCharge = chargeData.totalCharge || 0;
-    await order.save();
-
-    res.json({ actualDeliveryCharge: order.actualDeliveryCharge, message: "Delivery charge fetched successfully" });
+    return res.status(404).json({
+      message: "Final billed charge is not available yet. Upload the Delhivery invoice Transaction List CSV.",
+    });
   } catch (err) {
     console.error("Fetch Delivery Charge Error:", err);
     res.status(500).json({ message: err.message || "Server error while fetching delivery charge" });
   }
 });
 
-router.patch("/:id/actual-charge", async (req, res) => {
+router.patch("/:id/actual-charge", adminProtect, isAdmin, async (req, res) => {
   try {
     const { actualDeliveryCharge } = req.body;
     if (actualDeliveryCharge === undefined) {
@@ -1371,9 +1365,22 @@ router.patch("/:id/actual-charge", async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     order.actualDeliveryCharge = Math.max(0, Number(actualDeliveryCharge) || 0);
+    order.deliveryChargeStatus = "manual";
+    order.deliveryChargeSource = "manual";
+    order.deliveryChargeDetails = {
+      ...(order.deliveryChargeDetails?.toObject?.() || order.deliveryChargeDetails || {}),
+      total: order.actualDeliveryCharge,
+      syncedAt: new Date(),
+    };
     await order.save();
 
-    res.json({ actualDeliveryCharge: order.actualDeliveryCharge, message: "Delivery charge updated manually" });
+    res.json({
+      actualDeliveryCharge: order.actualDeliveryCharge,
+      deliveryChargeStatus: order.deliveryChargeStatus,
+      deliveryChargeSource: order.deliveryChargeSource,
+      deliveryChargeDetails: order.deliveryChargeDetails,
+      message: "Delivery charge updated manually",
+    });
   } catch (err) {
     console.error("Update Delivery Charge Error:", err);
     res.status(500).json({ message: err.message || "Server error while updating delivery charge" });

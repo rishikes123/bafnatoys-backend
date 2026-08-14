@@ -4,18 +4,27 @@
 const axios = require("axios");
 
 const BASE = "https://track.delhivery.com";
-const TOKEN = process.env.DELHIVERY_API_KEY;
 const PICKUP_LOCATION =
   process.env.DELHIVERY_PICKUP_LOCATION_NAME || "BAFNATOYS";
 
-if (!TOKEN) {
+if (!process.env.DELHIVERY_API_KEY) {
   console.warn(
     "⚠️ DELHIVERY_API_KEY missing in .env — Delhivery admin APIs will fail."
   );
 }
 
+const getToken = () => String(process.env.DELHIVERY_API_KEY || "").trim();
+
+const assertConfigured = () => {
+  if (!getToken()) {
+    const err = new Error("Delhivery API token is not configured on the server");
+    err.code = "DELHIVERY_NOT_CONFIGURED";
+    throw err;
+  }
+};
+
 const headers = () => ({
-  Authorization: `Token ${TOKEN}`,
+  Authorization: `Token ${getToken()}`,
   Accept: "application/json",
 });
 
@@ -129,6 +138,7 @@ async function createPickupRequest({
   pickup_location = PICKUP_LOCATION,
   expected_package_count = 1,
 }) {
+  assertConfigured();
   const url = `${BASE}/fm/request/new/`;
   const body = {
     pickup_location,
@@ -136,15 +146,25 @@ async function createPickupRequest({
     pickup_time,
     expected_package_count: Number(expected_package_count) || 1,
   };
-  const { data } = await axios.post(url, body, {
+  const response = await axios.post(url, body, {
     headers: {
       ...headers(),
       "Content-Type": "application/json",
       Accept: "application/json",
     },
     timeout: 15000,
+    validateStatus: () => true,
   });
-  return data;
+
+  const normalized = normalizePickupResponse(response.data, response.status);
+  if (!normalized.ok) {
+    const err = new Error(normalized.message || "Delhivery rejected the pickup request");
+    err.code = "DELHIVERY_PICKUP_REJECTED";
+    err.status = response.status;
+    err.details = response.data;
+    throw err;
+  }
+  return normalized;
 }
 
 /* ---------------------------------------------------------------
@@ -346,44 +366,195 @@ async function getActualChargesForOrders(orders = [], trackingLiveMap = {}) {
 }
 
 /* ---------------------------------------------------------------
-   PACKING SLIP / LABEL — PDF stream from Delhivery
-   awbs: comma-separated AWB string e.g. "123,456"
-   Tries multiple Delhivery endpoints (classic + Delhivery One)
+   PICKUP RESPONSE NORMALIZATION + OFFICIAL PACKING SLIP PDF
    --------------------------------------------------------------- */
-async function getPackingSlip(awbs) {
-  const endpoints = [
-    `${BASE}/api/p/packing_slip`,
-    `https://one.delhivery.com/api/p/packing_slip`,
-    `${BASE}/api/p/packing-slip`,
-  ];
+const asObject = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
-  let lastErr = null;
-  for (const url of endpoints) {
-    try {
-      console.log(`[Label] Trying: ${url} for AWBs: ${awbs}`);
-      const response = await axios.get(url, {
-        params: { wbns: awbs, token: TOKEN },
-        responseType: "arraybuffer",
-        timeout: 20000,
-      });
-      // Check if response is actually a PDF (not an error HTML page)
-      const contentType = response.headers["content-type"] || "";
-      const isHtml = contentType.includes("text/html");
-      if (isHtml) {
-        // Delhivery returned HTML error page — try next URL
-        const text = Buffer.from(response.data).toString("utf8").slice(0, 200);
-        console.warn(`[Label] Got HTML from ${url}:`, text);
-        lastErr = new Error(`Got HTML response: ${text}`);
-        continue;
+function pickupMessage(payload) {
+  const root = asObject(payload);
+  const nested = asObject(root.data);
+  const error = asObject(root.error);
+  const candidate =
+    nested.message || root.message || error.message || root.detail || root.error;
+  if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  if (Array.isArray(candidate)) return candidate.join(", ");
+  return "";
+}
+
+function normalizePickupResponse(payload, httpStatus = 200) {
+  const root = asObject(payload);
+  const nested = asObject(root.data);
+  const pickupId =
+    root.pickup_id || root.pickupId || root.pr_id || nested.pickup_id ||
+    nested.pickupId || nested.pr_id || null;
+  const alreadyExists = root.pr_exist === true || nested.pr_exist === true;
+  const explicitFailure =
+    root.success === false || root.ok === false || nested.success === false ||
+    root.error === true || httpStatus < 200 || httpStatus >= 300;
+  const explicitSuccess =
+    root.success === true || root.ok === true || nested.success === true ||
+    Boolean(pickupId) || alreadyExists;
+  const ok = alreadyExists || (!explicitFailure && explicitSuccess);
+  const message = pickupMessage(payload) ||
+    (alreadyExists
+      ? "A pickup request already exists for this pickup location"
+      : ok
+        ? "Pickup request created successfully"
+        : "Delhivery did not confirm the pickup request");
+
+  return {
+    ok,
+    pickupId: pickupId ? String(pickupId) : null,
+    alreadyExists,
+    message,
+    raw: payload,
+  };
+}
+
+const isPdfBuffer = (value) => {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+  return buffer.length >= 5 && buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+};
+
+const parseBufferPayload = (value) => {
+  const text = Buffer.from(value || []).toString("utf8").trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
+
+function findPdfUrl(value, depth = 0) {
+  if (depth > 5 || value == null) return null;
+  if (typeof value === "string") {
+    return /^https?:\/\//i.test(value.trim()) ? value.trim() : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findPdfUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    const preferredKeys = [
+      "pdf_download_link", "pdf_url", "s3_url", "download_url", "url", "link",
+    ];
+    for (const key of preferredKeys) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const found = findPdfUrl(value[key], depth + 1);
+        if (found) return found;
       }
-      console.log(`[Label] Success from ${url}, content-type: ${contentType}`);
-      return response;
-    } catch (err) {
-      console.warn(`[Label] Failed at ${url}:`, err?.response?.status, err.message);
-      lastErr = err;
+    }
+    for (const child of Object.values(value)) {
+      const found = findPdfUrl(child, depth + 1);
+      if (found) return found;
     }
   }
-  throw lastErr || new Error("All label endpoints failed");
+  return null;
+}
+
+function responseErrorMessage(payload, fallback) {
+  if (typeof payload === "string") {
+    const clean = payload.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    return clean.slice(0, 300) || fallback;
+  }
+  return pickupMessage(payload) || fallback;
+}
+
+async function getPackingSlip(awb, { pdfSize = "4R" } = {}) {
+  assertConfigured();
+  const waybill = String(awb || "").trim();
+  if (!/^[A-Za-z0-9_-]{6,40}$/.test(waybill)) {
+    throw new Error("A valid Delhivery AWB is required");
+  }
+
+  const size = String(pdfSize).toUpperCase() === "A4" ? "A4" : "4R";
+  const response = await axios.get(`${BASE}/api/p/packing_slip`, {
+    params: { wbns: waybill, pdf: "true", pdf_size: size },
+    headers: {
+      ...headers(),
+      Accept: "application/pdf, application/json",
+    },
+    responseType: "arraybuffer",
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    const payload = parseBufferPayload(response.data);
+    const err = new Error(
+      responseErrorMessage(payload, `Delhivery label API returned HTTP ${response.status}`)
+    );
+    err.code = "DELHIVERY_LABEL_REJECTED";
+    err.status = response.status;
+    err.details = payload;
+    throw err;
+  }
+
+  const direct = Buffer.from(response.data || []);
+  if (isPdfBuffer(direct)) return direct;
+
+  const payload = parseBufferPayload(direct);
+  const pdfUrl = findPdfUrl(payload);
+  if (!pdfUrl) {
+    const err = new Error(
+      responseErrorMessage(payload, "Delhivery did not return a shipping-label PDF")
+    );
+    err.code = "DELHIVERY_LABEL_INVALID_RESPONSE";
+    err.details = payload;
+    throw err;
+  }
+
+  const pdfResponse = await axios.get(pdfUrl, {
+    responseType: "arraybuffer",
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+  const pdf = Buffer.from(pdfResponse.data || []);
+  if (pdfResponse.status < 200 || pdfResponse.status >= 300 || !isPdfBuffer(pdf)) {
+    const err = new Error("Delhivery generated a label link, but the PDF could not be downloaded");
+    err.code = "DELHIVERY_LABEL_DOWNLOAD_FAILED";
+    err.status = pdfResponse.status;
+    throw err;
+  }
+  return pdf;
+}
+
+async function getPackingSlipData(awb) {
+  assertConfigured();
+  const waybill = String(awb || "").trim();
+  if (!/^[A-Za-z0-9_-]{6,40}$/.test(waybill)) {
+    throw new Error("A valid Delhivery AWB is required");
+  }
+
+  const response = await axios.get(`${BASE}/api/p/packing_slip`, {
+    params: { wbns: waybill, pdf: "false" },
+    headers: headers(),
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const err = new Error(
+      responseErrorMessage(response.data, `Delhivery label-data API returned HTTP ${response.status}`)
+    );
+    err.code = "DELHIVERY_LABEL_REJECTED";
+    err.status = response.status;
+    err.details = response.data;
+    throw err;
+  }
+
+  const packages = Array.isArray(response.data?.packages) ? response.data.packages : [];
+  const label = packages.find((item) => String(item?.wbn || "") === waybill) || packages[0];
+  if (!label) {
+    const err = new Error("Delhivery did not return label data for this AWB");
+    err.code = "DELHIVERY_LABEL_INVALID_RESPONSE";
+    throw err;
+  }
+  return label;
 }
 
 module.exports = {
@@ -398,5 +569,9 @@ module.exports = {
   createPickupRequest,
   ndrAction,
   getPackingSlip,
+  getPackingSlipData,
   PICKUP_LOCATION,
+  isConfigured: () => Boolean(getToken()),
+  normalizePickupResponse,
+  isPdfBuffer,
 };

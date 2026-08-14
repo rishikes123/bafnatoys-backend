@@ -64,7 +64,29 @@ const orderSchema = new mongoose.Schema(
     },
     itemsPrice: { type: Number, default: 0 },
     shippingPrice: { type: Number, default: 0 },
-    actualDeliveryCharge: { type: Number, default: 0 }, // Actual API fetched charge
+    actualDeliveryCharge: { type: Number, default: 0 }, // Displayed courier charge; see status/source below
+    deliveryChargeStatus: {
+      type: String,
+      enum: ["not_available", "final", "manual"],
+      default: "not_available",
+    },
+    deliveryChargeSource: {
+      type: String,
+      enum: ["", "rate_api", "ledger_csv", "manual"],
+      default: "",
+    },
+    deliveryChargeDetails: {
+      freight: { type: Number, default: 0 },
+      tax: { type: Number, default: 0 },
+      total: { type: Number, default: 0 },
+      codCollected: { type: Number, default: 0 },
+      codFee: { type: Number, default: 0 },
+      chargedWeight: { type: Number, default: 0 },
+      zone: { type: String, default: "" },
+      ledgerStatus: { type: String, default: "" },
+      syncedAt: { type: Date, default: null },
+      awbs: { type: [String], default: [] },
+    },
     discountAmount: { type: Number, default: 0 }, // ✅ Volume discount saved here
     total: {
       type: Number,

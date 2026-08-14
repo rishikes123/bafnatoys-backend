@@ -12,7 +12,6 @@ const {
   listSettlements,
   refundPayment,
   financeReport,
-  debugDelhiveryRate,
   uploadDelhiveryCSV,
 } = require("../controllers/paymentController");
 const { adminProtect } = require("../middleware/authMiddleware");
@@ -52,10 +51,7 @@ router.post("/admin/refund/:paymentId", adminProtect, refundPayment);
 // Finance Report — Razorpay + Delhivery combined per-order view
 router.get("/admin/finance-report", adminProtect, financeReport);
 
-// Debug: test raw Delhivery rate API response
-router.get("/admin/debug-delhivery-rate", adminProtect, debugDelhiveryRate);
-
-// Upload Delhivery settlement CSV to get actual freight charges
+// Upload Delhivery Invoice > Transaction List CSV to sync final billed charges
 router.post("/admin/upload-delhivery-csv", adminProtect, csvUpload.single("csv"), uploadDelhiveryCSV);
 
 module.exports = router;

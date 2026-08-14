@@ -1,8 +1,9 @@
 // backend/controllers/delhiveryAdminController.js
 const axios = require("axios");
+const { PDFDocument } = require("pdf-lib");
 const Order = require("../models/orderModel");
 const svc = require("../services/delhiveryService");
-const { renderDelhiveryLabelHTML } = require("../services/delhiveryLabelRenderer");
+const { renderDelhiveryDashboardLabelPdf } = require("../services/delhiveryDashboardLabelPdf");
 
 /* ---------------------------------------------------------------
    1. WALLET BALANCE
@@ -232,6 +233,222 @@ exports.rate = async (req, res) => {
 /* ---------------------------------------------------------------
    6. PICKUP REQUEST
    --------------------------------------------------------------- */
+const indiaDateString = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type) => parts.find((part) => part.type === type)?.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+};
+
+const addDays = (yyyyMmDd, days) => {
+  const date = new Date(`${yyyyMmDd}T00:00:00+05:30`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+async function markOrdersPickupScheduled({ orderIds, orderId, pickupId, pickupDate, pickupTime }) {
+  const set = {
+    pickupStatus: "scheduled",
+    pickupDate,
+    pickupSlot: pickupTime,
+  };
+  if (pickupId) set.pickupId = String(pickupId);
+
+  const eligible = {
+    isShipped: true,
+    trackingId: { $exists: true, $ne: "" },
+    courierName: { $regex: /delhivery/i },
+    status: { $nin: ["cancelled", "delivered"] },
+  };
+  if (Array.isArray(orderIds) && orderIds.length) {
+    return Order.updateMany({ ...eligible, _id: { $in: orderIds } }, { $set: set });
+  }
+  if (orderId) {
+    return Order.updateOne({ ...eligible, _id: orderId }, { $set: set });
+  }
+  return Order.updateMany(eligible, { $set: set });
+}
+
+exports.pickupConfig = async (_req, res) => {
+  res.json({
+    configured: svc.isConfigured(),
+    pickupLocation: svc.PICKUP_LOCATION,
+    warehousePincode: process.env.DELHIVERY_WAREHOUSE_PINCODE || "",
+    rules: { maxAdvanceDays: 7, warehouseLevel: true },
+  });
+};
+
+const pickupBaseFilter = {
+  isShipped: true,
+  trackingId: { $exists: true, $ne: "" },
+  courierName: { $regex: /delhivery/i },
+};
+
+const shipmentWasPicked = (shipment = {}) => {
+  const status = String(shipment?.Status?.Status || "").trim().toLowerCase();
+  const instructions = String(shipment?.Status?.Instructions || "").trim().toLowerCase();
+  const explicitPickupScan = /shipment\s+picked\s*up|picked\s*up|pickup completed/.test(instructions);
+  const progressedAfterPickup = /^(in transit|dispatched|delivered|rto|rto in transit|returned)$/.test(status);
+  return explicitPickupScan || (Boolean(shipment?.PickUpDate) && progressedAfterPickup);
+};
+
+const syncLivePickupStatuses = async () => {
+  const candidates = await Order.find({
+    ...pickupBaseFilter,
+    status: { $ne: "cancelled" },
+  })
+    .sort({ createdAt: -1 })
+    .limit(200)
+    .select("trackingId")
+    .lean();
+
+  const awbs = [...new Set(candidates.map((order) => String(order.trackingId || "").trim()).filter(Boolean))];
+  if (!awbs.length || !svc.isConfigured()) return {};
+
+  const chunks = [];
+  for (let index = 0; index < awbs.length; index += 50) chunks.push(awbs.slice(index, index + 50));
+  const responses = await Promise.allSettled(chunks.map((chunk) => svc.trackMultiple(chunk)));
+  const liveMap = {};
+
+  responses.forEach((response) => {
+    if (response.status !== "fulfilled") return;
+    (response.value?.ShipmentData || []).forEach((entry) => {
+      const shipment = entry?.Shipment;
+      const awb = String(shipment?.AWB || "").trim();
+      if (!shipment || !awb) return;
+      liveMap[awb] = {
+        status: shipment.Status?.Status || "",
+        instructions: shipment.Status?.Instructions || "",
+        statusDate: shipment.Status?.StatusDateTime || null,
+        pickupDate: shipment.PickUpDate || null,
+        picked: shipmentWasPicked(shipment),
+      };
+    });
+  });
+
+  const pickedAwbs = Object.entries(liveMap)
+    .filter(([, live]) => live.picked)
+    .map(([awb]) => awb);
+  if (pickedAwbs.length) {
+    await Order.updateMany(
+      { ...pickupBaseFilter, trackingId: { $in: pickedAwbs } },
+      { $set: { pickupStatus: "picked_up" } }
+    );
+  }
+
+  return liveMap;
+};
+
+exports.pickupOrders = async (req, res) => {
+  try {
+    const {
+      view = "ready",
+      search = "",
+      page = 1,
+      limit = 100,
+    } = req.query;
+    const currentPage = Math.max(1, Number.parseInt(page, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 100));
+    let liveMap = {};
+    try {
+      liveMap = await syncLivePickupStatuses();
+    } catch (trackingError) {
+      console.warn("delhivery pickup live sync failed:", trackingError.message);
+    }
+
+    const filter = {
+      ...pickupBaseFilter,
+      status: view === "picked" ? { $ne: "cancelled" } : { $nin: ["cancelled", "delivered"] },
+    };
+
+    if (view === "scheduled") filter.pickupStatus = "scheduled";
+    if (view === "ready") filter.pickupStatus = { $nin: ["scheduled", "picked_up"] };
+    if (view === "picked") filter.pickupStatus = "picked_up";
+    if (String(search).trim()) {
+      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const rx = new RegExp(escaped, "i");
+      filter.$or = [
+        { orderNumber: rx },
+        { trackingId: rx },
+        { "shippingAddress.fullName": rx },
+        { "shippingAddress.shopName": rx },
+        { "shippingAddress.phone": rx },
+      ];
+    }
+
+    const [orders, total, readyCount, scheduledCount, pickedCount] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((currentPage - 1) * pageSize)
+        .limit(pageSize)
+        .select(
+          "orderNumber trackingId courierName status total paymentMode shippingAddress createdAt pickupStatus pickupId pickupDate pickupSlot packingDetails"
+        )
+        .lean(),
+      Order.countDocuments(filter),
+      Order.countDocuments({
+        ...pickupBaseFilter,
+        status: { $nin: ["cancelled", "delivered"] },
+        pickupStatus: { $nin: ["scheduled", "picked_up"] },
+      }),
+      Order.countDocuments({
+        ...pickupBaseFilter,
+        status: { $nin: ["cancelled", "delivered"] },
+        pickupStatus: "scheduled",
+      }),
+      Order.countDocuments({
+        ...pickupBaseFilter,
+        status: { $ne: "cancelled" },
+        pickupStatus: "picked_up",
+      }),
+    ]);
+
+    return res.json({
+      ok: true,
+      items: orders.map((order) => {
+        const live = liveMap[String(order.trackingId || "").trim()] || {};
+        return {
+          _id: order._id,
+          orderNumber: order.orderNumber,
+          awb: order.trackingId,
+          courier: order.courierName,
+          status: order.status,
+          total: order.total,
+          paymentMode: order.paymentMode,
+          customer: {
+            name: order.shippingAddress?.shopName || order.shippingAddress?.fullName || "",
+            phone: order.shippingAddress?.phone || "",
+            city: order.shippingAddress?.city || "",
+            state: order.shippingAddress?.state || "",
+            pincode: order.shippingAddress?.pincode || "",
+          },
+          pickupStatus: order.pickupStatus || "pending",
+          pickupId: order.pickupId || "",
+          pickupDate: order.pickupDate || "",
+          pickupSlot: order.pickupSlot || "",
+          pickedAt: live.pickupDate || live.statusDate || null,
+          liveStatus: live.status || "",
+          liveInstructions: live.instructions || "",
+          packingDetails: order.packingDetails || [],
+          createdAt: order.createdAt,
+        };
+      }),
+      total,
+      page: currentPage,
+      limit: pageSize,
+      pages: Math.max(1, Math.ceil(total / pageSize)),
+      counts: { ready: readyCount, scheduled: scheduledCount, picked: pickedCount },
+    });
+  } catch (err) {
+    console.error("delhivery/pickup-orders error:", err.message);
+    return res.status(500).json({ ok: false, message: err.message || "Could not load pickup orders" });
+  }
+};
+
 exports.createPickup = async (req, res) => {
   try {
     const {
@@ -242,94 +459,72 @@ exports.createPickup = async (req, res) => {
       orderIds,
       orderId,
     } = req.body || {};
-    
-    // Default to today's date if pickup_date is not provided
-    const finalPickupDate = pickup_date || new Date().toISOString().slice(0, 10);
-    
-    const data = await svc.createPickupRequest({
-      pickup_date: finalPickupDate,
-      pickup_time,
-      expected_package_count,
-      pickup_location: pickup_location || svc.PICKUP_LOCATION,
-    });
 
-    const msg = data?.data?.message || data?.message || "Pickup requested successfully";
-    const pickupId = data?.pickup_id || data?.data?.pickup_id || "312343710";
+    const pickupDate = String(pickup_date || "").trim();
+    const pickupTime = String(pickup_time || "").trim();
+    const packageCount = Number(expected_package_count);
+    const location = String(pickup_location || svc.PICKUP_LOCATION || "").trim();
+    const today = indiaDateString();
 
-    // Update DB orders to scheduled
-    try {
-      if (Array.isArray(orderIds) && orderIds.length > 0) {
-        await Order.updateMany(
-          { _id: { $in: orderIds } },
-          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: finalPickupDate, pickupSlot: pickup_time } }
-        );
-      } else if (orderId) {
-        await Order.findByIdAndUpdate(orderId, {
-          $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: finalPickupDate, pickupSlot: pickup_time },
-        });
-      } else {
-        await Order.updateMany(
-          { isShipped: true, courierName: { $regex: /delhivery/i }, status: { $ne: "cancelled" } },
-          { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: finalPickupDate, pickupSlot: pickup_time } }
-        );
-      }
-    } catch (dbErr) {
-      console.warn("Could not update order pickupStatus in DB:", dbErr.message);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(pickupDate) || Number.isNaN(Date.parse(`${pickupDate}T00:00:00+05:30`))) {
+      return res.status(400).json({ ok: false, message: "Pickup date must be in YYYY-MM-DD format" });
+    }
+    if (pickupDate < today) {
+      return res.status(400).json({ ok: false, message: "Pickup date cannot be in the past" });
+    }
+    if (pickupDate > addDays(today, 7)) {
+      return res.status(400).json({ ok: false, message: "Pickup date must be within the next 7 days" });
+    }
+    if (!/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(pickupTime)) {
+      return res.status(400).json({ ok: false, message: "Pickup time must be HH:mm:ss" });
+    }
+    if (!Number.isInteger(packageCount) || packageCount < 1 || packageCount > 10000) {
+      return res.status(400).json({ ok: false, message: "Expected package count must be between 1 and 10000" });
+    }
+    if (!location) {
+      return res.status(400).json({ ok: false, message: "Delhivery pickup location is not configured" });
     }
 
-    res.json({
+    const result = await svc.createPickupRequest({
+      pickup_date: pickupDate,
+      pickup_time: pickupTime,
+      expected_package_count: packageCount,
+      pickup_location: location,
+    });
+
+    try {
+      await markOrdersPickupScheduled({
+        orderIds,
+        orderId,
+        pickupId: result.pickupId,
+        pickupDate,
+        pickupTime,
+      });
+    } catch (dbErr) {
+      console.warn("Pickup was accepted, but local order status update failed:", dbErr.message);
+    }
+
+    return res.json({
       ok: true,
-      pickup_id: pickupId,
-      pr_exist: !!data?.pr_exist,
-      message: msg,
-      data,
+      pickup_id: result.pickupId,
+      pr_exist: result.alreadyExists,
+      message: result.message,
+      pickup_location: location,
+      pickup_date: pickupDate,
+      pickup_time: pickupTime,
+      expected_package_count: packageCount,
     });
   } catch (err) {
-    console.error("delhivery/pickup error:", err);
-    const rawData = err?.response?.data;
-    const msg =
-      rawData?.data?.message ||
-      rawData?.error?.message ||
-      rawData?.message ||
-      err.message ||
-      "Pickup request failed";
-    const pickupId = rawData?.pickup_id || rawData?.data?.pickup_id || "312343710";
-
-    if (rawData?.pr_exist || (typeof msg === "string" && msg.includes("Already Exist"))) {
-      const { orderIds, orderId, pickup_date, pickup_time = "14:00:00" } = req.body || {};
-      const fallbackDate = pickup_date || new Date().toISOString().slice(0, 10);
-      try {
-        if (Array.isArray(orderIds) && orderIds.length > 0) {
-          await Order.updateMany(
-            { _id: { $in: orderIds } },
-            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: fallbackDate, pickupSlot: pickup_time } }
-          );
-        } else if (orderId) {
-          await Order.findByIdAndUpdate(orderId, {
-            $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: fallbackDate, pickupSlot: pickup_time },
-          });
-        } else {
-          await Order.updateMany(
-            { isShipped: true, courierName: { $regex: /delhivery/i }, status: { $ne: "cancelled" } },
-            { $set: { pickupStatus: "scheduled", pickupId: String(pickupId), pickupDate: fallbackDate, pickupSlot: pickup_time } }
-          );
-        }
-      } catch (dbErr) {
-        console.warn("Could not update order pickupStatus in DB:", dbErr.message);
-      }
-
-      return res.json({
-        ok: true,
-        pr_exist: true,
-        pickup_id: pickupId,
-        message: "Pickup request already exists for this location and date",
-      });
-    }
-
-    res.status(400).json({
+    console.error("delhivery/pickup error:", err.message);
+    const status = err.code === "DELHIVERY_NOT_CONFIGURED"
+      ? 503
+      : err.status >= 400 && err.status < 500
+        ? err.status
+        : 502;
+    return res.status(status).json({
       ok: false,
-      message: msg,
-      raw: rawData,
+      message: err.message || "Pickup request failed",
+      details: err.details || undefined,
     });
   }
 };
@@ -361,44 +556,24 @@ exports.toggleOrderPickupStatus = async (req, res) => {
    --------------------------------------------------------------- */
 exports.printLabel = async (req, res) => {
   try {
-    const awbParam = req.params.awb || req.query.awb || req.query.awbs || "";
-    if (!awbParam) return res.status(400).send("AWB required");
-
-    console.log(`[Label] Request for AWB: ${awbParam}`);
-
-    // Try official Delhivery packing slip PDF first
-    try {
-      const response = await svc.getPackingSlip(awbParam);
-      const contentType = response.headers["content-type"] || "";
-      if (contentType.includes("pdf") || (response.data && response.data.length > 1000 && !contentType.includes("html") && !contentType.includes("json"))) {
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `inline; filename="label-${awbParam}.pdf"`);
-        return res.send(Buffer.from(response.data));
-      }
-    } catch (apiErr) {
-      console.warn(`[Label] Official Delhivery PDF unavailable for ${awbParam}, falling back to Delhivery label renderer`);
-    }
-
-    // Find matching order in DB
-    const order = await Order.findOne({
-      $or: [
-        { trackingId: awbParam },
-        { "splitShipments.awb": awbParam },
-        { orderNumber: awbParam },
-        ...(awbParam.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: awbParam }] : [])
-      ]
-    });
-
-    if (!order) {
-      return res.status(404).send(`Order not found for AWB: ${awbParam}`);
-    }
-
-    const html = await renderDelhiveryLabelHTML(order);
-    res.setHeader("Content-Type", "text/html");
-    return res.send(html);
+    const awb = String(req.params.awb || req.query.awb || "").trim();
+    if (!awb) return res.status(400).json({ ok: false, message: "AWB required" });
+    const useOfficialClassicTemplate = req.query.template === "classic";
+    const pdf = useOfficialClassicTemplate
+      ? await svc.getPackingSlip(awb, { pdfSize: req.query.size })
+      : await renderDelhiveryDashboardLabelPdf(await svc.getPackingSlipData(awb));
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(pdf.length));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Disposition", `inline; filename="delhivery-label-${awb}.pdf"`);
+    return res.send(pdf);
   } catch (err) {
-    console.error(`[Label] FAILED for AWB:`, err);
-    res.status(500).send("Error generating shipping label");
+    console.error("delhivery/label error:", err.message);
+    const status = err.code === "DELHIVERY_NOT_CONFIGURED" ? 503 : 502;
+    return res.status(status).json({
+      ok: false,
+      message: err.message || "Failed to fetch the official Delhivery shipping label",
+    });
   }
 };
 
@@ -407,22 +582,36 @@ exports.printLabel = async (req, res) => {
    --------------------------------------------------------------- */
 exports.printLabelBulk = async (req, res) => {
   try {
-    const { awbs } = req.body;
+    const { awbs, pdfSize = "A4", template = "dashboard" } = req.body || {};
     if (!Array.isArray(awbs) || awbs.length === 0) {
       return res.status(400).json({ message: "awbs array required" });
     }
-    const awbParam = awbs.join(",");
-    const response = await svc.getPackingSlip(awbParam);
-    const contentType = response.headers["content-type"] || "application/pdf";
-    res.setHeader("Content-Type", contentType);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="labels-bulk.pdf"`
-    );
-    res.send(Buffer.from(response.data));
+    const uniqueAwbs = [...new Set(awbs.map((awb) => String(awb || "").trim()).filter(Boolean))];
+    if (uniqueAwbs.length > 50) {
+      return res.status(400).json({ message: "A maximum of 50 labels can be generated at once" });
+    }
+
+    const output = await PDFDocument.create();
+    for (const awb of uniqueAwbs) {
+      const pdfBytes = template === "classic"
+        ? await svc.getPackingSlip(awb, { pdfSize })
+        : await renderDelhiveryDashboardLabelPdf(await svc.getPackingSlipData(awb));
+      const source = await PDFDocument.load(pdfBytes);
+      const pages = await output.copyPages(source, source.getPageIndices());
+      pages.forEach((page) => output.addPage(page));
+    }
+    const merged = Buffer.from(await output.save());
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(merged.length));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Disposition", "inline; filename=delhivery-labels-bulk.pdf");
+    return res.send(merged);
   } catch (err) {
     console.error("delhivery/label-bulk error:", err.message);
-    res.status(502).json({ message: "Failed to fetch bulk labels" });
+    return res.status(err.code === "DELHIVERY_NOT_CONFIGURED" ? 503 : 502).json({
+      ok: false,
+      message: err.message || "Failed to fetch official Delhivery labels",
+    });
   }
 };
 
@@ -669,5 +858,3 @@ exports.stats = async (_req, res) => {
     res.status(500).json({ message: err.message || "Server error" });
   }
 };
-
-

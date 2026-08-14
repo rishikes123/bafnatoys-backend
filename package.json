@@ -28,6 +28,7 @@
     "multer-storage-cloudinary": "^4.0.0",
     "nodemailer": "^8.0.1",
     "openai": "^5.11.0",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.18.0",
     "razorpay": "^2.9.6",
     "request-ip": "^3.3.0",

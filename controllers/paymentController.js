@@ -734,46 +734,9 @@ exports.refundPayment = async (req, res) => {
 };
 
 /* ========================================================================
-   DEBUG — Test Delhivery rate API response (admin only)
-   GET /api/payments/admin/debug-delhivery-rate?pin=600001&isCOD=true&total=500
-   ======================================================================== */
-exports.debugDelhiveryRate = async (req, res) => {
-  try {
-    const svc = require("../services/delhiveryService");
-    const { pin = "600001", isCOD = "false", total = "500", cgm = "500" } = req.query;
-    const o_pin = process.env.DELHIVERY_WAREHOUSE_PINCODE || "641001";
-
-    const raw = await svc.getShippingRate({
-      o_pin,
-      d_pin: pin,
-      cgm: parseInt(cgm),
-      pt: isCOD === "true" ? "COD" : "Pre-paid",
-      cod: isCOD === "true" ? parseFloat(total) : 0,
-      md: "E",
-    });
-
-    res.json({
-      o_pin,
-      d_pin: pin,
-      isCOD: isCOD === "true",
-      cgm: parseInt(cgm),
-      rawResponse: raw,
-      type: Array.isArray(raw) ? "array" : typeof raw,
-      length: Array.isArray(raw) ? raw.length : null,
-    });
-  } catch (err) {
-    res.status(500).json({
-      error: err?.response?.data || err.message,
-      status: err?.response?.status,
-      message: "Delhivery rate API failed",
-    });
-  }
-};
-
-/* ========================================================================
    UPLOAD DELHIVERY CSV LEDGER
    POST /api/payments/admin/upload-delhivery-csv
-   Multer memory upload — parses Delhivery settlement CSV and stores per-AWB charges
+   Parses Delhivery Invoice > Transaction List CSV and stores final per-AWB charges
    ======================================================================== */
 exports.uploadDelhiveryCSV = async (req, res) => {
   try {
@@ -781,15 +744,43 @@ exports.uploadDelhiveryCSV = async (req, res) => {
     if (!req.file) return res.status(400).json({ message: "CSV file required" });
 
     // Strip UTF-8 BOM if present (Excel saves CSVs with BOM)
-    const raw = req.file.buffer.toString("utf8").replace(/^﻿/, "");
+    const raw = req.file.buffer.toString("utf8").replace(/^\uFEFF/, "");
     const lines = raw.split(/\r?\n/).filter((l) => l.trim());
     if (lines.length < 2) return res.status(400).json({ message: "CSV is empty" });
 
     // Parse header row — detect column indices dynamically
     const sep = lines[0].includes("\t") ? "\t" : ",";
-    const headers = lines[0].split(sep).map((h) =>
-      h.trim().replace(/^"|"$/g, "").replace(/^﻿/, "").toLowerCase()
+    const parseDelimitedRow = (line) => {
+      const values = [];
+      let value = "";
+      let quoted = false;
+      for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        if (char === '"') {
+          if (quoted && line[index + 1] === '"') {
+            value += '"';
+            index += 1;
+          } else {
+            quoted = !quoted;
+          }
+        } else if (char === sep && !quoted) {
+          values.push(value.trim());
+          value = "";
+        } else {
+          value += char;
+        }
+      }
+      values.push(value.trim());
+      return values;
+    };
+    const headers = parseDelimitedRow(lines[0]).map((h) =>
+      h.trim().replace(/^"|"$/g, "").replace(/^\uFEFF/, "").toLowerCase()
     );
+    const cleanCell = (value) => {
+      const text = String(value || "").trim().replace(/^"|"$/g, "");
+      const excelText = text.match(/^="(.*)"$/);
+      return (excelText ? excelText[1] : text).trim();
+    };
 
     // Flexible column finder — tries multiple known name variants
     const col = (...names) => {
@@ -800,25 +791,40 @@ exports.uploadDelhiveryCSV = async (req, res) => {
       return -1;
     };
 
-    const iWaybill   = col("waybill_no", "waybill", "awb", "waybill no", "waybillno");
+    const iWaybill   = col(
+      "waybill_num", "waybill_no", "waybill", "awb", "waybill no", "waybillno"
+    );
+    const iOrderId   = col("order_id", "order id", "orderid");
     const iZone      = col("zone");
     const iStatus    = col("status");
-    const iGross     = col("gross_am", "gross_amount", "grossamount");
-    const iTotal     = col("total_amo", "total_amount", "totalamount");
+    const iGross     = col(
+      "gross_am", "gross_amount", "grossamount", "del freight", "del_freight",
+      "freight charge", "freight_charge"
+    );
+    const iTotal     = col(
+      "total_amo", "total_amount", "totalamount", "total charge", "total_charge",
+      "billed amount", "billed_amount", "debit amount", "debit_amount"
+    );
     const iCod       = col("cod_amou", "cod_amount", "cod");
+    const iWeight    = col(
+      "charged_weight", "charged weight", "billed_weight", "billed weight", "weight"
+    );
     const iIgst      = col("igst");
     const iCgst      = col("cgst");
     const iSgst      = headers.findIndex((h) => h.startsWith("sgst"));
     const iPickup    = col("pickup_date", "pickupdate");
+    const chargeColumns = headers
+      .map((header, index) => ({ header, index }))
+      .filter(({ header }) => header.startsWith("charge_"));
 
     if (iWaybill === -1) {
       return res.status(400).json({
-        message: `Column 'waybill_no' not found. Headers detected: ${headers.slice(0, 10).join(", ")}`,
+        message: `Column 'waybill_num' not found. Headers detected: ${headers.slice(0, 10).join(", ")}`,
       });
     }
-    if (iGross === -1) {
+    if (iGross === -1 && iTotal === -1) {
       return res.status(400).json({
-        message: `Column 'gross_am' not found. Headers detected: ${headers.join(", ")}`,
+        message: `Freight/total charge column not found. Headers detected: ${headers.join(", ")}`,
       });
     }
 
@@ -829,24 +835,38 @@ exports.uploadDelhiveryCSV = async (req, res) => {
 
     const ops = [];
     for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(sep).map((c) => c.trim().replace(/^"|"$/g, ""));
-      const waybill = cols[iWaybill];
+      const cols = parseDelimitedRow(lines[i]).map(cleanCell);
+      const waybill = cleanCell(cols[iWaybill]).replace(/\D/g, "");
       if (!waybill || waybill.length < 5) continue;
 
-      const grossAmount = parseNum(cols[iGross]);
-      if (grossAmount === 0) continue;
+      const igst = iIgst !== -1 ? parseNum(cols[iIgst]) : 0;
+      const cgst = iCgst !== -1 ? parseNum(cols[iCgst]) : 0;
+      const sgst = iSgst !== -1 ? parseNum(cols[iSgst]) : 0;
+      const parsedTotal = iTotal !== -1 ? parseNum(cols[iTotal]) : 0;
+      const grossAmount = iGross !== -1
+        ? parseNum(cols[iGross])
+        : Math.max(0, parsedTotal - igst - cgst - sgst);
+      if (grossAmount === 0 && parsedTotal === 0) continue;
 
       const doc = {
         waybill,
-        zone:        iZone   !== -1 ? cols[iZone]   : "",
-        status:      iStatus !== -1 ? cols[iStatus] : "",
+        orderId:     iOrderId !== -1 ? cleanCell(cols[iOrderId]) : "",
+        zone:        iZone   !== -1 ? cleanCell(cols[iZone])   : "",
+        status:      iStatus !== -1 ? cleanCell(cols[iStatus]) : "",
         grossAmount,
-        totalAmount: iTotal  !== -1 ? parseNum(cols[iTotal]) : 0,
+        totalAmount: parsedTotal || grossAmount + igst + cgst + sgst,
         codAmount:   iCod    !== -1 ? parseNum(cols[iCod])   : 0,
-        igst:        iIgst   !== -1 ? parseNum(cols[iIgst])  : 0,
-        cgst:        iCgst   !== -1 ? parseNum(cols[iCgst])  : 0,
-        sgst:        iSgst   !== -1 ? parseNum(cols[iSgst])  : 0,
-        pickupDate:  iPickup !== -1 && cols[iPickup] ? new Date(cols[iPickup]) : undefined,
+        chargedWeight:iWeight !== -1 ? parseNum(cols[iWeight]) : 0,
+        chargeBreakdown: Object.fromEntries(
+          chargeColumns.map(({ header, index }) => [
+            header.replace(/^charge_/, "").toUpperCase(),
+            parseNum(cols[index]),
+          ])
+        ),
+        igst,
+        cgst,
+        sgst,
+        pickupDate:  iPickup !== -1 && cols[iPickup] ? new Date(cleanCell(cols[iPickup])) : undefined,
         uploadedAt:  new Date(),
       };
 
@@ -862,11 +882,17 @@ exports.uploadDelhiveryCSV = async (req, res) => {
     if (!ops.length) return res.status(400).json({ message: "No valid rows found in CSV" });
 
     const result = await DelhiveryLedger.bulkWrite(ops);
+    const { syncOrdersForWaybills } = require("../services/delhiveryBillingService");
+    const syncResult = await syncOrdersForWaybills(
+      ops.map((op) => op.updateOne?.filter?.waybill).filter(Boolean)
+    );
     res.json({
-      message: "CSV imported successfully",
+      message: "CSV imported and final billed charges synced",
       upserted: result.upsertedCount,
       modified: result.modifiedCount,
       total: ops.length,
+      ordersMatched: syncResult.matchedOrders,
+      ordersSynced: syncResult.updatedOrders,
     });
   } catch (err) {
     console.error("[uploadDelhiveryCSV]", err.message);
@@ -1015,32 +1041,26 @@ exports.financeReport = async (req, res) => {
       : [];
     const ledgerMap = {};
     ledgerDocs.forEach((d) => {
+      const tax = Number(d.igst || 0) + Number(d.cgst || 0) + Number(d.sgst || 0);
+      const breakdown = d.chargeBreakdown instanceof Map
+        ? Object.fromEntries(d.chargeBreakdown)
+        : (d.chargeBreakdown || {});
       ledgerMap[d.waybill] = {
         freightCharge: d.grossAmount || 0,
-        codCharge:     0,
-        totalCharge:   d.totalAmount || 0,
+        codCharge:     Number(breakdown.COD || 0),
+        taxCharge:     tax,
+        totalCharge:   d.totalAmount || Number(d.grossAmount || 0) + tax,
         zone:          d.zone || "",
-        chargedWeight: 0,
+        chargedWeight: d.chargedWeight || 0,
         fromLedger:    true,
+        syncedAt:      d.uploadedAt || null,
       };
     });
 
-    // ── 4b. For orders not in ledger, fall back to Rate API ─────────
-    let delChargeMap = { ...ledgerMap };
-    const needsRateApi = orders.filter(
-      (o) => o.trackingId && o.shippingAddress?.pincode && !ledgerMap[o.trackingId]
-    );
-    if (needsRateApi.length) {
-      try {
-        const rateMap = await svc.getActualChargesForOrders(needsRateApi, liveMap);
-        Object.assign(delChargeMap, rateMap);
-        console.log(`[financeReport] Ledger: ${ledgerDocs.length} | Rate API: ${Object.keys(rateMap).length}`);
-      } catch (_e) {
-        console.warn("[financeReport] getActualChargesForOrders failed:", _e.message);
-      }
-    } else {
-      console.log(`[financeReport] All ${ledgerDocs.length} orders served from ledger CSV`);
-    }
+    // Invoice transaction CSV is the only source of final billed charges.
+    // Never mix rate-calculator estimates into the real-cost report.
+    const delChargeMap = ledgerMap;
+    console.log(`[financeReport] Final billed ledger rows: ${ledgerDocs.length}`);
 
     // ── 5. Build report rows ─────────────────────────────────────
     const items = orders.map((o) => {
@@ -1101,9 +1121,12 @@ exports.financeReport = async (req, res) => {
           remainingAmt:     isCOD ? remainingAmt : 0,
           actualFreight:    delActual?.freightCharge ?? null,
           actualCodCharge:  delActual?.codCharge     ?? null,
+          actualTax:        delActual?.taxCharge     ?? null,
           actualTotal:      delActual?.totalCharge   ?? null,
           zone:             delActual?.zone          || live?.location?.split("_")?.[0] || "",
           fromLedger:       delActual?.fromLedger    || false,
+          chargeSource:     delActual?.fromLedger ? "final" : "unavailable",
+          chargeSyncedAt:   delActual?.syncedAt || null,
           // Live tracking
           liveStatus:       live?.liveStatus    || o.status,
           statusType:       live?.statusType    || "",
@@ -1129,6 +1152,9 @@ exports.financeReport = async (req, res) => {
         acc.totalNetReceipt     += row.netReceipt;
         acc.totalDelFreight     += row.delhivery.actualFreight   ?? 0;
         acc.totalDelCodCharge   += row.delhivery.actualCodCharge ?? 0;
+        acc.totalDelTax         += row.delhivery.actualTax        ?? 0;
+        acc.totalDelCut         += row.delhivery.actualTotal      ?? 0;
+        acc.finalBilledCount    += row.delhivery.fromLedger ? 1 : 0;
         acc.onlineCount         += row.paymentMode === "ONLINE" ? 1 : 0;
         acc.codCount            += row.paymentMode === "COD"    ? 1 : 0;
         return acc;
@@ -1141,6 +1167,9 @@ exports.financeReport = async (req, res) => {
         totalNetReceipt: 0,
         totalDelFreight: 0,
         totalDelCodCharge: 0,
+        totalDelTax: 0,
+        totalDelCut: 0,
+        finalBilledCount: 0,
         onlineCount: 0,
         codCount: 0,
       }
