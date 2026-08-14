@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const bcrypt = require("bcryptjs");
 const axios = require("axios"); // ✅ Delhivery API integration ke liye
 
 const Razorpay = require("razorpay");
@@ -8,6 +9,7 @@ const Product = require("../models/Product");
 const ShippingSettings = require("../models/ShippingSettings");
 const { calculateShippingCharge } = require("../services/shippingPricingService");
 const Setting = require("../models/settingModel");
+const { protect, adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
 const razorpayInstance = new Razorpay({
   key_id: process.env.RAZORPAY_KEY,
@@ -701,7 +703,7 @@ router.patch("/:id/packing-details", async (req, res) => {
 const updateOrderStatus = async (req, res) => {
   try {
     // 👇 Yahan manualAdvance aur codAmountToCollect ko req.body se nikala hai
-    const { status, trackingId, courierName, cancelledBy, packingDetails, manualAdvance, codAmountToCollect, nimbusCourierId } = req.body;
+    const { status, trackingId, courierName, cancelledBy, packingDetails, manualAdvance, codAmountToCollect, nimbusCourierId, cancellationPassword } = req.body;
     if (!status) return res.status(400).json({ message: "Status is required" });
 
     const newStatus = String(status).toLowerCase();
@@ -712,6 +714,32 @@ const updateOrderStatus = async (req, res) => {
 
     const order = await Order.findById(req.params.id).populate("customerId");
     if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (req.isCustomerCancellation) {
+      const ownerId = order.customerId?._id || order.customerId;
+      if (!ownerId || String(ownerId) !== String(req.user?._id)) {
+        return res.status(403).json({ message: "You can only cancel your own order." });
+      }
+      if (order.status !== "pending") {
+        return res.status(400).json({ message: "Only pending orders can be cancelled by the customer." });
+      }
+    }
+
+    if (newStatus === "cancelled" && req.admin) {
+      const cancellationSetting = await Setting.findOne({ key: "order-cancellation-password" }).lean();
+      const protectionEnabled = Boolean(cancellationSetting?.data?.enabled);
+      const passwordHash = cancellationSetting?.data?.passwordHash;
+
+      if (protectionEnabled) {
+        if (!passwordHash) {
+          return res.status(409).json({ message: "Cancellation password is not configured. Update it in Settings." });
+        }
+        const passwordMatches = await bcrypt.compare(String(cancellationPassword || ""), passwordHash);
+        if (!passwordMatches) {
+          return res.status(403).json({ message: "Incorrect cancellation password." });
+        }
+      }
+    }
 
     /* ✅ STOCK REDUCTION (on delivered) */
     if (newStatus === "delivered" && order.status !== "delivered") {
@@ -1279,8 +1307,14 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
-router.put("/:id/status", updateOrderStatus);
-router.patch("/:id/status", updateOrderStatus);
+router.put("/:id/status", adminProtect, isAdmin, updateOrderStatus);
+router.patch("/:id/status", adminProtect, isAdmin, updateOrderStatus);
+
+router.put("/:id/cancel", protect, (req, res) => {
+  req.body = { status: "cancelled", cancelledBy: "Customer" };
+  req.isCustomerCancellation = true;
+  return updateOrderStatus(req, res);
+});
 
 /* ============================================================
     ✅ ACTUAL DELIVERY CHARGE UPDATE

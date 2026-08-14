@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const bcrypt = require("bcryptjs");
 const Setting = require("../models/settingModel");
 const { adminProtect, isAdmin } = require("../middleware/authMiddleware");
 
@@ -548,6 +549,57 @@ router.post("/verify-order-edit-password", async (req, res) => {
       return res.json({ ok: true, unlocked: true, message: "Password verified!" });
     }
     return res.status(400).json({ ok: false, unlocked: false, message: "Incorrect password! Please enter the correct password." });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+/* ================= ORDER CANCELLATION SECURITY PASSWORD ================= */
+
+router.get("/order-cancellation-password", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const setting = await Setting.findOne({ key: "order-cancellation-password" }).lean();
+    res.json({
+      enabled: Boolean(setting?.data?.enabled),
+      hasPassword: Boolean(setting?.data?.passwordHash),
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/order-cancellation-password", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const enabled = Boolean(req.body?.enabled);
+    const password = String(req.body?.password || "").trim();
+    const existing = await Setting.findOne({ key: "order-cancellation-password" });
+    let passwordHash = existing?.data?.passwordHash || "";
+
+    if (password) {
+      if (password.length < 4) {
+        return res.status(400).json({ message: "Cancellation password must be at least 4 characters." });
+      }
+      passwordHash = await bcrypt.hash(password, 12);
+    }
+
+    if (enabled && !passwordHash) {
+      return res.status(400).json({ message: "Set a cancellation password before enabling protection." });
+    }
+
+    await Setting.findOneAndUpdate(
+      { key: "order-cancellation-password" },
+      { $set: { key: "order-cancellation-password", data: { enabled, passwordHash } } },
+      { upsert: true, new: true }
+    );
+
+    res.json({
+      ok: true,
+      enabled,
+      hasPassword: Boolean(passwordHash),
+      message: enabled
+        ? "Order cancellation password protection enabled."
+        : "Order cancellation password protection disabled.",
+    });
   } catch (err) {
     res.status(500).json({ message: "Server Error" });
   }

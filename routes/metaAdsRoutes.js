@@ -45,19 +45,55 @@ function publicConfig(cfg) {
   };
 }
 
-// actions[] array me se ek action ki value nikalta hai
+// actions[] array me se action types matching items ki value nikalta hai (non-zero target)
 function pickAction(actions, types) {
-  if (!Array.isArray(actions)) return 0;
+  if (!Array.isArray(actions) || !actions.length) return 0;
+  
+  let maxVal = 0;
+  // 1. Target exact matching types for largest non-zero value
   for (const t of types) {
     const hit = actions.find((a) => a.action_type === t);
-    if (hit) return Number(hit.value) || 0;
+    if (hit) {
+      const val = Number(hit.value) || 0;
+      if (val > maxVal) maxVal = val;
+    }
   }
-  return 0;
+  if (maxVal > 0) return maxVal;
+
+  // 2. Search for any action_type matching type suffix
+  for (const a of actions) {
+    const at = String(a.action_type || "").toLowerCase();
+    const matches = types.some((t) => at === t.toLowerCase() || at.endsWith(`.${t.toLowerCase()}`) || at.endsWith(`_${t.toLowerCase()}`));
+    if (matches) {
+      const val = Number(a.value) || 0;
+      if (val > maxVal) maxVal = val;
+    }
+  }
+  if (maxVal > 0) return maxVal;
+
+  // 3. Fallback specifically for purchase/order if types includes "purchase"
+  if (types.some((t) => t.includes("purchase"))) {
+    for (const a of actions) {
+      const at = String(a.action_type || "").toLowerCase();
+      if (at.includes("purchase") || at.includes("order")) {
+        const val = Number(a.value) || 0;
+        if (val > maxVal) maxVal = val;
+      }
+    }
+  }
+
+  return maxVal;
 }
 
-function pickRoas(row) {
+function pickRoas(row, spend, purchaseValue) {
   const r = row?.purchase_roas;
-  if (Array.isArray(r) && r.length) return Number(r[0].value) || 0;
+  if (Array.isArray(r) && r.length) {
+    const val = Number(r[0].value) || 0;
+    if (val > 0) return val;
+  }
+  if (spend > 0 && purchaseValue > 0) {
+    return Number((purchaseValue / spend).toFixed(2));
+  }
   return 0;
 }
 
@@ -81,6 +117,11 @@ function shapeInsights(row) {
     pickAction(row.outbound_clicks, ["outbound_click"]) ||
     Number(row.inline_link_clicks) ||
     pickAction(actions, ["link_click"]);
+
+  const purchases = pickAction(actions, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase", "onsite_web_purchase", "web_in_app_purchase"]);
+  const purchaseValue = pickAction(values, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase", "onsite_web_purchase", "web_in_app_purchase"]);
+  const roas = pickRoas(row, spend, purchaseValue);
+
   return {
     spend,
     impressions,
@@ -93,9 +134,9 @@ function shapeInsights(row) {
     costPerLinkClick: linkClicks > 0 ? Number((spend / linkClicks).toFixed(4)) : 0,
     reach: Number(row.reach) || 0,
     frequency: Number(row.frequency) || 0,
-    roas: pickRoas(row),
-    purchases: pickAction(actions, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]),
-    purchaseValue: pickAction(values, ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]),
+    roas,
+    purchases,
+    purchaseValue,
     addToCart: pickAction(actions, ["omni_add_to_cart", "add_to_cart", "offsite_conversion.fb_pixel_add_to_cart"]),
     checkout: pickAction(actions, ["omni_initiated_checkout", "initiate_checkout", "offsite_conversion.fb_pixel_initiate_checkout"]),
     landingPageViews: pickAction(actions, ["landing_page_view", "omni_landing_page_view"]),
@@ -367,11 +408,28 @@ router.get("/overview", adminProtect, isAdmin, async (req, res) => {
     const ACT = `act_${cfg.adAccountId}`;
     const accountR = await axios.get(`${GRAPH}/${ACT}`, {
       params: {
-        fields: "id,name,currency,timezone_name,account_status,disable_reason,amount_spent,balance,spend_cap,business{id,name}",
+        fields: "id,name,currency,timezone_name,account_status,disable_reason,amount_spent,balance,spend_cap,funding_source_details,business{id,name}",
         access_token: cfg.accessToken,
       },
     });
     const account = accountR.data || {};
+    const amountSpent = Number(account.amount_spent || 0) / 100;
+    const rawBalance = Number(account.balance || 0) / 100;
+    const spendCap = Number(account.spend_cap || 0) / 100;
+    const fundingSource = account.funding_source_details || null;
+    const remainingSpendCap = spendCap > 0 ? Math.max(0, spendCap - amountSpent) : null;
+
+    let availableBalance = null;
+    if (fundingSource && fundingSource.amount !== undefined && fundingSource.amount !== null) {
+      availableBalance = Number(fundingSource.amount) / 100;
+    } else if (remainingSpendCap !== null) {
+      availableBalance = remainingSpendCap;
+    } else if (rawBalance > 0) {
+      availableBalance = rawBalance;
+    } else {
+      availableBalance = 0;
+    }
+
     const ranges = presetRanges(preset, account.timezone_name || "Asia/Kolkata");
     const insightParams = ranges
       ? { fields: INSIGHT_FIELDS, time_ranges: JSON.stringify([ranges.current, ranges.previous]), access_token: cfg.accessToken }
@@ -413,9 +471,12 @@ router.get("/overview", adminProtect, isAdmin, async (req, res) => {
         timezone: account.timezone_name,
         status: account.account_status,
         disableReason: account.disable_reason || 0,
-        amountSpent: Number(account.amount_spent || 0) / 100,
-        balance: Number(account.balance || 0) / 100,
-        spendCap: Number(account.spend_cap || 0) / 100,
+        amountSpent,
+        balance: rawBalance,
+        spendCap,
+        remainingSpendCap,
+        availableBalance,
+        fundingSourceDetails: fundingSource,
         business: account.business || null,
       },
       anomalies,
