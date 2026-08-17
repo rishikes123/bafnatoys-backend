@@ -148,7 +148,7 @@ const INSIGHT_FIELDS =
 
 const VALID_PRESETS = [
   "today", "yesterday", "last_7d", "last_14d", "last_30d",
-  "last_90d", "this_month", "last_month", "maximum",
+  "last_90d", "this_month", "last_month", "maximum", "custom",
 ];
 
 function safePreset(p) {
@@ -175,7 +175,24 @@ function dateInTimeZone(timeZone) {
   }
 }
 
-function presetRanges(preset, timeZone = "Asia/Kolkata") {
+function presetRanges(preset, timeZone = "Asia/Kolkata", customSince = null, customUntil = null) {
+  if (customSince && customUntil) {
+    const sDate = new Date(customSince);
+    const uDate = new Date(customUntil);
+    const diffTime = Math.abs(uDate.getTime() - sDate.getTime());
+    const diffDays = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1);
+    
+    const prevEnd = new Date(sDate);
+    prevEnd.setUTCDate(prevEnd.getUTCDate() - 1);
+    const prevStart = new Date(prevEnd);
+    prevStart.setUTCDate(prevStart.getUTCDate() - diffDays + 1);
+
+    return {
+      current: { since: customSince, until: customUntil },
+      previous: { since: isoDate(prevStart), until: isoDate(prevEnd) },
+    };
+  }
+
   // Meta ka reporting day ad-account timezone ke hisaab se badalta hai.
   const end = dateInTimeZone(timeZone);
   let days = 30;
@@ -404,7 +421,10 @@ router.get("/overview", adminProtect, isAdmin, async (req, res) => {
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua. Pehle token save karo." });
     }
-    const preset = safePreset(req.query.datePreset);
+    const customSince = req.query.since && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.since)) ? String(req.query.since) : null;
+    const customUntil = req.query.until && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.until)) ? String(req.query.until) : null;
+    const isCustom = Boolean(customSince && customUntil);
+    const preset = isCustom ? "custom" : safePreset(req.query.datePreset);
     const ACT = `act_${cfg.adAccountId}`;
     const accountR = await axios.get(`${GRAPH}/${ACT}`, {
       params: {
@@ -430,7 +450,7 @@ router.get("/overview", adminProtect, isAdmin, async (req, res) => {
       availableBalance = 0;
     }
 
-    const ranges = presetRanges(preset, account.timezone_name || "Asia/Kolkata");
+    const ranges = presetRanges(preset, account.timezone_name || "Asia/Kolkata", customSince, customUntil);
     const insightParams = ranges
       ? { fields: INSIGHT_FIELDS, time_ranges: JSON.stringify([ranges.current, ranges.previous]), access_token: cfg.accessToken }
       : { fields: INSIGHT_FIELDS, date_preset: preset, access_token: cfg.accessToken };
@@ -494,10 +514,17 @@ router.get("/campaigns", adminProtect, isAdmin, async (req, res) => {
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua. Pehle token save karo." });
     }
-    const preset = safePreset(req.query.datePreset);
+    const customSince = req.query.since && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.since)) ? String(req.query.since) : null;
+    const customUntil = req.query.until && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.until)) ? String(req.query.until) : null;
+    const preset = customSince && customUntil ? "custom" : safePreset(req.query.datePreset);
+    
+    const insightsField = customSince && customUntil
+      ? `insights.time_range({"since":"${customSince}","until":"${customUntil}"}){${INSIGHT_FIELDS}}`
+      : `insights.date_preset(${preset}){${INSIGHT_FIELDS}}`;
+
     const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}/campaigns`, {
       params: {
-        fields: `name,status,configured_status,effective_status,objective,buying_type,daily_budget,lifetime_budget,budget_remaining,bid_strategy,special_ad_categories,start_time,stop_time,created_time,updated_time,issues_info,insights.date_preset(${preset}){${INSIGHT_FIELDS}}`,
+        fields: `name,status,configured_status,effective_status,objective,buying_type,daily_budget,lifetime_budget,budget_remaining,bid_strategy,special_ad_categories,start_time,stop_time,created_time,updated_time,issues_info,${insightsField}`,
         limit: 200,
         access_token: cfg.accessToken,
       },
@@ -539,13 +566,20 @@ router.get("/ads", adminProtect, isAdmin, async (req, res) => {
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua" });
     }
-    const preset = safePreset(req.query.datePreset);
+    const customSince = req.query.since && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.since)) ? String(req.query.since) : null;
+    const customUntil = req.query.until && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.until)) ? String(req.query.until) : null;
+    const preset = customSince && customUntil ? "custom" : safePreset(req.query.datePreset);
+
+    const insightsField = customSince && customUntil
+      ? `insights.time_range({"since":"${customSince}","until":"${customUntil}"}){${INSIGHT_FIELDS}}`
+      : `insights.date_preset(${preset}){${INSIGHT_FIELDS}}`;
+
     const base = req.query.campaignId
       ? `${GRAPH}/${req.query.campaignId}/ads`
       : `${GRAPH}/act_${cfg.adAccountId}/ads`;
     const { data } = await axios.get(base, {
       params: {
-        fields: `name,status,configured_status,effective_status,created_time,updated_time,conversion_domain,tracking_specs,adset{id,name,status,configured_status,effective_status,daily_budget,lifetime_budget,budget_remaining,optimization_goal,bid_strategy,bid_amount,billing_event,start_time,end_time,targeting,promoted_object,attribution_spec,destination_type,created_time,updated_time},creative{id,name,thumbnail_url,effective_object_story_id,object_story_spec,asset_feed_spec,instagram_permalink_url},insights.date_preset(${preset}){${INSIGHT_FIELDS}}`,
+        fields: `name,status,configured_status,effective_status,created_time,updated_time,conversion_domain,tracking_specs,adset{id,name,status,configured_status,effective_status,daily_budget,lifetime_budget,budget_remaining,optimization_goal,bid_strategy,bid_amount,billing_event,start_time,end_time,targeting,promoted_object,attribution_spec,destination_type,created_time,updated_time},creative{id,name,thumbnail_url,effective_object_story_id,object_story_spec,asset_feed_spec,instagram_permalink_url},${insightsField}`,
         limit: 100,
         access_token: cfg.accessToken,
       },
@@ -608,16 +642,15 @@ router.get("/trend", adminProtect, isAdmin, async (req, res) => {
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua" });
     }
-    const preset = safePreset(req.query.datePreset);
-    const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}/insights`, {
-      params: {
-        fields: "spend,clicks,actions,action_values",
-        date_preset: preset,
-        time_increment: 1,
-        limit: 200,
-        access_token: cfg.accessToken,
-      },
-    });
+    const customSince = req.query.since && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.since)) ? String(req.query.since) : null;
+    const customUntil = req.query.until && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.until)) ? String(req.query.until) : null;
+    const preset = customSince && customUntil ? "custom" : safePreset(req.query.datePreset);
+
+    const trendParams = customSince && customUntil
+      ? { fields: "spend,clicks,actions,action_values", time_range: JSON.stringify({ since: customSince, until: customUntil }), time_increment: 1, limit: 500, access_token: cfg.accessToken }
+      : { fields: "spend,clicks,actions,action_values", date_preset: preset, time_increment: 1, limit: 200, access_token: cfg.accessToken };
+
+    const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}/insights`, { params: trendParams });
     const days = (data.data || []).map((row) => ({
       date: row.date_start,
       spend: Number(row.spend) || 0,
@@ -648,17 +681,16 @@ router.get("/breakdown", adminProtect, isAdmin, async (req, res) => {
     if (!cfg.accessToken || !cfg.adAccountId) {
       return res.status(400).json({ message: "Meta Ads configure nahi hua" });
     }
-    const preset = safePreset(req.query.datePreset);
+    const customSince = req.query.since && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.since)) ? String(req.query.since) : null;
+    const customUntil = req.query.until && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.until)) ? String(req.query.until) : null;
+    const preset = customSince && customUntil ? "custom" : safePreset(req.query.datePreset);
     const bd = BREAKDOWN_MAP[req.query.type] || "age";
-    const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}/insights`, {
-      params: {
-        fields: "spend,impressions,clicks,ctr,actions,action_values",
-        date_preset: preset,
-        breakdowns: bd,
-        limit: 100,
-        access_token: cfg.accessToken,
-      },
-    });
+
+    const bdParams = customSince && customUntil
+      ? { fields: "spend,impressions,clicks,ctr,actions,action_values", breakdowns: bd, time_range: JSON.stringify({ since: customSince, until: customUntil }), limit: 100, access_token: cfg.accessToken }
+      : { fields: "spend,impressions,clicks,ctr,actions,action_values", breakdowns: bd, date_preset: preset, limit: 100, access_token: cfg.accessToken };
+
+    const { data } = await axios.get(`${GRAPH}/act_${cfg.adAccountId}/insights`, { params: bdParams });
     const rows = (data.data || [])
       .map((row) => ({
         key: row[bd] || "unknown",
