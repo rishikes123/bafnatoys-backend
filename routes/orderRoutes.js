@@ -1685,7 +1685,8 @@ router.get("/:id/invoice-pdf", async (req, res) => {
     // GST breakdown per rate
     const gstMap = {};
     (order.items || []).forEach(it => {
-      const rate = it.productId?.gstRate || it.gstRate || 0;
+      const prodGst = it.productId?.gstRate;
+      const rate = prodGst !== undefined ? Number(prodGst) : (it.gstRate !== undefined ? Number(it.gstRate) : 12);
       const total = (it.qty || 1) * (it.price || 0);
       const base = total / (1 + rate / 100);
       const gst = total - base;
