@@ -22,6 +22,33 @@ const orderItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/* ================= ORDER ITEM CHANGE HISTORY ================= */
+const orderItemChangeSnapshotSchema = new mongoose.Schema(
+  {
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+    name: { type: String, default: "" },
+    sku: { type: String, default: "" },
+    qty: { type: Number, default: 0 },
+    price: { type: Number, default: 0 },
+    image: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const orderItemChangeSchema = new mongoose.Schema(
+  {
+    action: {
+      type: String,
+      enum: ["replaced", "removed"],
+      required: true,
+    },
+    previousItem: { type: orderItemChangeSnapshotSchema, required: true },
+    replacementItem: { type: orderItemChangeSnapshotSchema, default: null },
+    occurredAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 /* ================= SHIPPING ADDRESS ================= */
 const shippingAddressSchema = new mongoose.Schema(
   {
@@ -60,6 +87,10 @@ const orderSchema = new mongoose.Schema(
     },
     items: {
       type: [orderItemSchema],
+      default: [],
+    },
+    itemChangeHistory: {
+      type: [orderItemChangeSchema],
       default: [],
     },
     itemsPrice: { type: Number, default: 0 },

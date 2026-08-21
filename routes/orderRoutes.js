@@ -53,6 +53,15 @@ const attachSkuToItems = (order) => {
   return order;
 };
 
+const itemHistorySnapshot = (item, sku = "") => ({
+  productId: item?.productId?._id || item?.productId,
+  name: item?.name || "",
+  sku: sku || item?.sku || item?.productId?.sku || "",
+  qty: Number(item?.qty) || 0,
+  price: Number(item?.price) || 0,
+  image: item?.image || "",
+});
+
 /* ============================================================
     ✅ ANALYTICS ROUTES (Must be before /:id)
 ============================================================ */
@@ -1960,6 +1969,10 @@ router.put("/:id/replace-item", async (req, res) => {
     if (!newProduct) return res.status(404).json({ message: "New product not found" });
 
     const oldItem = order.items[idx];
+    const oldProduct = oldItem?.productId
+      ? await Product.findById(oldItem.productId).select("sku").lean()
+      : null;
+    const oldItemSnapshot = itemHistorySnapshot(oldItem, oldProduct?.sku);
     const qty = (newQty !== undefined && Number(newQty) > 0) ? Number(newQty) : (oldItem.qty || 1);
     const price = (newPrice !== undefined && Number(newPrice) >= 0) ? Number(newPrice) : (newProduct.price || 0);
 
@@ -1977,6 +1990,16 @@ router.put("/:id/replace-item", async (req, res) => {
     };
 
     order.items[idx] = replacementItem;
+
+    order.itemChangeHistory.push({
+      action: "replaced",
+      previousItem: oldItemSnapshot,
+      replacementItem: itemHistorySnapshot(replacementItem, newProduct.sku),
+      occurredAt: new Date(),
+    });
+    if (order.itemChangeHistory.length > 50) {
+      order.itemChangeHistory.splice(0, order.itemChangeHistory.length - 50);
+    }
 
     // Recalculate itemsPrice
     const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
@@ -2091,6 +2114,19 @@ router.put("/:id/remove-item", async (req, res) => {
     }
 
     const removed = order.items.splice(idx, 1)[0];
+    const removedProduct = removed?.productId
+      ? await Product.findById(removed.productId).select("sku").lean()
+      : null;
+
+    order.itemChangeHistory.push({
+      action: "removed",
+      previousItem: itemHistorySnapshot(removed, removedProduct?.sku),
+      replacementItem: null,
+      occurredAt: new Date(),
+    });
+    if (order.itemChangeHistory.length > 50) {
+      order.itemChangeHistory.splice(0, order.itemChangeHistory.length - 50);
+    }
 
     // Recalculate itemsPrice
     const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
