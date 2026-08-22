@@ -209,20 +209,32 @@ async function createOrderFromPayload(payload, options = {}) {
 
   let serverAdvancePaid = 0;
   let serverRemainingAmount = serverGrandTotal;
-  if (finalPaymentMethod === "COD" && rzpPayId) {
+  let requiredCodAdvance = 0;
+  if (finalPaymentMethod === "COD") {
     const codSetting = await Setting.findOne({ key: "cod" }).lean();
     const codData = codSetting?.data || {};
     let advance = Number(codData.advanceAmount) || 0;
     if (codData.advanceType === "percentage") {
       advance = Math.floor((serverGrandTotal * advance) / 100);
     }
-    serverAdvancePaid = Math.min(advance, serverGrandTotal);
-    serverRemainingAmount = Math.max(
-      serverGrandTotal - serverAdvancePaid,
-      0
-    );
+    requiredCodAdvance = Math.min(advance, serverGrandTotal);
+    if (rzpPayId) {
+      serverAdvancePaid = requiredCodAdvance;
+      serverRemainingAmount = Math.max(
+        serverGrandTotal - serverAdvancePaid,
+        0
+      );
+    }
   }
 
+  if (finalPaymentMethod === "ONLINE" && !rzpPayId) {
+    throw new OrderCreationError("Verified online payment is required", 400);
+  }
+  if (finalPaymentMethod === "COD" && requiredCodAdvance > 0 && !rzpPayId) {
+    throw new OrderCreationError("Verified COD advance payment is required", 400);
+  }
+
+  let verifiedRazorpayPayment = null;
   if (rzpPayId) {
     const rzpPayment = await razorpayInstance.payments.fetch(rzpPayId);
     if (rzpPayment.status !== "captured") {
@@ -265,6 +277,7 @@ async function createOrderFromPayload(payload, options = {}) {
         0
       );
     }
+    verifiedRazorpayPayment = rzpPayment;
   }
 
   const enrichedItems = items.map((item) => ({
@@ -301,6 +314,35 @@ async function createOrderFromPayload(payload, options = {}) {
     total: serverGrandTotal,
     paymentMode: finalPaymentMethod,
     razorpayPaymentId: rzpPayId,
+    razorpayOrderId: razorpayOrderId || verifiedRazorpayPayment?.order_id || "",
+    paymentVerification: verifiedRazorpayPayment
+      ? {
+          status: "verified",
+          source: "razorpay",
+          expectedAmount:
+            finalPaymentMethod === "ONLINE" ? serverGrandTotal : serverAdvancePaid,
+          verifiedAmount: Number(verifiedRazorpayPayment.amount || 0) / 100,
+          fee: Number(verifiedRazorpayPayment.fee || 0) / 100,
+          tax: Number(verifiedRazorpayPayment.tax || 0) / 100,
+          netAmount:
+            (Number(verifiedRazorpayPayment.amount || 0) - Number(verifiedRazorpayPayment.fee || 0)) / 100,
+          verifiedAt: new Date(),
+          lastCheckedAt: new Date(),
+          lastError: "",
+        }
+      : { status: "not_required" },
+    paymentAuditHistory: verifiedRazorpayPayment
+      ? [{
+          action: "verified",
+          paymentId: rzpPayId,
+          previousAmount: 0,
+          newAmount: Number(verifiedRazorpayPayment.amount || 0) / 100,
+          previousStatus: "unverified",
+          newStatus: "verified",
+          note: "Verified automatically during order creation",
+          performedBy: "system",
+        }]
+      : [],
     advancePaid: serverAdvancePaid,
     remainingAmount: serverRemainingAmount,
     wa: {

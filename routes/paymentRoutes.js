@@ -13,6 +13,8 @@ const {
   refundPayment,
   financeReport,
   uploadDelhiveryCSV,
+  verifyOrderPayment,
+  linkPaymentToOrder,
 } = require("../controllers/paymentController");
 const { adminProtect } = require("../middleware/authMiddleware");
 
@@ -38,6 +40,12 @@ router.get("/admin/transactions", adminProtect, listTransactions);
 
 // Single transaction full detail + refunds
 router.get("/admin/transaction/:id", adminProtect, transactionDetail);
+
+// Verify a stored order payment against live Razorpay data
+router.post("/admin/verify-order/:orderId", adminProtect, verifyOrderPayment);
+
+// Preview or link an unmatched captured payment to a website order
+router.post("/admin/link-order", adminProtect, linkPaymentToOrder);
 
 // Dashboard stats (revenue, fees, method split, success rate)
 router.get("/admin/stats", adminProtect, paymentStats);

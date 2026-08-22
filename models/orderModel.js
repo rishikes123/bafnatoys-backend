@@ -49,6 +49,27 @@ const orderItemChangeSchema = new mongoose.Schema(
   { _id: true }
 );
 
+/* ================= PAYMENT VERIFICATION & AUDIT ================= */
+const paymentAuditSchema = new mongoose.Schema(
+  {
+    action: {
+      type: String,
+      enum: ["verified", "verification_failed", "mismatch", "linked", "manual_update"],
+      required: true,
+    },
+    paymentId: { type: String, default: "" },
+    previousAmount: { type: Number, default: 0 },
+    newAmount: { type: Number, default: 0 },
+    previousStatus: { type: String, default: "" },
+    newStatus: { type: String, default: "" },
+    reference: { type: String, default: "" },
+    note: { type: String, default: "" },
+    performedBy: { type: String, default: "system" },
+    occurredAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 /* ================= SHIPPING ADDRESS ================= */
 const shippingAddressSchema = new mongoose.Schema(
   {
@@ -132,6 +153,32 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: "",
       index: true,
+    },
+    razorpayOrderId: { type: String, default: "", index: true },
+    paymentVerification: {
+      status: {
+        type: String,
+        enum: ["not_required", "unverified", "verified", "manual_verified", "mismatch", "failed"],
+        default: "not_required",
+      },
+      source: {
+        type: String,
+        enum: ["", "razorpay", "cash", "bank_transfer", "manual"],
+        default: "",
+      },
+      expectedAmount: { type: Number, default: 0 },
+      verifiedAmount: { type: Number, default: 0 },
+      fee: { type: Number, default: 0 },
+      tax: { type: Number, default: 0 },
+      netAmount: { type: Number, default: 0 },
+      reference: { type: String, default: "" },
+      verifiedAt: { type: Date, default: null },
+      lastCheckedAt: { type: Date, default: null },
+      lastError: { type: String, default: "" },
+    },
+    paymentAuditHistory: {
+      type: [paymentAuditSchema],
+      default: [],
     },
     advancePaid: {
       type: Number,
@@ -239,6 +286,17 @@ orderSchema.pre("validate", async function (next) {
 
   if (!this.trackingToken) {
     this.trackingToken = crypto.randomBytes(16).toString("hex");
+  }
+
+  const requiresPaymentVerification =
+    this.paymentMode === "ONLINE" || Number(this.advancePaid || 0) > 0;
+  if (
+    requiresPaymentVerification &&
+    (!this.paymentVerification?.status || this.paymentVerification.status === "not_required")
+  ) {
+    this.paymentVerification.status = "unverified";
+    this.paymentVerification.expectedAmount =
+      this.paymentMode === "ONLINE" ? Number(this.total || 0) : Number(this.advancePaid || 0);
   }
 
   this.remainingAmount = Math.max((this.total || 0) - (this.advancePaid || 0), 0);

@@ -16,6 +16,45 @@ const razorpayInstance = new Razorpay({
   key_secret: process.env.RAZORPAY_SECRET, // matched with your .env
 });
 
+const paymentExpectedAmount = (order) =>
+  order.paymentMode === "ONLINE"
+    ? Number(order.total || 0)
+    : Number(order.advancePaid || 0);
+
+const adminActor = (req) =>
+  String(req.admin?.username || req.admin?.email || req.admin?._id || "admin");
+
+const capPaymentAudit = (order) => {
+  if (order.paymentAuditHistory.length > 100) {
+    order.paymentAuditHistory.splice(0, order.paymentAuditHistory.length - 100);
+  }
+};
+
+const paymentVerificationFromRazorpay = (payment, expectedAmount) => {
+  const verifiedAmount = Number(payment?.amount || 0) / 100;
+  const captured = payment?.status === "captured" && payment?.captured !== false;
+  const amountMatches = Math.abs(verifiedAmount - Number(expectedAmount || 0)) < 0.01;
+  const status = !captured ? "failed" : amountMatches ? "verified" : "mismatch";
+  return {
+    status,
+    source: "razorpay",
+    expectedAmount: Number(expectedAmount || 0),
+    verifiedAmount,
+    fee: Number(payment?.fee || 0) / 100,
+    tax: Number(payment?.tax || 0) / 100,
+    netAmount:
+      (Number(payment?.amount || 0) - Number(payment?.fee || 0)) / 100,
+    verifiedAt: status === "verified" ? new Date() : null,
+    lastCheckedAt: new Date(),
+    lastError:
+      status === "mismatch"
+        ? `Expected ₹${Number(expectedAmount || 0)}, captured ₹${verifiedAmount}`
+        : status === "failed"
+          ? `Razorpay status is ${payment?.status || "unknown"}`
+          : "",
+  };
+};
+
 /* ========================================================================
    1. Create Razorpay Order (customer checkout)
    Amount is calculated SERVER-SIDE from DB — client amount is never trusted.
@@ -368,6 +407,200 @@ exports.razorpayWebhook = async (req, res) => {
 };
 
 /* ========================================================================
+   ADMIN — Verify/link order payments against live Razorpay data
+   ======================================================================== */
+exports.verifyOrderPayment = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const expectedAmount = paymentExpectedAmount(order);
+    const previousStatus = order.paymentVerification?.status || "unverified";
+
+    if (!order.razorpayPaymentId) {
+      order.paymentVerification = {
+        ...(order.paymentVerification?.toObject?.() || order.paymentVerification || {}),
+        status: expectedAmount > 0 || order.paymentMode === "ONLINE" ? "unverified" : "not_required",
+        source: "",
+        expectedAmount,
+        verifiedAmount: 0,
+        verifiedAt: null,
+        lastCheckedAt: new Date(),
+        lastError: "Razorpay Payment ID is missing",
+      };
+      if (previousStatus !== order.paymentVerification.status) {
+        order.paymentAuditHistory.push({
+          action: "verification_failed",
+          previousAmount: Number(order.advancePaid || 0),
+          newAmount: Number(order.advancePaid || 0),
+          previousStatus,
+          newStatus: order.paymentVerification.status,
+          note: "Verification failed: Razorpay Payment ID is missing",
+          performedBy: adminActor(req),
+        });
+        capPaymentAudit(order);
+      }
+      await order.save();
+      return res.status(422).json({
+        ok: false,
+        message: "Razorpay Payment ID is missing. Advance is unverified.",
+        verification: order.paymentVerification,
+      });
+    }
+
+    const payment = await razorpayInstance.payments.fetch(order.razorpayPaymentId);
+    const verification = paymentVerificationFromRazorpay(payment, expectedAmount);
+    order.razorpayOrderId = order.razorpayOrderId || payment.order_id || "";
+    order.paymentVerification = verification;
+
+    if (previousStatus !== verification.status) {
+      order.paymentAuditHistory.push({
+        action:
+          verification.status === "verified"
+            ? "verified"
+            : verification.status === "mismatch"
+              ? "mismatch"
+              : "verification_failed",
+        paymentId: order.razorpayPaymentId,
+        previousAmount: Number(order.advancePaid || 0),
+        newAmount: verification.verifiedAmount,
+        previousStatus,
+        newStatus: verification.status,
+        note: verification.lastError || "Verified against live Razorpay data",
+        performedBy: adminActor(req),
+      });
+      capPaymentAudit(order);
+    }
+
+    await order.save();
+    const updatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    return res.status(verification.status === "verified" ? 200 : 409).json({
+      ok: verification.status === "verified",
+      message:
+        verification.status === "verified"
+          ? "Payment verified from Razorpay"
+          : verification.lastError,
+      verification,
+      order: updatedOrder,
+    });
+  } catch (err) {
+    console.error("verifyOrderPayment error:", err);
+    return res.status(500).json({ message: err?.error?.description || err.message || "Payment verification failed" });
+  }
+};
+
+exports.linkPaymentToOrder = async (req, res) => {
+  try {
+    const { paymentId, orderNumber, preview = false, syncAmount = false } = req.body || {};
+    if (!paymentId || !orderNumber) {
+      return res.status(400).json({ message: "paymentId and orderNumber are required" });
+    }
+
+    const order = await Order.findOne({ orderNumber: String(orderNumber).trim().toUpperCase() });
+    if (!order) return res.status(404).json({ message: "Website order not found" });
+
+    const payment = await razorpayInstance.payments.fetch(String(paymentId).trim());
+    if (!payment || payment.status !== "captured" || payment.captured === false) {
+      return res.status(400).json({ message: "Only captured Razorpay payments can be linked" });
+    }
+
+    const linkedElsewhere = await Order.findOne({
+      razorpayPaymentId: payment.id,
+      _id: { $ne: order._id },
+    }).select("orderNumber").lean();
+    if (linkedElsewhere) {
+      return res.status(409).json({ message: `Payment is already linked to ${linkedElsewhere.orderNumber}` });
+    }
+
+    const capturedAmount = Number(payment.amount || 0) / 100;
+    const currentExpected = paymentExpectedAmount(order);
+    const orderPhone = String(order.shippingAddress?.phone || "").replace(/\D/g, "").slice(-10);
+    const paymentPhone = String(payment.contact || "").replace(/\D/g, "").slice(-10);
+    const phoneMatches = Boolean(orderPhone && paymentPhone && orderPhone === paymentPhone);
+    const amountMatches = Math.abs(capturedAmount - currentExpected) < 0.01;
+
+    const previewData = {
+      paymentId: payment.id,
+      razorpayOrderId: payment.order_id || "",
+      orderNumber: order.orderNumber,
+      paymentMode: order.paymentMode,
+      orderTotal: Number(order.total || 0),
+      currentAdvance: Number(order.advancePaid || 0),
+      capturedAmount,
+      proposedAdvance: order.paymentMode === "COD" ? capturedAmount : Number(order.advancePaid || 0),
+      proposedRemaining:
+        order.paymentMode === "COD"
+          ? Math.max(Number(order.total || 0) - capturedAmount, 0)
+          : 0,
+      amountMatches,
+      phoneMatches,
+      createdAt: payment.created_at ? new Date(payment.created_at * 1000) : null,
+    };
+
+    if (preview) return res.json({ ok: true, preview: previewData });
+
+    if (order.paymentMode === "ONLINE" && Math.abs(capturedAmount - Number(order.total || 0)) >= 0.01) {
+      return res.status(409).json({ message: "Online payment amount does not match the order total", preview: previewData });
+    }
+    if (order.paymentMode === "COD" && capturedAmount > Number(order.total || 0)) {
+      return res.status(409).json({ message: "Captured advance is greater than the order total", preview: previewData });
+    }
+    if (order.paymentMode === "COD" && !amountMatches && !syncAmount) {
+      return res.status(409).json({ message: "Advance amount differs. Confirm amount synchronization.", preview: previewData });
+    }
+
+    const previousAmount = Number(order.advancePaid || 0);
+    const previousStatus = order.paymentVerification?.status || "unverified";
+    if (order.paymentMode === "COD") {
+      order.advancePaid = capturedAmount;
+      order.remainingAmount = Math.max(Number(order.total || 0) - capturedAmount, 0);
+    }
+    order.razorpayPaymentId = payment.id;
+    order.razorpayOrderId = payment.order_id || "";
+    order.paymentVerification = paymentVerificationFromRazorpay(
+      payment,
+      order.paymentMode === "ONLINE" ? order.total : order.advancePaid
+    );
+    order.paymentAuditHistory.push({
+      action: "linked",
+      paymentId: payment.id,
+      previousAmount,
+      newAmount: order.paymentMode === "COD" ? capturedAmount : Number(order.total || 0),
+      previousStatus,
+      newStatus: "verified",
+      note: phoneMatches
+        ? "Captured payment linked; customer phone matched"
+        : "Captured payment linked by admin; customer phone did not match",
+      performedBy: adminActor(req),
+    });
+    capPaymentAudit(order);
+    await order.save();
+
+    return res.json({
+      ok: true,
+      message: `Payment linked to ${order.orderNumber} and verified`,
+      preview: previewData,
+      order: {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        advancePaid: order.advancePaid,
+        remainingAmount: order.remainingAmount,
+        razorpayPaymentId: order.razorpayPaymentId,
+        razorpayOrderId: order.razorpayOrderId,
+        paymentVerification: order.paymentVerification,
+      },
+    });
+  } catch (err) {
+    console.error("linkPaymentToOrder error:", err);
+    return res.status(500).json({ message: err?.error?.description || err.message || "Could not link payment" });
+  }
+};
+
+/* ========================================================================
    ADMIN ENDPOINTS — Transaction Details from Razorpay API
    ========================================================================
    All routes below are protected by adminProtect middleware in routes file.
@@ -392,6 +625,7 @@ exports.listTransactions = async (req, res) => {
       method,     // card/upi/netbanking/wallet/emi
       status,     // captured/authorized/failed/refunded
       search,     // search email/contact/paymentId
+      linkStatus, // linked/unmatched
     } = req.query;
 
     const params = {
@@ -401,7 +635,29 @@ exports.listTransactions = async (req, res) => {
     if (from) params.from = parseInt(from);
     if (to) params.to = parseInt(to);
 
-    const result = await razorpayInstance.payments.all(params);
+    const exactSearch = String(search || "").trim();
+    let result;
+    if (/^pay_[a-z0-9]+$/i.test(exactSearch)) {
+      try {
+        const payment = await razorpayInstance.payments.fetch(exactSearch);
+        result = { items: payment ? [payment] : [] };
+      } catch (error) {
+        if (error?.statusCode === 400 || error?.statusCode === 404) result = { items: [] };
+        else throw error;
+      }
+    } else if (/^ODR\d+$/i.test(exactSearch)) {
+      const exactOrder = await Order.findOne({
+        orderNumber: exactSearch.toUpperCase(),
+      }).select("razorpayPaymentId").lean();
+      if (exactOrder?.razorpayPaymentId) {
+        const payment = await razorpayInstance.payments.fetch(exactOrder.razorpayPaymentId);
+        result = { items: payment ? [payment] : [] };
+      } else {
+        result = { items: [] };
+      }
+    } else {
+      result = await razorpayInstance.payments.all(params);
+    }
 
     let items = result.items || [];
 
@@ -438,9 +694,6 @@ exports.listTransactions = async (req, res) => {
       }
     });
 
-    // Filter out payments that do not belong to this site (not found in DB)
-    items = items.filter((p) => paymentToOrderInfo[p.id]);
-
     // Slim payload for table — convert paise->rupees, pick core fields
     let mapped = items.map((p) => {
       const info = paymentToOrderInfo[p.id] || {};
@@ -449,6 +702,7 @@ exports.listTransactions = async (req, res) => {
         id: p.id,
         orderId: p.order_id,
         siteOrderNumber: info.orderNumber || null,
+        isLinked: Boolean(info.orderNumber),
         customerName: customerName,
         amount: (p.amount || 0) / 100,
         currency: p.currency,
@@ -476,6 +730,9 @@ exports.listTransactions = async (req, res) => {
         refundStatus: p.refund_status || null,
       };
     });
+
+    if (linkStatus === "linked") mapped = mapped.filter((p) => p.isLinked);
+    if (linkStatus === "unmatched") mapped = mapped.filter((p) => !p.isLinked);
 
     // Apply search filter after attaching customerName & siteOrderNumber
     if (search) {

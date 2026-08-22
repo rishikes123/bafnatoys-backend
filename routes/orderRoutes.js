@@ -591,25 +591,66 @@ router.put("/admin/return-action/:id", async (req, res) => {
     ✅ ADVANCE ONLY SAVE (without shipping)
     PATCH /api/orders/:id/advance
 ============================================================ */
-router.patch("/:id/advance", async (req, res) => {
+router.patch("/:id/advance", adminProtect, isAdmin, async (req, res) => {
   try {
-    const { advancePaid } = req.body;
+    const { advancePaid, source, reference, reason } = req.body;
     if (advancePaid === undefined || advancePaid === null) {
       return res.status(400).json({ message: "advancePaid is required" });
+    }
+
+    const allowedSources = ["cash", "bank_transfer", "manual"];
+    if (!allowedSources.includes(String(source || ""))) {
+      return res.status(400).json({ message: "Payment source is required: cash, bank_transfer, or manual" });
+    }
+    if (!String(reference || "").trim()) {
+      return res.status(400).json({ message: "Receipt / UTR / payment reference is required" });
     }
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const advance = Math.max(0, Number(advancePaid) || 0);
+    if (advance > Number(order.total || 0)) {
+      return res.status(400).json({ message: "Advance cannot exceed order total" });
+    }
+    const previousAmount = Number(order.advancePaid || 0);
+    const previousStatus = order.paymentVerification?.status || "unverified";
     order.advancePaid = advance;
     order.remainingAmount = Math.max(0, order.total - advance);
+    order.paymentVerification = {
+      status: advance > 0 ? "manual_verified" : "not_required",
+      source: String(source),
+      expectedAmount: advance,
+      verifiedAmount: advance,
+      fee: 0,
+      tax: 0,
+      netAmount: advance,
+      reference: String(reference).trim(),
+      verifiedAt: new Date(),
+      lastCheckedAt: new Date(),
+      lastError: "",
+    };
+    order.paymentAuditHistory.push({
+      action: "manual_update",
+      paymentId: order.razorpayPaymentId || "",
+      previousAmount,
+      newAmount: advance,
+      previousStatus,
+      newStatus: advance > 0 ? "manual_verified" : "not_required",
+      reference: String(reference).trim(),
+      note: String(reason || "Manual advance updated by admin").trim(),
+      performedBy: String(req.admin?.username || req.admin?.email || req.admin?._id || "admin"),
+    });
+    if (order.paymentAuditHistory.length > 100) {
+      order.paymentAuditHistory.splice(0, order.paymentAuditHistory.length - 100);
+    }
     await order.save();
 
     res.json({
       advancePaid: order.advancePaid,
       remainingAmount: order.remainingAmount,
       total: order.total,
+      paymentVerification: order.paymentVerification,
     });
   } catch (err) {
     console.error("Advance save error:", err);
@@ -727,6 +768,32 @@ const updateOrderStatus = async (req, res) => {
 
     const order = await Order.findById(req.params.id).populate("customerId");
     if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (["shipped", "delivered"].includes(newStatus)) {
+      const requiresVerifiedPayment =
+        order.paymentMode === "ONLINE" || Number(order.advancePaid || 0) > 0;
+      const verificationStatus = order.paymentVerification?.status || "unverified";
+      if (
+        requiresVerifiedPayment &&
+        !["verified", "manual_verified"].includes(verificationStatus)
+      ) {
+        return res.status(409).json({
+          code: "PAYMENT_VERIFICATION_REQUIRED",
+          message: `Payment is ${verificationStatus}. Verify or record a referenced manual payment before ${newStatus}.`,
+          paymentVerification: order.paymentVerification,
+        });
+      }
+    }
+
+    if (manualAdvance !== undefined && codAmountToCollect !== undefined) {
+      const submittedAdvance = Number(manualAdvance || 0);
+      if (Math.abs(submittedAdvance - Number(order.advancePaid || 0)) >= 0.01) {
+        return res.status(409).json({
+          code: "ADVANCE_NOT_SAVED",
+          message: "Advance amount changed. Save it with payment source and reference before shipping.",
+        });
+      }
+    }
 
     if (req.isCustomerCancellation) {
       const ownerId = order.customerId?._id || order.customerId;
@@ -1193,12 +1260,6 @@ const updateOrderStatus = async (req, res) => {
         lastError: "",
         lastSentAt: null,
       };
-    }
-
-    // 👇 Agar manual paise receive hue hain toh DB update karo taaki invoice mein accurate ho
-    if (manualAdvance !== undefined && codAmountToCollect !== undefined) {
-      order.advancePaid = manualAdvance;
-      order.remainingAmount = codAmountToCollect;
     }
 
     await order.save();
