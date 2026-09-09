@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const bcrypt = require("bcryptjs");
+const mongoose = require("mongoose");
 const axios = require("axios"); // ✅ Delhivery API integration ke liye
 
 const Razorpay = require("razorpay");
@@ -171,6 +172,56 @@ router.get("/", async (req, res) => {
     res.status(500).json({
       message: err.message || "Server error while fetching orders",
     });
+  }
+});
+
+/**
+ * @route GET /api/orders/admin/customer/:customerId/history
+ * @desc  Complete order history for a registered customer (admin only)
+ */
+router.get("/admin/customer/:customerId/history", adminProtect, async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: "Invalid customer ID" });
+    }
+
+    const [customer, rawOrders] = await Promise.all([
+      Registration.findById(customerId)
+        .select("shopName firmName otpMobile whatsapp address city state gstNumber")
+        .lean(),
+      Order.find({ customerId })
+        .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    const orders = rawOrders.map(attachSkuToItems);
+    const validOrders = orders.filter((order) => !["cancelled", "returned"].includes(order.status));
+    const totalItems = orders.reduce(
+      (sum, order) => sum + (order.items || []).reduce((itemSum, item) => itemSum + (Number(item.qty) || 0), 0),
+      0
+    );
+
+    return res.json({
+      customer,
+      orders,
+      summary: {
+        totalOrders: orders.length,
+        totalItems,
+        grossOrderValue: orders.reduce((sum, order) => sum + (Number(order.total) || 0), 0),
+        validOrderValue: validOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0),
+        cancelledOrReturned: orders.length - validOrders.length,
+        lastOrderAt: orders[0]?.createdAt || null,
+      },
+    });
+  } catch (err) {
+    console.error("Customer order history error:", err);
+    return res.status(500).json({ message: err.message || "Server error fetching customer order history" });
   }
 });
 
@@ -2220,6 +2271,107 @@ router.put("/:id/remove-item", async (req, res) => {
   } catch (err) {
     console.error("Remove Item Error:", err);
     res.status(500).json({ message: err.message || "Failed to remove item" });
+  }
+});
+
+// Restore an item that was removed from the order (undo a delete)
+router.put("/:id/restore-item", async (req, res) => {
+  try {
+    const { historyId } = req.body;
+    if (!historyId) {
+      return res.status(400).json({ message: "historyId is required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const change = order.itemChangeHistory.id(historyId);
+    if (!change) {
+      return res.status(404).json({ message: "History entry not found" });
+    }
+    if (change.action !== "removed") {
+      return res.status(400).json({ message: "Only removed items can be restored" });
+    }
+    if (change.restoredAt) {
+      return res.status(400).json({ message: "This item has already been restored" });
+    }
+
+    const snapshot = change.previousItem;
+    if (!snapshot?.productId) {
+      return res.status(400).json({ message: "Removed item has no product reference, please add it manually" });
+    }
+
+    const alreadyInOrder = order.items.some(
+      (it) => String(it.productId) === String(snapshot.productId)
+    );
+    if (alreadyInOrder) {
+      return res.status(400).json({ message: `"${snapshot.name}" is already present in this order` });
+    }
+
+    const product = await Product.findById(snapshot.productId).lean();
+    if (!product) {
+      return res.status(404).json({ message: "Product no longer exists, cannot restore" });
+    }
+
+    const qty = Number(snapshot.qty) || 1;
+    const innerQty = product.innerQty || 1;
+    const restoredItem = {
+      productId: product._id,
+      name: snapshot.name || product.name,
+      qty,
+      unit: product.unit || "Piece",
+      innerQty,
+      inners: Math.ceil(qty / innerQty),
+      price: Number(snapshot.price) || product.price || 0,
+      mrp: product.mrp || 0,
+      gstRate: product.gstRate || 0,
+      image: snapshot.image || (product.images && product.images[0]) || product.image || "",
+    };
+
+    order.items.push(restoredItem);
+
+    change.restoredAt = new Date();
+    order.itemChangeHistory.push({
+      action: "restored",
+      previousItem: itemHistorySnapshot(restoredItem, snapshot.sku || product.sku),
+      replacementItem: null,
+      occurredAt: new Date(),
+    });
+    if (order.itemChangeHistory.length > 50) {
+      order.itemChangeHistory.splice(0, order.itemChangeHistory.length - 50);
+    }
+
+    // Recalculate itemsPrice
+    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
+    order.itemsPrice = newItemsPrice;
+
+    // Recalculate total: itemsPrice + shippingPrice - discountAmount
+    const shipping = order.shippingPrice || 0;
+    const discount = order.discountAmount || 0;
+    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
+
+    // If COD, recalculate remainingAmount
+    if (order.paymentMode === "COD") {
+      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
+    }
+
+    await order.save();
+
+    let updatedOrder = await Order.findById(order._id)
+      .populate("customerId", "firmName shopName otpMobile whatsapp city state zip visitingCardUrl address")
+      .populate({ path: "items.productId", select: "sku mrp category", populate: { path: "category", select: "name" } })
+      .lean();
+
+    updatedOrder = attachSkuToItems(updatedOrder);
+
+    res.json({
+      ok: true,
+      message: `Item "${restoredItem.name}" restored back to the order`,
+      order: updatedOrder
+    });
+  } catch (err) {
+    console.error("Restore Item Error:", err);
+    res.status(500).json({ message: err.message || "Failed to restore item" });
   }
 });
 

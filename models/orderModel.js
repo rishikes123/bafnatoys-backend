@@ -39,12 +39,15 @@ const orderItemChangeSchema = new mongoose.Schema(
   {
     action: {
       type: String,
-      enum: ["replaced", "removed"],
+      enum: ["replaced", "removed", "restored"],
       required: true,
     },
     previousItem: { type: orderItemChangeSnapshotSchema, required: true },
     replacementItem: { type: orderItemChangeSnapshotSchema, default: null },
     occurredAt: { type: Date, default: Date.now },
+    // Set when a removed item has been put back into the order, so the same
+    // history entry cannot be restored twice.
+    restoredAt: { type: Date, default: null },
   },
   { _id: true }
 );
