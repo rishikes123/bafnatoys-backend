@@ -9,6 +9,7 @@ const CheckoutAttempt = require("../models/CheckoutAttempt");
 const {
   finalizeCheckoutAttempt,
 } = require("../services/checkoutRecoveryService");
+const { checkItemsStock } = require("../services/stockValidationService");
 
 // Razorpay Initialization using your specific .env keys
 const razorpayInstance = new Razorpay({
@@ -95,9 +96,19 @@ exports.createOrder = async (req, res) => {
     const productIds = items.map((i) => i.productId).filter(Boolean);
     const products = await Product.find({ _id: { $in: productIds } })
       .select(
-        "name sku price mrp gstRate piecesPerUnit unit images"
+        "name sku price mrp gstRate piecesPerUnit unit images stock"
       )
       .lean();
+
+    // Stock guard BEFORE Razorpay opens, so a customer never pays for an
+    // item that is out of stock.
+    const stockCheck = await checkItemsStock(items, products);
+    if (!stockCheck.ok) {
+      return res.status(409).json({
+        message: stockCheck.message,
+        stockIssues: stockCheck.issues,
+      });
+    }
     const priceMap = {};
     const productMap = {};
     products.forEach((p) => {

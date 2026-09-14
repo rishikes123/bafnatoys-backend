@@ -8,6 +8,7 @@ const Setting = require("../models/settingModel");
 const { sendWhatsAppTemplate } = require("./whatsappService");
 const { notifyAdminNewOrder } = require("./adminNotifyService");
 const { sendPurchaseEvent } = require("./metaCapiService");
+const { checkItemsStock } = require("./stockValidationService");
 
 const razorpayInstance = new Razorpay({
   key_id: process.env.RAZORPAY_KEY,
@@ -156,7 +157,7 @@ async function createOrderFromPayload(payload, options = {}) {
 
   const productIds = items.map((item) => item.productId).filter(Boolean);
   const products = await Product.find({ _id: { $in: productIds } })
-    .select("price gstRate")
+    .select("name price gstRate stock")
     .lean();
   const priceMap = {};
   const gstRateMap = {};
@@ -182,6 +183,20 @@ async function createOrderFromPayload(payload, options = {}) {
       );
     }
     serverItemsTotal += unitPrice * qty;
+  }
+
+  // Stock guard. Stock only drops when an order is delivered, so this blocks
+  // orders for items that are out of stock or short in quantity.
+  const stockCheck = await checkItemsStock(items, products);
+  if (!stockCheck.ok) {
+    if (!rzpPayId) {
+      throw new OrderCreationError(stockCheck.message, 409);
+    }
+    // Money is already captured — never drop a paid order. Let it through and
+    // flag it loudly so admin can sort the stock out manually.
+    console.warn(
+      `Stock shortage on PAID order (payment ${rzpPayId}): ${stockCheck.message}`
+    );
   }
 
   const shippingSettings = await ShippingSettings.findOne().lean();

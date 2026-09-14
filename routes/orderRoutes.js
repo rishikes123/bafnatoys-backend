@@ -879,7 +879,16 @@ const updateOrderStatus = async (req, res) => {
           const productId = item.productId?._id || item.productId;
           const qty = Number(item.qty) || 0;
           if (productId && qty > 0) {
-            await Product.findByIdAndUpdate(productId, { $inc: { stock: -qty } });
+            // Never let stock fall below 0 — a negative value made the site
+            // show "Only -3 left!" instead of Out of Stock.
+            await Product.updateOne(
+              { _id: productId, stock: { $gte: qty } },
+              { $inc: { stock: -qty } }
+            );
+            await Product.updateOne(
+              { _id: productId, stock: { $lt: qty } },
+              { $set: { stock: 0 } }
+            );
           }
         }
       }
