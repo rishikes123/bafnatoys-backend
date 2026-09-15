@@ -25,6 +25,7 @@ const { sendPurchaseEvent } = require("../services/metaCapiService");
 const Registration = require("../models/Registration");
 const { createOrder } = require("../controllers/orderController");
 const { attachLedgerBilling } = require("../services/delhiveryBillingService");
+const { recalculateOrderTotals } = require("../services/orderTotalsService");
 
 // ✅ Phone sanitizer (India)
 function sanitizePhone(phone) {
@@ -2122,19 +2123,9 @@ router.put("/:id/replace-item", async (req, res) => {
       order.itemChangeHistory.splice(0, order.itemChangeHistory.length - 50);
     }
 
-    // Recalculate itemsPrice
-    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
-    order.itemsPrice = newItemsPrice;
-
-    // Recalculate total: itemsPrice + shippingPrice - discountAmount
-    const shipping = order.shippingPrice || 0;
-    const discount = order.discountAmount || 0;
-    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
-
-    // If COD, recalculate remainingAmount
-    if (order.paymentMode === "COD") {
-      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
-    }
+    // itemsPrice, volume discount, total aur COD balance — sab dobara.
+    // Discount bhi naye subtotal par nikalta hai, warna purana amount atak jata tha.
+    await recalculateOrderTotals(order);
 
     await order.save();
 
@@ -2180,19 +2171,9 @@ router.put("/:id/update-item-qty", async (req, res) => {
       order.items[idx].price = Number(newPrice);
     }
 
-    // Recalculate itemsPrice
-    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
-    order.itemsPrice = newItemsPrice;
-
-    // Recalculate total: itemsPrice + shippingPrice - discountAmount
-    const shipping = order.shippingPrice || 0;
-    const discount = order.discountAmount || 0;
-    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
-
-    // If COD, recalculate remainingAmount
-    if (order.paymentMode === "COD") {
-      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
-    }
+    // itemsPrice, volume discount, total aur COD balance — sab dobara.
+    // Discount bhi naye subtotal par nikalta hai, warna purana amount atak jata tha.
+    await recalculateOrderTotals(order);
 
     await order.save();
 
@@ -2249,19 +2230,9 @@ router.put("/:id/remove-item", async (req, res) => {
       order.itemChangeHistory.splice(0, order.itemChangeHistory.length - 50);
     }
 
-    // Recalculate itemsPrice
-    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
-    order.itemsPrice = newItemsPrice;
-
-    // Recalculate total: itemsPrice + shippingPrice - discountAmount
-    const shipping = order.shippingPrice || 0;
-    const discount = order.discountAmount || 0;
-    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
-
-    // If COD, recalculate remainingAmount
-    if (order.paymentMode === "COD") {
-      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
-    }
+    // itemsPrice, volume discount, total aur COD balance — sab dobara.
+    // Discount bhi naye subtotal par nikalta hai, warna purana amount atak jata tha.
+    await recalculateOrderTotals(order);
 
     await order.save();
 
@@ -2350,19 +2321,9 @@ router.put("/:id/restore-item", async (req, res) => {
       order.itemChangeHistory.splice(0, order.itemChangeHistory.length - 50);
     }
 
-    // Recalculate itemsPrice
-    const newItemsPrice = order.items.reduce((sum, it) => sum + ((it.qty || 1) * (it.price || 0)), 0);
-    order.itemsPrice = newItemsPrice;
-
-    // Recalculate total: itemsPrice + shippingPrice - discountAmount
-    const shipping = order.shippingPrice || 0;
-    const discount = order.discountAmount || 0;
-    order.total = Math.max(0, Math.round(newItemsPrice + shipping - discount));
-
-    // If COD, recalculate remainingAmount
-    if (order.paymentMode === "COD") {
-      order.remainingAmount = Math.max(0, order.total - (order.advancePaid || 0));
-    }
+    // itemsPrice, volume discount, total aur COD balance — sab dobara.
+    // Discount bhi naye subtotal par nikalta hai, warna purana amount atak jata tha.
+    await recalculateOrderTotals(order);
 
     await order.save();
 

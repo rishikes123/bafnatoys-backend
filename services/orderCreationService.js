@@ -9,6 +9,7 @@ const { sendWhatsAppTemplate } = require("./whatsappService");
 const { notifyAdminNewOrder } = require("./adminNotifyService");
 const { sendPurchaseEvent } = require("./metaCapiService");
 const { checkItemsStock } = require("./stockValidationService");
+const { calculateDiscountAmount } = require("./orderTotalsService");
 
 const razorpayInstance = new Razorpay({
   key_id: process.env.RAZORPAY_KEY,
@@ -205,18 +206,10 @@ async function createOrderFromPayload(payload, options = {}) {
     shippingSettings
   );
 
-  const discountRules = shippingSettings?.discountRules || [];
-  const sortedRules = [...discountRules].sort(
-    (a, b) => b.minAmount - a.minAmount
+  const serverDiscountAmount = calculateDiscountAmount(
+    serverItemsTotal,
+    shippingSettings
   );
-  const applicableRule = sortedRules.find(
-    (rule) => serverItemsTotal >= rule.minAmount
-  );
-  const serverDiscountAmount = applicableRule
-    ? Math.floor(
-        (serverItemsTotal * applicableRule.discountPercentage) / 100
-      )
-    : 0;
   const serverGrandTotal = Math.max(
     0,
     serverItemsTotal + serverShippingPrice - serverDiscountAmount
