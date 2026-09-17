@@ -26,6 +26,11 @@ const Registration = require("../models/Registration");
 const { createOrder } = require("../controllers/orderController");
 const { attachLedgerBilling } = require("../services/delhiveryBillingService");
 const { recalculateOrderTotals } = require("../services/orderTotalsService");
+const {
+  getConfig: getB2BConfig,
+  getToken: getB2BToken,
+  authedRequest: b2bRequest,
+} = require("../services/delhiveryB2BService");
 
 // ✅ Phone sanitizer (India)
 function sanitizePhone(phone) {
@@ -1049,6 +1054,131 @@ const updateOrderStatus = async (req, res) => {
             apiErr.message ||
             "Failed to connect to Delhivery API.";
           return res.status(500).json({ message: "Delhivery Error: " + errDetail });
+        }
+      } else if (courierName === "Delhivery B2B") {
+        /* ----------------------------------------------------------------
+           DELHIVERY B2B (LTL) — D2C se bilkul alag account aur API.
+           Yahan har box ka apna AWB nahi banta; poori consignment ka ek
+           LRN banta hai, isliye D2C wala flow reuse nahi ho sakta.
+        ---------------------------------------------------------------- */
+        if (!packingDetails || packingDetails.length === 0) {
+          return res.status(400).json({ message: "B2B shipment ke liye box details zaroori hain." });
+        }
+
+        const b2bConfig = await getB2BConfig();
+        if (!b2bConfig?.enabled) {
+          return res.status(400).json({
+            message: "Delhivery B2B Settings me enable nahi hai. Settings → Delhivery B2B me jaake enable karo.",
+          });
+        }
+        if (!b2bConfig.username || !b2bConfig.password) {
+          return res.status(400).json({
+            message: "Delhivery B2B ka username/password Settings me nahi bhara hai.",
+          });
+        }
+        if (!b2bConfig.clientGstTin) {
+          return res.status(400).json({
+            message: "B2B shipment ke liye aapka GSTIN Settings me daalna zaroori hai.",
+          });
+        }
+        if (!b2bConfig.manifestPath) {
+          return res.status(400).json({
+            message:
+              "Delhivery B2B manifest API abhi configure nahi hui hai. Credentials test ho chuke hain, " +
+              "par manifest endpoint ka path Delhivery ke developer portal se lena baaki hai. " +
+              "Tab tak D2C Delhivery use karo.",
+          });
+        }
+
+        // Credentials sahi hain ya nahi — shipment banane se pehle hi pata chal jaye.
+        let b2bToken;
+        try {
+          b2bToken = await getB2BToken();
+        } catch (tokenErr) {
+          return res.status(400).json({ message: tokenErr.message });
+        }
+
+        const addr = order.shippingAddress;
+        const b2bCity  = addr.isDifferentShipping ? addr.shippingCity    : addr.city;
+        const b2bState = addr.isDifferentShipping ? addr.shippingState   : addr.state;
+        const b2bPin   = addr.isDifferentShipping ? addr.shippingPincode : addr.pincode;
+        const b2bAddr  = addr.isDifferentShipping
+          ? `${addr.shippingStreet}, ${addr.shippingArea}`
+          : `${addr.street}, ${addr.area}`;
+
+        // B2B me poori consignment ek hi hai — boxes sirf count aur weight dete hain.
+        const totalBoxes = packingDetails.reduce((sum, box) => sum + (Number(box.quantity) || 1), 0);
+        const totalWeightKg = packingDetails.reduce((sum, box) => sum + (Number(box.totalWeight) || 0), 0);
+
+        const b2bPayload = {
+          client_name: b2bConfig.clientName || b2bConfig.username,
+          client_gst_tin: b2bConfig.clientGstTin,
+          consignee_gst_tin: addr.gstNumber || "",
+          order_number: order.orderNumber,
+          payment_mode: order.paymentMode === "COD" ? "COD" : "Prepaid",
+          cod_amount: order.paymentMode === "COD"
+            ? (codAmountToCollect !== undefined ? codAmountToCollect : (order.remainingAmount || order.total))
+            : 0,
+          invoice_value: order.total,
+          consignee: {
+            name: addr.shopName || addr.fullName || "Customer",
+            address: b2bAddr,
+            city: b2bCity,
+            state: b2bState,
+            pin: b2bPin,
+            phone: addr.phone || order.customerId?.otpMobile || "",
+          },
+          pickup: {
+            warehouse_name: b2bConfig.pickupWarehouseName || "",
+            address: b2bConfig.pickupAddress || "",
+            city: b2bConfig.pickupCity || "",
+            state: b2bConfig.pickupState || "",
+            pin: b2bConfig.pickupPincode || "",
+            phone: b2bConfig.pickupPhone || "",
+          },
+          boxes: totalBoxes,
+          weight_kg: totalWeightKg,
+          dimensions: packingDetails.map((box) => ({
+            length: Number(box.length) || 0,
+            breadth: Number(box.breadth) || 0,
+            height: Number(box.height) || 0,
+            count: Number(box.quantity) || 1,
+          })),
+        };
+
+        try {
+          const b2bResp = await b2bRequest({
+            method: "post",
+            path: b2bConfig.manifestPath,
+            data: b2bPayload,
+          });
+          const body = b2bResp.data || {};
+          const lrn =
+            body.lrn || body.LRN || body.waybill || body.awb ||
+            body.data?.lrn || body.data?.waybill || body.data?.awb || "";
+
+          if (!lrn) {
+            console.error("Delhivery B2B: manifest response me LRN nahi mila:", body);
+            return res.status(400).json({
+              message: "Delhivery B2B ne LRN wapas nahi bheja: " + JSON.stringify(body).slice(0, 300),
+            });
+          }
+
+          order.trackingId     = String(lrn);
+          order.courierName    = "Delhivery B2B";
+          order.packingDetails = packingDetails;
+          order.isShipped      = true;
+          order.splitShipments = [];
+          console.log(`[Delhivery B2B] ${order.orderNumber} manifested — LRN ${lrn}, ${totalBoxes} boxes, ${totalWeightKg}kg`);
+        } catch (b2bErr) {
+          const detail =
+            b2bErr?.response?.data?.message ||
+            b2bErr?.response?.data?.error ||
+            (b2bErr?.response?.data ? JSON.stringify(b2bErr.response.data).slice(0, 300) : "") ||
+            b2bErr.message ||
+            "Delhivery B2B API se connect nahi ho paya.";
+          console.error("Delhivery B2B manifest failed:", detail);
+          return res.status(400).json({ message: "Delhivery B2B Error: " + detail });
         }
       } else if (courierName === "NimbusPost" && packingDetails && packingDetails.length > 0) {
         const isReShip = !!order.trackingId;

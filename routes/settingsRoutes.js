@@ -621,4 +621,138 @@ router.put("/order-cancellation-password", adminProtect, isAdmin, async (req, re
   }
 });
 
+
+/* ================= DELHIVERY B2B (LTL) SETTINGS ================= */
+
+const B2B_DEFAULTS = {
+  enabled: false,
+  // "staging" ya "live" — dono ke URL, username aur password alag hote hain.
+  // Staging username `-b2b` se khatam hota hai (BAFNATOYS6722B2B-b2b).
+  environment: "staging",
+  username: "",
+  password: "",
+  clientName: "",
+  clientGstTin: "",
+  pickupWarehouseName: "",
+  pickupAddress: "",
+  pickupCity: "",
+  pickupState: "",
+  pickupPincode: "",
+  pickupPhone: "",
+  // Jis weight se upar order apne aap B2B par jaye (kg). 0 = auto-switch band.
+  autoSwitchWeightKg: 15,
+  // Manifest API ka path (ltl-clients-api.delhivery.com ke baad wala hissa).
+  // Delhivery ke developer portal se exact path daalna hai, tab tak B2B
+  // shipment banana block rehta hai.
+  manifestPath: "",
+  token: "",
+  tokenExpiry: null,
+  lastLoginAt: null,
+  lastError: "",
+};
+
+router.get("/delhivery-b2b", adminProtect, isAdmin, async (req, res) => {
+  try {
+    let setting = await Setting.findOne({ key: "delhivery-b2b" });
+    if (!setting) {
+      setting = await Setting.create({
+        key: "delhivery-b2b",
+        data: { ...B2B_DEFAULTS },
+      });
+    }
+    // Password kabhi wapas nahi bhejte — sirf bata dete hain ki set hai ya nahi.
+    const { password, token, ...safe } = setting.data || {};
+    res.json({ ...safe, hasPassword: Boolean(password) });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+router.put("/delhivery-b2b", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const {
+      enabled,
+      environment,
+      username,
+      password,
+      clientName,
+      clientGstTin,
+      pickupWarehouseName,
+      pickupAddress,
+      pickupCity,
+      pickupState,
+      pickupPincode,
+      pickupPhone,
+      autoSwitchWeightKg,
+      manifestPath,
+    } = req.body;
+
+    const setting = await Setting.findOne({ key: "delhivery-b2b" });
+    const existing = setting?.data || { ...B2B_DEFAULTS };
+
+    const nextUsername = username !== undefined ? String(username).trim() : existing.username;
+    // Password blank chhoda to purana hi rahega (UI me kabhi dikhta nahi).
+    const nextPassword = password ? String(password) : existing.password || "";
+    const nextEnvironment =
+      environment === "live" || environment === "staging"
+        ? environment
+        : existing.environment || "staging";
+
+    // Credentials ya environment badla to cached token bekaar — usay pheink do.
+    const credsChanged =
+      nextUsername !== existing.username ||
+      nextPassword !== existing.password ||
+      nextEnvironment !== existing.environment;
+
+    const updatedData = {
+      ...existing,
+      enabled: Boolean(enabled),
+      environment: nextEnvironment,
+      username: nextUsername,
+      password: nextPassword,
+      clientName: clientName !== undefined ? String(clientName).trim() : existing.clientName || "",
+      clientGstTin: clientGstTin !== undefined ? String(clientGstTin).trim().toUpperCase() : existing.clientGstTin || "",
+      pickupWarehouseName: pickupWarehouseName !== undefined ? String(pickupWarehouseName).trim() : existing.pickupWarehouseName || "",
+      pickupAddress: pickupAddress !== undefined ? String(pickupAddress).trim() : existing.pickupAddress || "",
+      pickupCity: pickupCity !== undefined ? String(pickupCity).trim() : existing.pickupCity || "",
+      pickupState: pickupState !== undefined ? String(pickupState).trim() : existing.pickupState || "",
+      pickupPincode: pickupPincode !== undefined ? String(pickupPincode).trim() : existing.pickupPincode || "",
+      pickupPhone: pickupPhone !== undefined ? String(pickupPhone).trim() : existing.pickupPhone || "",
+      autoSwitchWeightKg:
+        autoSwitchWeightKg !== undefined
+          ? Math.max(0, Number(autoSwitchWeightKg) || 0)
+          : existing.autoSwitchWeightKg ?? 15,
+      manifestPath:
+        manifestPath !== undefined
+          ? String(manifestPath).trim()
+          : existing.manifestPath || "",
+      token: credsChanged ? "" : existing.token || "",
+      tokenExpiry: credsChanged ? null : existing.tokenExpiry || null,
+      lastError: credsChanged ? "" : existing.lastError || "",
+    };
+
+    await Setting.findOneAndUpdate(
+      { key: "delhivery-b2b" },
+      { $set: { key: "delhivery-b2b", data: updatedData } },
+      { upsert: true, new: true }
+    );
+
+    const { password: _p, token: _t, ...safe } = updatedData;
+    res.json({ ...safe, hasPassword: Boolean(updatedData.password) });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// Credentials check — sirf login karta hai, koi shipment nahi banata.
+router.post("/delhivery-b2b/test", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const { testConnection } = require("../services/delhiveryB2BService");
+    const result = await testConnection();
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message || "Server Error" });
+  }
+});
+
 module.exports = router;
