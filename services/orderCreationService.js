@@ -10,6 +10,7 @@ const { notifyAdminNewOrder } = require("./adminNotifyService");
 const { sendPurchaseEvent } = require("./metaCapiService");
 const { checkItemsStock } = require("./stockValidationService");
 const { calculateDiscountAmount } = require("./orderTotalsService");
+const { resolveCodPolicy, advanceForTotal } = require("./codPolicyService");
 
 const razorpayInstance = new Razorpay({
   key_id: process.env.RAZORPAY_KEY,
@@ -219,13 +220,15 @@ async function createOrderFromPayload(payload, options = {}) {
   let serverRemainingAmount = serverGrandTotal;
   let requiredCodAdvance = 0;
   if (finalPaymentMethod === "COD") {
-    const codSetting = await Setting.findOne({ key: "cod" }).lean();
-    const codData = codSetting?.data || {};
-    let advance = Number(codData.advanceAmount) || 0;
-    if (codData.advanceType === "percentage") {
-      advance = Math.floor((serverGrandTotal * advance) / 100);
+    // Customer ke apne COD/advance override yahan bhi lagte hain
+    const codPolicy = await resolveCodPolicy(customerId);
+    if (!codPolicy.codEnabled) {
+      throw new OrderCreationError(
+        "COD is not available for this account. Please pay online.",
+        400
+      );
     }
-    requiredCodAdvance = Math.min(advance, serverGrandTotal);
+    requiredCodAdvance = advanceForTotal(codPolicy, serverGrandTotal);
     if (rzpPayId) {
       serverAdvancePaid = requiredCodAdvance;
       serverRemainingAmount = Math.max(

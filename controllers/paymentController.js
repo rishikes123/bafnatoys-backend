@@ -10,6 +10,10 @@ const {
   finalizeCheckoutAttempt,
 } = require("../services/checkoutRecoveryService");
 const { checkItemsStock } = require("../services/stockValidationService");
+const {
+  resolveCodPolicy,
+  advanceForTotal,
+} = require("../services/codPolicyService");
 
 // Razorpay Initialization using your specific .env keys
 const razorpayInstance = new Razorpay({
@@ -150,13 +154,14 @@ exports.createOrder = async (req, res) => {
     // 5. Determine amount to charge (full total for ONLINE, advance for COD)
     let amountToCharge = grandTotal;
     if (paymentMode === "COD") {
-      const codSetting = await Setting.findOne({ key: "cod" }).lean();
-      const codData = codSetting?.data || {};
-      let advance = Number(codData.advanceAmount) || 0;
-      if (codData.advanceType === "percentage") {
-        advance = Math.floor((grandTotal * advance) / 100);
+      // Customer ke apne COD/advance override yahan bhi lagte hain
+      const codPolicy = await resolveCodPolicy(customerId);
+      if (!codPolicy.codEnabled) {
+        return res.status(400).json({
+          message: "COD is not available for this account. Please pay online.",
+        });
       }
-      amountToCharge = Math.min(advance, grandTotal);
+      amountToCharge = advanceForTotal(codPolicy, grandTotal);
       if (amountToCharge <= 0) {
         return res.status(400).json({ message: "No advance required for this COD order" });
       }

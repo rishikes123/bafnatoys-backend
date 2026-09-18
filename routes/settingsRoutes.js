@@ -14,6 +14,23 @@ router.get("/cod", async (req, res) => {
         data: { advanceAmount: 0, advanceType: "flat", enabled: true },
       });
     }
+
+    // ?customerId=... bheja ho to us customer ke apne override bhi laga do
+    // (COD OFF / NO ADV). Bina customerId ke purana behaviour waisa hi.
+    const { customerId } = req.query;
+    if (customerId) {
+      const { resolveCodPolicy } = require("../services/codPolicyService");
+      const policy = await resolveCodPolicy(customerId);
+      return res.json({
+        ...setting.data,
+        enabled: policy.codEnabled,
+        advanceAmount: policy.advanceAmount,
+        advanceType: policy.advanceType,
+        noAdvance: policy.noAdvance,
+        isSpecial: policy.isSpecial,
+      });
+    }
+
     res.json(setting.data);
   } catch (err) {
     res.status(500).json({ message: "Server Error" });
