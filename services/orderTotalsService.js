@@ -1,12 +1,10 @@
-const ShippingSettings = require("../models/ShippingSettings");
 
 /**
  * Volume discount ka single source of truth.
  *
- * Yahi logic order creation me bhi chalta hai. Admin jab order ke items
- * badalta hai (replace / qty / remove / restore) to discount bhi isi se
- * dobara nikalna chahiye — warna purana discount amount atka reh jata hai
- * aur customer ko galat chhoot mil jati hai.
+ * Ye sirf ORDER BANATE WAQT chalta hai. Order ban jaane ke baad discount
+ * fix ho jata hai — admin items hataye ya badle, discount wahi rehta hai
+ * (dekho recalculateOrderTotals ka note).
  */
 function calculateDiscountAmount(itemsTotal, shippingSettings) {
   const discountRules = shippingSettings?.discountRules || [];
@@ -18,9 +16,16 @@ function calculateDiscountAmount(itemsTotal, shippingSettings) {
 }
 
 /**
- * Order ke items badalne ke baad itemsPrice, discountAmount, total aur
- * remainingAmount dobara calculate karta hai. Shipping ko haath nahi lagata —
- * wo admin manually set karta hai.
+ * Order ke items badalne ke baad itemsPrice, total aur remainingAmount
+ * dobara calculate karta hai.
+ *
+ * DISCOUNT ko jaan-bujh kar haath NAHI lagaya jata.
+ * Business rule: customer ne apne poore order par discount kamaya tha.
+ * Agar hum stock na hone ki wajah se koi item nahi bhej paaye, to wo hamari
+ * taraf se kami hai — customer ka kamaya hua discount nahi katega. Bas jo
+ * maal nahi gaya uski keemat ghategi.
+ *
+ * Shipping bhi waise hi rehta hai — wo admin manually set karta hai.
  *
  * @param {Object} order  mongoose order document (saved by the caller)
  */
@@ -31,14 +36,9 @@ async function recalculateOrderTotals(order) {
   );
   order.itemsPrice = itemsPrice;
 
-  const shippingSettings = await ShippingSettings.findOne().lean();
-  order.discountAmount = calculateDiscountAmount(itemsPrice, shippingSettings);
-
   const shipping = Number(order.shippingPrice) || 0;
-  order.total = Math.max(
-    0,
-    Math.round(itemsPrice + shipping - order.discountAmount)
-  );
+  const discount = Number(order.discountAmount) || 0; // order par jo pehle se hai
+  order.total = Math.max(0, Math.round(itemsPrice + shipping - discount));
 
   if (order.paymentMode === "COD") {
     order.remainingAmount = Math.max(
