@@ -66,6 +66,8 @@ const itemHistorySnapshot = (item, sku = "") => ({
   sku: sku || item?.sku || item?.productId?.sku || "",
   qty: Number(item?.qty) || 0,
   price: Number(item?.price) || 0,
+  gstRate:
+    Number(item?.gstRate ?? item?.productId?.gstRate) || 0,
   image: item?.image || "",
 });
 

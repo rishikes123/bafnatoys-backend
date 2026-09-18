@@ -30,6 +30,8 @@ const orderItemChangeSnapshotSchema = new mongoose.Schema(
     sku: { type: String, default: "" },
     qty: { type: Number, default: 0 },
     price: { type: Number, default: 0 },
+    // GST % — isse "removal se pehle" ka GST sahi nikal sakte hain
+    gstRate: { type: Number, default: 0 },
     image: { type: String, default: "" },
   },
   { _id: false }

@@ -1001,6 +1001,321 @@ exports.refundPayment = async (req, res) => {
   }
 };
 
+/* ------------------------------------------------------------------
+   Delhivery ka ek hi account dono website (bafnatoys + bafnadaily)
+   use karti hain, isliye invoice CSV me doosri site ke shipments bhi
+   aate hain. Sirf wahi row is site ki hai jiska order_id hamare
+   order number jaisa ho (ODR...) — RET... returns, RTO aur DTO
+   pickups doosri site ke hain.
+------------------------------------------------------------------ */
+const ORDER_NUMBER_PATTERN = /^ODR\d+/i;
+
+const ledgerBaseOrderNumber = (id) =>
+  String(id || "").replace(/-RS\d+$/i, "").replace(/-B\d+$/i, "").trim();
+
+const looksLikeOurOrder = (orderId) =>
+  ORDER_NUMBER_PATTERN.test(ledgerBaseOrderNumber(orderId));
+
+/* ========================================================================
+   DELHIVERY COD SETTLEMENT
+   GET /api/payments/admin/delhivery-settlement
+   Har shipment ka COD (jo Delhivery customer se collect karke hamare account
+   me daalta hai) aur uska delivery charge — dono ek jagah, Tally ke liye.
+   ======================================================================== */
+exports.delhiverySettlement = async (req, res) => {
+  try {
+    const DelhiveryLedger = require("../models/DelhiveryLedger");
+    const { from, to, search, mode, charge } = req.query;
+
+    // ── Sab orders lo. Page orders se shuru hota hai, ledger se nahi —
+    //    warna jo order abhi invoice me nahi aaya wo gayab ho jata tha.
+    const orders = await Order.find()
+      .populate("customerId", "shopName firmName otpMobile whatsapp")
+      .select(
+        "orderNumber trackingId splitShipments shippingAddress customerId total itemsPrice paymentMode advancePaid remainingAmount status createdAt"
+      )
+      .lean();
+
+    const ledgerRows = await DelhiveryLedger.find().lean();
+
+    // Ledger ko AWB se index karo
+    const ledgerByAwb = new Map();
+    ledgerRows.forEach((r) => {
+      if (r.waybill) ledgerByAwb.set(String(r.waybill).trim(), r);
+    });
+    // Ek order ke kai ledger rows ho sakte hain — re-ship (-RS1) aur
+    // multi-box (-B2) dono alag AWB par bill hote hain, par order me sirf
+    // sabse naya AWB rehta hai. Isliye order number se SAARE rows rakho.
+    const ledgerByOrderNumber = new Map();
+    ledgerRows.forEach((r) => {
+      const num = ledgerBaseOrderNumber(r.orderId);
+      if (!num) return;
+      if (!ledgerByOrderNumber.has(num)) ledgerByOrderNumber.set(num, []);
+      ledgerByOrderNumber.get(num).push(r);
+    });
+
+    const usedWaybills = new Set();
+
+    const orderAwbs = (o) =>
+      Array.from(
+        new Set(
+          [
+            String(o.trackingId || "").trim(),
+            ...(o.splitShipments || []).map((sh) => String(sh?.awb || "").trim()),
+          ].filter(Boolean)
+        )
+      );
+
+    const rows = orders.map((o) => {
+      // AWB se bhi jodo aur order number se bhi — re-ship ke purane AWB
+      // ka charge bhi asli kharcha hai, wo chhootna nahi chahiye.
+      const byAwb = orderAwbs(o)
+        .map((awb) => ledgerByAwb.get(awb))
+        .filter(Boolean);
+      const byNumber = ledgerByOrderNumber.get(o.orderNumber) || [];
+
+      const seen = new Set();
+      const matchedLedger = [...byAwb, ...byNumber].filter((r) => {
+        const key = String(r.waybill).trim();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      matchedLedger.forEach((r) => usedWaybills.add(String(r.waybill).trim()));
+
+      const sumLedger = (fn) =>
+        Number(matchedLedger.reduce((acc, r) => acc + Number(fn(r) || 0), 0).toFixed(2));
+
+      const codFee = Number(
+        matchedLedger
+          .reduce((acc, r) => {
+            const b =
+              r.chargeBreakdown instanceof Map
+                ? Object.fromEntries(r.chargeBreakdown)
+                : r.chargeBreakdown || {};
+            return acc + Number(b.COD || 0);
+          }, 0)
+          .toFixed(2)
+      );
+
+      const addr = o.shippingAddress || {};
+      const isShipped = orderAwbs(o).length > 0;
+      const billed = matchedLedger.length > 0;
+
+      // Kitna COD aana chahiye tha (order ke hisaab se)
+      const codExpected =
+        o.paymentMode === "COD"
+          ? Number(o.remainingAmount ?? Math.max(0, (o.total || 0) - (o.advancePaid || 0)))
+          : 0;
+      const codCollected = billed ? sumLedger((r) => r.codAmount) : 0;
+      const deliveryCharge = billed ? sumLedger((r) => r.totalAmount) : 0;
+
+      return {
+        orderNumber: o.orderNumber,
+        waybill: orderAwbs(o).join(", "),
+        ledgerOrderId: matchedLedger.map((r) => r.orderId).filter(Boolean).join(", "),
+        client: matchedLedger[0]?.client || "",
+        matched: true,
+        // billed = invoice aa gaya | pending = bheja hai par bill nahi aaya | not_shipped
+        chargeStatus: billed ? "billed" : isShipped ? "pending" : "not_shipped",
+        date: o.createdAt || null,
+        orderStatus: o.status || "",
+        shopName:
+          addr.shopName || o.customerId?.shopName || o.customerId?.firmName || "",
+        contactPerson: addr.fullName || "",
+        gstNumber: addr.gstNumber || "",
+        phone: addr.phone || o.customerId?.otpMobile || "",
+        city: addr.city || "",
+        state: addr.state || "",
+        paymentMode: o.paymentMode || "COD",
+        orderValue: Number(o.total || 0),
+        advancePaid: Number(o.advancePaid || 0),
+        codExpected,
+        codCollected,
+        deliveryCharge,
+        freight: billed ? sumLedger((r) => r.grossAmount) : 0,
+        gst: billed
+          ? sumLedger((r) => Number(r.igst || 0) + Number(r.cgst || 0) + Number(r.sgst || 0))
+          : 0,
+        codFee,
+        chargedWeightKg: billed ? sumLedger((r) => r.chargedWeight) / 1000 : 0,
+        zone: matchedLedger.map((r) => r.zone).filter(Boolean).join(", "),
+        shipmentStatus: matchedLedger.map((r) => r.status).filter(Boolean).join(", "),
+        netSettlement: Number((codCollected - deliveryCharge).toFixed(2)),
+      };
+    });
+
+    // Jo ledger rows kisi order se nahi jude — doosri site / returns
+    const unmatchedRows = ledgerRows
+      .filter((r) => !usedWaybills.has(String(r.waybill).trim()))
+      .map((r) => ({
+        orderNumber: "",
+        waybill: r.waybill,
+        ledgerOrderId: r.orderId || "",
+        client: r.client || "",
+        matched: false,
+        chargeStatus: "billed",
+        date: r.pickupDate || r.uploadedAt || null,
+        orderStatus: "",
+        shopName: "",
+        contactPerson: "",
+        gstNumber: "",
+        phone: "",
+        city: "",
+        state: "",
+        paymentMode: Number(r.codAmount || 0) > 0 ? "COD" : "Prepaid",
+        orderValue: 0,
+        advancePaid: 0,
+        codExpected: 0,
+        codCollected: Number(r.codAmount || 0),
+        deliveryCharge: Number(r.totalAmount || 0),
+        freight: Number(r.grossAmount || 0),
+        gst: Number(r.igst || 0) + Number(r.cgst || 0) + Number(r.sgst || 0),
+        codFee: 0,
+        chargedWeightKg: Number(r.chargedWeight || 0) / 1000,
+        zone: r.zone || "",
+        shipmentStatus: r.status || "",
+        netSettlement: Number((Number(r.codAmount || 0) - Number(r.totalAmount || 0)).toFixed(2)),
+      }));
+
+    // ── Filters ──
+    let filtered = rows;
+
+    if (from) {
+      const fromDate = new Date(from);
+      fromDate.setHours(0, 0, 0, 0);
+      filtered = filtered.filter((r) => r.date && new Date(r.date) >= fromDate);
+    }
+    if (to) {
+      const toDate = new Date(to);
+      toDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter((r) => r.date && new Date(r.date) <= toDate);
+    }
+    if (mode && mode !== "ALL") {
+      filtered = filtered.filter((r) => r.paymentMode === mode);
+    }
+    if (charge && charge !== "ALL") {
+      filtered = filtered.filter((r) => r.chargeStatus === charge);
+    }
+    if (search) {
+      const q = String(search).toLowerCase().trim();
+      filtered = filtered.filter(
+        (r) =>
+          r.orderNumber.toLowerCase().includes(q) ||
+          r.shopName.toLowerCase().includes(q) ||
+          r.contactPerson.toLowerCase().includes(q) ||
+          r.waybill.toLowerCase().includes(q) ||
+          r.city.toLowerCase().includes(q)
+      );
+    }
+
+    filtered.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+    const sumOf = (list, key) =>
+      Number(list.reduce((acc, r) => acc + Number(r[key] || 0), 0).toFixed(2));
+
+    const buildSummary = (list) => ({
+      shipments: list.length,
+      codCollected: sumOf(list, "codCollected"),
+      codExpected: sumOf(list, "codExpected"),
+      deliveryCharge: sumOf(list, "deliveryCharge"),
+      freight: sumOf(list, "freight"),
+      gst: sumOf(list, "gst"),
+      codFee: sumOf(list, "codFee"),
+      orderValue: sumOf(list, "orderValue"),
+      chargedWeightKg: sumOf(list, "chargedWeightKg"),
+      netSettlement: sumOf(list, "netSettlement"),
+      prepaidShipments: list.filter((r) => r.paymentMode !== "COD").length,
+      billed: list.filter((r) => r.chargeStatus === "billed").length,
+      pending: list.filter((r) => r.chargeStatus === "pending").length,
+      notShipped: list.filter((r) => r.chargeStatus === "not_shipped").length,
+    });
+
+    const summary = { ...buildSummary(filtered), unmatched: unmatchedRows.length };
+
+    res.json({
+      rows: filtered,
+      unmatchedRows,
+      summary,
+      unmatchedSummary: buildSummary(unmatchedRows),
+    });
+  } catch (err) {
+    console.error("[delhiverySettlement]", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+function emptySettlementSummary() {
+  return {
+    shipments: 0,
+    unmatched: 0,
+    billed: 0,
+    pending: 0,
+    notShipped: 0,
+    codExpected: 0,
+    codCollected: 0,
+    deliveryCharge: 0,
+    freight: 0,
+    gst: 0,
+    codFee: 0,
+    orderValue: 0,
+    chargedWeightKg: 0,
+    netSettlement: 0,
+    prepaidShipments: 0,
+  };
+}
+
+/* ========================================================================
+   LEDGER CLEANUP — doosri website ki rows hatao
+   GET  /api/payments/admin/ledger-cleanup   -> preview (kuch delete nahi)
+   POST /api/payments/admin/ledger-cleanup   -> actually delete
+   ======================================================================== */
+exports.ledgerCleanup = async (req, res) => {
+  try {
+    const DelhiveryLedger = require("../models/DelhiveryLedger");
+    const all = await DelhiveryLedger.find().lean();
+
+    // Safety: kabhi bhi aisi row mat hatao jo hamare order number jaisi lage,
+    // chahe abhi order milta ho ya nahi.
+    const removable = all.filter((r) => !looksLikeOurOrder(r.orderId));
+
+    const preview = removable.map((r) => ({
+      waybill: r.waybill,
+      orderId: r.orderId,
+      codAmount: r.codAmount,
+      totalAmount: r.totalAmount,
+      status: r.status,
+    }));
+
+    if (req.method === "GET") {
+      return res.json({
+        willRemove: removable.length,
+        keeping: all.length - removable.length,
+        rows: preview,
+      });
+    }
+
+    if (!removable.length) {
+      return res.json({ removed: 0, message: "Hatane layak koi row nahi mili" });
+    }
+
+    const result = await DelhiveryLedger.deleteMany({
+      waybill: { $in: removable.map((r) => r.waybill) },
+    });
+
+    res.json({
+      removed: result.deletedCount || 0,
+      keeping: all.length - removable.length,
+      rows: preview,
+      message: `${result.deletedCount} row hata di gayi (doosri website ke shipments)`,
+    });
+  } catch (err) {
+    console.error("[ledgerCleanup]", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
 /* ========================================================================
    UPLOAD DELHIVERY CSV LEDGER
    POST /api/payments/admin/upload-delhivery-csv
@@ -1045,9 +1360,15 @@ exports.uploadDelhiveryCSV = async (req, res) => {
       h.trim().replace(/^"|"$/g, "").replace(/^\uFEFF/, "").toLowerCase()
     );
     const cleanCell = (value) => {
-      const text = String(value || "").trim().replace(/^"|"$/g, "");
-      const excelText = text.match(/^="(.*)"$/);
-      return (excelText ? excelText[1] : text).trim();
+      const text = String(value || "").trim();
+      // Delhivery ke CSV me cell aise aata hai: ="52286510001260"
+      // Excel-text wrapper PEHLE hatao — warna neeche wala quote-strip
+      // aakhri quote kha jata hai aur ye pattern kabhi match nahi karta,
+      // jisse waybill `="52286510001260` ban kar kisi order se match hi nahi hota.
+      if (text.startsWith('="')) {
+        return text.replace(/^="/, "").replace(/"+$/, "").trim();
+      }
+      return text.replace(/^"|"$/g, "").trim();
     };
 
     // Flexible column finder — tries multiple known name variants
@@ -1063,6 +1384,7 @@ exports.uploadDelhiveryCSV = async (req, res) => {
       "waybill_num", "waybill_no", "waybill", "awb", "waybill no", "waybillno"
     );
     const iOrderId   = col("order_id", "order id", "orderid");
+    const iClient    = col("client", "client_name", "client name");
     const iZone      = col("zone");
     const iStatus    = col("status");
     const iGross     = col(
@@ -1102,6 +1424,7 @@ exports.uploadDelhiveryCSV = async (req, res) => {
     };
 
     const ops = [];
+    const skippedOtherSite = [];
     for (let i = 1; i < lines.length; i++) {
       const cols = parseDelimitedRow(lines[i]).map(cleanCell);
       const waybill = cleanCell(cols[iWaybill]).replace(/\D/g, "");
@@ -1116,9 +1439,18 @@ exports.uploadDelhiveryCSV = async (req, res) => {
         : Math.max(0, parsedTotal - igst - cgst - sgst);
       if (grossAmount === 0 && parsedTotal === 0) continue;
 
+      const rowOrderId = iOrderId !== -1 ? cleanCell(cols[iOrderId]) : "";
+      // Doosri site (bafnadaily) ke RET.../RTO/DTO shipments import mat karo —
+      // ek hi Delhivery account hone ki wajah se wo isi CSV me aa jaate hain.
+      if (rowOrderId && !looksLikeOurOrder(rowOrderId)) {
+        skippedOtherSite.push(rowOrderId);
+        continue;
+      }
+
       const doc = {
         waybill,
-        orderId:     iOrderId !== -1 ? cleanCell(cols[iOrderId]) : "",
+        orderId:     rowOrderId,
+        client:      iClient  !== -1 ? cleanCell(cols[iClient])  : "",
         zone:        iZone   !== -1 ? cleanCell(cols[iZone])   : "",
         status:      iStatus !== -1 ? cleanCell(cols[iStatus]) : "",
         grossAmount,
@@ -1161,6 +1493,10 @@ exports.uploadDelhiveryCSV = async (req, res) => {
       total: ops.length,
       ordersMatched: syncResult.matchedOrders,
       ordersSynced: syncResult.updatedOrders,
+      skippedOtherSite: skippedOtherSite.length,
+      // Skip hui rows ke id bhi bhejo — agar galti se aapka apna return
+      // shipment skip ho gaya to admin ko turant dikh jaye.
+      skippedIds: skippedOtherSite.slice(0, 50),
     });
   } catch (err) {
     console.error("[uploadDelhiveryCSV]", err.message);
@@ -1368,7 +1704,15 @@ exports.financeReport = async (req, res) => {
         orderNumber:   o.orderNumber,
         date:          o.createdAt,
         customer: {
-          name:  o.customerId?.firmName || o.customerId?.shopName || o.shippingAddress?.fullName || "—",
+          // Shipping ka contact person
+          name:  o.shippingAddress?.fullName || o.customerId?.firmName || o.customerId?.shopName || "—",
+          // Billing Info ka firm / shop naam — order modal jaisi hi tarteeb
+          shopName:
+            o.shippingAddress?.shopName ||
+            o.customerId?.shopName ||
+            o.customerId?.firmName ||
+            "—",
+          gstNumber: o.shippingAddress?.gstNumber || "",
           phone: o.customerId?.otpMobile || o.shippingAddress?.phone || "—",
           city:  o.shippingAddress?.city  || "—",
           state: o.shippingAddress?.state || "—",

@@ -13,6 +13,8 @@ const {
   refundPayment,
   financeReport,
   uploadDelhiveryCSV,
+  delhiverySettlement,
+  ledgerCleanup,
   verifyOrderPayment,
   linkPaymentToOrder,
 } = require("../controllers/paymentController");
@@ -61,5 +63,12 @@ router.get("/admin/finance-report", adminProtect, financeReport);
 
 // Upload Delhivery Invoice > Transaction List CSV to sync final billed charges
 router.post("/admin/upload-delhivery-csv", adminProtect, csvUpload.single("csv"), uploadDelhiveryCSV);
+
+// COD settlement — kitna COD collect hua aur uspar kitna charge kata
+router.get("/admin/delhivery-settlement", adminProtect, delhiverySettlement);
+
+// Doosri website ki ledger rows hatao — GET = preview, POST = delete
+router.get("/admin/ledger-cleanup", adminProtect, ledgerCleanup);
+router.post("/admin/ledger-cleanup", adminProtect, ledgerCleanup);
 
 module.exports = router;

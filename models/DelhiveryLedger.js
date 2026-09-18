@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const delhiveryLedgerSchema = new mongoose.Schema({
   waybill:      { type: String, required: true, unique: true, index: true },
   orderId:      { type: String, default: "", index: true },
+  client:       { type: String, default: "", index: true }, // CSV ka `client` (e.g. 7003f8-BAFNATOYS-do)
   pickupDate:   Date,
   zone:         String,
   status:       String,
