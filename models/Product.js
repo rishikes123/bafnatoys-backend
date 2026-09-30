@@ -21,6 +21,8 @@ const productSchema = new mongoose.Schema(
     tagline: { type: String, trim: true },
     packSize: { type: String, trim: true },
     images: [String],
+    // Admin "✨ BG Remove" ke baad original image ka link — "Restore" ke liye
+    imageOriginals: [{ _id: false, nobg: String, original: String }],
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
     bulkPricing: [
       {

@@ -392,6 +392,33 @@ router.put("/reorder", adminProtect, isAdmin, async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
+✅ 6b. BULK DISCOUNT — sab products ka MRP ek saath set karo
+   Selling price same rehta hai, MRP = price / (1 - discount%)
+------------------------------------------------------------------ */
+router.put("/bulk-discount", adminProtect, isAdmin, async (req, res) => {
+  try {
+    const percent = Number(req.body.percent);
+    if (!Number.isFinite(percent) || percent < 1 || percent > 90) {
+      return res.status(400).json({ message: "Discount 1% se 90% ke beech hona chahiye" });
+    }
+
+    const products = await Product.find({ price: { $gt: 0 } }).select("_id price").lean();
+    const bulkOps = products.map((p) => ({
+      updateOne: {
+        filter: { _id: p._id },
+        update: { $set: { mrp: Math.round(p.price / (1 - percent / 100)) } },
+      },
+    }));
+
+    if (bulkOps.length) await Product.bulkWrite(bulkOps);
+    invalidateProductsCache();
+    res.json({ ok: true, updated: bulkOps.length, message: `${bulkOps.length} products updated to ${percent}% off` });
+  } catch (err) {
+    res.status(500).json({ message: "Bulk discount failed" });
+  }
+});
+
+/* ------------------------------------------------------------------
 ✅ 7. MOVE PRODUCT
 ------------------------------------------------------------------ */
 router.put("/:id/move", adminProtect, isAdmin, async (req, res) => {
