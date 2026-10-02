@@ -392,8 +392,8 @@ router.put("/reorder", adminProtect, isAdmin, async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-✅ 6b. BULK DISCOUNT — sab products ka MRP ek saath set karo
-   Selling price same rehta hai, MRP = price / (1 - discount%)
+✅ 6b. BULK DISCOUNT — sab products ka SELLING PRICE ek saath set karo
+   MRP same rehta hai, price = MRP - discount%
 ------------------------------------------------------------------ */
 router.put("/bulk-discount", adminProtect, isAdmin, async (req, res) => {
   try {
@@ -402,17 +402,23 @@ router.put("/bulk-discount", adminProtect, isAdmin, async (req, res) => {
       return res.status(400).json({ message: "Discount 1% se 90% ke beech hona chahiye" });
     }
 
-    const products = await Product.find({ price: { $gt: 0 } }).select("_id price").lean();
+    const products = await Product.find({ mrp: { $gt: 0 } }).select("_id mrp").lean();
     const bulkOps = products.map((p) => ({
       updateOne: {
         filter: { _id: p._id },
-        update: { $set: { mrp: Math.round(p.price / (1 - percent / 100)) } },
+        update: { $set: { price: Math.max(1, Math.round(p.mrp * (1 - percent / 100))) } },
       },
     }));
 
     if (bulkOps.length) await Product.bulkWrite(bulkOps);
     invalidateProductsCache();
-    res.json({ ok: true, updated: bulkOps.length, message: `${bulkOps.length} products updated to ${percent}% off` });
+    const skipped = await Product.countDocuments({ $or: [{ mrp: { $lte: 0 } }, { mrp: null }] });
+    res.json({
+      ok: true,
+      updated: bulkOps.length,
+      message: `${bulkOps.length} products ka selling price ${percent}% off par set ho gaya` +
+        (skipped ? ` (${skipped} products me MRP nahi tha, unhe chhod diya)` : ""),
+    });
   } catch (err) {
     res.status(500).json({ message: "Bulk discount failed" });
   }
