@@ -35,7 +35,8 @@ router.get('/', async (req, res) => {
 router.put('/', adminProtect, isAdmin, upload.fields([
   { name: 'factoryImage', maxCount: 1 },
   { name: 'makeInIndiaLogo', maxCount: 1 },
-  { name: 'reviewImages', maxCount: 10 },
+  { name: 'reviewImages', maxCount: 20 },
+  { name: 'showcaseImages', maxCount: 20 },
   { name: 'factoryVisualImages', maxCount: 10 } 
 ]), async (req, res) => {
   try {
@@ -109,14 +110,33 @@ router.put('/', adminProtect, isAdmin, upload.fields([
       for (const rev of parsedReviews) {
         if (rev.hasNewImage && imageIndex < reviewFiles.length) {
           const result = await uploadToImageKit(reviewFiles[imageIndex], 'reviews');
-          updatedReviews.push({ image: result.url, imageId: result.fileId, reviewText: rev.text, reviewerName: rev.name, rating: rev.rating || 5 });
+          updatedReviews.push({ image: result.url, imageId: result.fileId, reviewText: rev.text, reviewerName: rev.name, rating: rev.entryType === 'illustration' ? undefined : (rev.rating || 5), entryType: rev.entryType === 'illustration' ? 'illustration' : 'review', generated: rev.generated === true });
           imageIndex++;
         } else {
           const oldMatch = settings.customerReviews.find(o => o.image === rev.existingImage);
-          updatedReviews.push({ image: rev.existingImage || '', imageId: oldMatch ? oldMatch.imageId : '', reviewText: rev.text, reviewerName: rev.name, rating: rev.rating || 5 });
+          updatedReviews.push({ image: rev.existingImage || '', imageId: oldMatch ? oldMatch.imageId : '', reviewText: rev.text, reviewerName: rev.name, rating: rev.entryType === 'illustration' ? undefined : (rev.rating || 5), entryType: rev.entryType === 'illustration' ? 'illustration' : 'review', generated: rev.generated === true });
         }
       }
       settings.customerReviews = updatedReviews;
+    }
+
+    if (req.body.showcasesData !== undefined) {
+      const entries = JSON.parse(req.body.showcasesData);
+      if (!Array.isArray(entries) || entries.length > 20) return res.status(400).json({ message: 'Maximum 20 product showcases allowed' });
+      const files = req.files?.showcaseImages || [];
+      let index = 0;
+      const updated = [];
+      for (const entry of entries) {
+        const old = settings.productShowcases.find(item => item.image === entry.existingImage);
+        let image = entry.existingImage || '', imageId = old?.imageId || '';
+        if (entry.hasNewImage) {
+          if (!files[index]) return res.status(400).json({ message: 'Missing showcase image' });
+          const result = await uploadToImageKit(files[index++], 'showcases');
+          image = result.url; imageId = result.fileId;
+        }
+        updated.push({ image, imageId, title: entry.title || '', description: entry.description || '', generated: entry.generated !== false });
+      }
+      settings.productShowcases = updated;
     }
 
     await settings.save();
@@ -128,3 +148,4 @@ router.put('/', adminProtect, isAdmin, upload.fields([
 });
 
 module.exports = router;
+

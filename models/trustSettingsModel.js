@@ -27,7 +27,17 @@ const trustSettingsSchema = new mongoose.Schema({
     imageId: { type: String, default: '' },
     reviewText: { type: String, default: '' },
     reviewerName: { type: String, default: '' },
-    rating: { type: Number, default: 5 }
+    rating: { type: Number, default: 5 },
+    entryType: { type: String, enum: ['review', 'illustration'], default: 'review' },
+    generated: { type: Boolean, default: false }
+  }],
+
+  productShowcases: [{
+    image: { type: String, default: '' },
+    imageId: { type: String, default: '' },
+    title: { type: String, default: '' },
+    description: { type: String, default: '' },
+    generated: { type: Boolean, default: true }
   }],
 
   // Social Media Links
