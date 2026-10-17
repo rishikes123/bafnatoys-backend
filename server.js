@@ -204,7 +204,7 @@ app.get("/product/:id", async (req, res) => {
     if (product) {
       const title = `${product.name} | Bafna Toys`;
       const rawDesc =
-        product.description || `Buy ${product.name} at wholesale prices.`;
+        product.description || `Buy ${product.name} online at factory price.`;
       const description = rawDesc
         .replace(/<[^>]*>?/gm, "")
         .substring(0, 150)
@@ -256,8 +256,8 @@ app.get("/product/:id", async (req, res) => {
       `;
     } else {
       seoTags = `
-        <title>Bafna Toys - Wholesale Supplier</title>
-        <meta name="description" content="Best Toy Manufacturer in India" />
+        <title>Bafna Toys - Kids Toys Online, Direct from Factory</title>
+        <meta name="description" content="Safe, BIS certified kids toys at factory prices, delivered across India." />
         <meta property="og:image" content="https://bafnatoys.com/logo.webp" />
         <meta property="og:title" content="Bafna Toys" />
       `;
@@ -310,8 +310,8 @@ app.get("/", async (req, res) => {
   try {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
-      title: "Toys Manufacturers in India - Bafna Toys | Wholesale Toy Supplier",
-      description: "Bafna Toys is a leading wholesale toy manufacturer in Coimbatore, India. Buy pullback cars, PVC dolls, windup toys, board games at factory-direct prices. COD available.",
+      title: "Buy Toys Online for Kids in India | Bafna Toys – Direct from Factory",
+      description: "Shop safe, BIS certified kids toys online at factory prices. Pullback cars, dolls, baby rattles, board games & more — made by Bafna Toys in Coimbatore. COD & pan-India delivery.",
       url: "https://bafnatoys.com/",
       image: "https://bafnatoys.com/logo.webp",
     });
@@ -321,14 +321,14 @@ app.get("/", async (req, res) => {
   }
 });
 
-app.get("/products", async (req, res) => {
+app.get(["/shop", "/products"], async (req, res) => {
   const indexPath = path.resolve(__dirname, "../frontend/dist/index.html");
   try {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
-      title: "All Toys | Bafna Toys - Wholesale Toy Manufacturer India",
-      description: "Browse our complete collection of wholesale toys — pullback cars, PVC dolls, windup toys, board games & more. Factory-direct prices from Coimbatore, India.",
-      url: "https://bafnatoys.com/products",
+      title: "Shop All Toys | Bafna Toys - Kids Toys Online India",
+      description: "Browse our complete collection of kids toys — pullback cars, PVC dolls, windup toys, board games & more. Factory prices, delivered across India.",
+      url: "https://bafnatoys.com/shop",
       image: "https://bafnatoys.com/logo.webp",
     });
     res.send(html);
@@ -342,8 +342,8 @@ app.get("/contact", async (req, res) => {
   try {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
-      title: "Contact Bafna Toys — Wholesale Toy Manufacturer Coimbatore | +91 90433 47300",
-      description: "Contact Bafna Toys for wholesale toy orders. Factory-direct prices on pullback cars, PVC dolls, windup toys. Call +91 90433 47300 or visit our Coimbatore factory.",
+      title: "Contact Bafna Toys — Toy Maker in Coimbatore | +91 90433 47300",
+      description: "Contact Bafna Toys for help with your toy order. Factory prices on pullback cars, PVC dolls, windup toys. Call or WhatsApp +91 90433 47300.",
       url: "https://bafnatoys.com/contact",
       image: "https://bafnatoys.com/logo.webp",
     });
@@ -358,8 +358,8 @@ app.get("/about", async (req, res) => {
   try {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
-      title: "About Us | Bafna Toys — Leading Toy Manufacturer in Coimbatore, India",
-      description: "Learn about Bafna Toys — a trusted wholesale toy manufacturer in Coimbatore, Tamil Nadu. 300+ products, 9+ years experience, pan-India delivery at factory-direct prices.",
+      title: "About Us | Bafna Toys — Toys Made in Coimbatore, Sold Direct to You",
+      description: "Learn about Bafna Toys — we make toys in our own factory in Coimbatore, Tamil Nadu. 300+ toys, 9+ years experience, pan-India delivery at factory prices.",
       url: "https://bafnatoys.com/about",
       image: "https://bafnatoys.com/logo.webp",
     });
@@ -374,8 +374,8 @@ app.get("/hot-deals", async (req, res) => {
   try {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
-      title: "Hot Deals & Offers | Bafna Toys Wholesale",
-      description: "Grab the best deals on wholesale toys! Discounted rates on pullback cars, PVC dolls, windup toys and more. Limited stock — order now from Bafna Toys.",
+      title: "Hot Deals & Offers on Kids Toys | Bafna Toys",
+      description: "Grab the best deals on kids toys! Discounted prices on pullback cars, PVC dolls, windup toys and more. Limited stock — order now from Bafna Toys.",
       url: "https://bafnatoys.com/hot-deals",
       image: "https://bafnatoys.com/logo.webp",
     });
@@ -391,7 +391,7 @@ app.get("/categories", async (req, res) => {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
       title: "Toy Categories | Bafna Toys - Pullback Cars, Dolls, Games & More",
-      description: "Explore all toy categories at Bafna Toys — pullback cars, PVC dolls, windup key toys, board games, baby rattles & educational toys at wholesale rates.",
+      description: "Explore all toy categories at Bafna Toys — pullback cars, PVC dolls, windup key toys, board games, baby rattles & educational toys at factory prices.",
       url: "https://bafnatoys.com/categories",
       image: "https://bafnatoys.com/logo.webp",
     });
@@ -406,8 +406,8 @@ app.get("/blogs", async (req, res) => {
   try {
     let html = fs.readFileSync(indexPath, "utf8");
     html = injectSEO(html, {
-      title: "Bafna Toys Blog - Wholesale Toy Industry News & Insights",
-      description: "Read the latest news, trends, and business tips for toy retailers and wholesalers in India by Bafna Toys.",
+      title: "Bafna Toys Blog - Toy Ideas, Gifting Tips & News",
+      description: "Toy ideas, gifting tips, parenting reads and the latest news from Bafna Toys.",
       url: "https://bafnatoys.com/blogs",
       image: "https://bafnatoys.com/logo.webp",
     });

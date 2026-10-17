@@ -28,7 +28,7 @@ router.get("/sitemap.xml", async (req, res) => {
 
     // 🛍️ Static Pages
     const staticPages = [
-      { path: "/products",    freq: "daily",   priority: "0.9" },
+      { path: "/shop",        freq: "daily",   priority: "0.9" },
       { path: "/hot-deals",   freq: "daily",   priority: "0.9" },
       { path: "/categories",  freq: "weekly",  priority: "0.8" },
       { path: "/about",       freq: "monthly", priority: "0.7" },

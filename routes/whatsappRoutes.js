@@ -146,9 +146,9 @@ router.post("/webhook", async (req, res) => {
         // --- 1. WELCOME & MAIN MENU LOGIC (Highest Priority) ---
         if (msgBody.includes("hi") || msgBody.includes("hello") || msgBody.includes("start")) {
           const welcomeBody = `*Namaste! Welcome to Bafna Toys* 🧸✨\n\n` +
-                              `India's leading *B2B Toy Manufacturer*. 🏭🇮🇳\n\n` +
+                              `Toys made in our own factory, delivered to your home. 🏭🇮🇳\n\n` +
                               `✅ Factory Price | BIS Certified\n` +
-                              `✅ 4,900+ Trusted Retailers\n\n` +
+                              `✅ Order even 1 piece | COD available\n\n` +
                               `Please select an option from the *Main Menu* below to get started:`;
 
           if (ACCESS_TOKEN && PHONE_NUMBER_ID) {
@@ -157,7 +157,7 @@ router.post("/webhook", async (req, res) => {
                 title: "Main Menu",
                 rows: [
                   { id: "order", title: "📦 Order Status", description: "Track your shipment" },
-                  { id: "catalog", title: "📚 Get Catalog", description: "Latest wholesale price list" },
+                  { id: "catalog", title: "📚 Get Catalog", description: "Latest toy catalog" },
                   { id: "agent", title: "👤 Talk to Agent", description: "Chat with support" },
                   { id: "instagram", title: "📸 Instagram", description: "Follow us for updates" }
                 ]
@@ -264,7 +264,7 @@ router.post("/webhook", async (req, res) => {
               messaging_product: "whatsapp",
               to: from,
               type: "text",
-              text: { body: "Generating your latest wholesale catalog PDF... Please wait a moment ⏳" }
+              text: { body: "Generating your latest toy catalog PDF... Please wait a moment ⏳" }
             }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
           }
           replyDoc = "https://api.bafnatoys.com/api/products/download-catalogue/pdf"; 

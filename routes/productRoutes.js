@@ -574,7 +574,7 @@ router.get("/download-catalogue/pdf", async (req, res) => {
     doc.pipe(res);
 
     // Header
-    doc.fontSize(24).fillColor("#4f46e5").text("Bafna Toys Wholesale Catalogue", { align: "center" });
+    doc.fontSize(24).fillColor("#4f46e5").text("Bafna Toys Catalogue", { align: "center" });
     doc.moveDown(0.5);
     doc.fontSize(10).fillColor("#475569").text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, { align: "center" });
     doc.moveDown(2);
@@ -644,11 +644,6 @@ router.get("/download-catalogue/pdf", async (req, res) => {
       doc.fillColor("#0f172a").fontSize(10).text(cleanName, currentX + 10, currentY + 150, { width: 150, height: 25, ellipsis: true });
       doc.fillColor("#64748b").fontSize(9).text(`SKU: ${p.sku || 'N/A'}`, currentX + 10, currentY + 175);
 
-      let minQty = p.minOrderQty > 0 ? p.minOrderQty : (p.piecesPerUnit > 1 ? p.piecesPerUnit : 2);
-      if (p.isBulkOnly && p.piecesPerUnit > 1) {
-        minQty = Math.max(minQty, p.piecesPerUnit);
-      }
-      doc.fillColor("#64748b").fontSize(9).text(`Min Qty: ${minQty} Pcs`, currentX + 10, currentY + 188);
       // Price & MRP hidden — add karna ho to "rest" ke baad batao
 
       // Move Positions
@@ -689,7 +684,7 @@ router.get("/feed/google-shopping", async (req, res) => {
   <channel>
     <title>Bafna Toys</title>
     <link>https://bafnatoys.com</link>
-    <description>Best wholesale toys for kids</description>
+    <description>Safe, factory-direct toys for kids</description>
 `;
 
     finalProducts.forEach((product) => {
@@ -751,7 +746,7 @@ router.get("/feed/facebook-catalog", async (req, res) => {
       
       // Clean up title and description (remove HTML, handle quotes)
       const cleanTitle = (product.name || 'Bafna Toy').replace(/<[^>]*>?/gm, '').replace(/"/g, '""');
-      const cleanDesc = (product.description || product.tagline || product.name || 'Best quality wholesale toy').replace(/<[^>]*>?/gm, '').replace(/"/g, '""');
+      const cleanDesc = (product.description || product.tagline || product.name || 'Best quality toy for kids').replace(/<[^>]*>?/gm, '').replace(/"/g, '""');
       
       const availability = (product.stock && product.stock > 0) ? 'in stock' : 'out of stock';
       const condition = 'new';
