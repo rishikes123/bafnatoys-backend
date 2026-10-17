@@ -39,7 +39,8 @@ router.get('/all/list', async (req, res) => {
 // 3. GET REVIEWS BY PRODUCT - Public
 router.get('/:productId', async (req, res) => {
   try {
-    const reviews = await Review.find({ productId: req.params.productId }).sort({ createdAt: -1 });
+    // Public list me sirf asli verified-buyer reviews (userId wale)
+    const reviews = await Review.find({ productId: req.params.productId, userId: { $exists: true, $ne: null } }).sort({ createdAt: -1 });
     res.json(reviews);
   } catch (err) { 
     res.status(500).json({ message: "Fetch failed" }); 

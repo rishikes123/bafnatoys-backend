@@ -11,7 +11,7 @@ router.get("/sitemap.xml", async (req, res) => {
 
     const [products, categories, blogs] = await Promise.all([
       Product.find().select("slug name images updatedAt").lean(),
-      Category.find().select("name slug updatedAt").lean(),
+      Category.find().select("name slug link updatedAt").lean(),
       Blog.find({ published: true }).select("slug coverImage updatedAt title").lean(),
     ]);
 
@@ -30,12 +30,13 @@ router.get("/sitemap.xml", async (req, res) => {
     const staticPages = [
       { path: "/shop",        freq: "daily",   priority: "0.9" },
       { path: "/hot-deals",   freq: "daily",   priority: "0.9" },
-      { path: "/categories",  freq: "weekly",  priority: "0.8" },
       { path: "/about",       freq: "monthly", priority: "0.7" },
-      { path: "/contact",     freq: "monthly", priority: "0.8" },
-      { path: "/privacy-policy",    freq: "monthly", priority: "0.4" },
-      { path: "/terms-conditions",  freq: "monthly", priority: "0.4" },
-      { path: "/return-policy",     freq: "monthly", priority: "0.4" },
+      { path: "/contact",     freq: "monthly", priority: "0.7" },
+      { path: "/faq",         freq: "monthly", priority: "0.6" },
+      { path: "/shipping-delivery",   freq: "monthly", priority: "0.4" },
+      { path: "/cancellation-refund", freq: "monthly", priority: "0.4" },
+      { path: "/privacy-policy",      freq: "monthly", priority: "0.3" },
+      { path: "/terms-conditions",    freq: "monthly", priority: "0.3" },
       { path: "/blogs",             freq: "daily",   priority: "0.8" },
     ];
     staticPages.forEach(({ path, freq, priority }) => {
@@ -48,10 +49,12 @@ router.get("/sitemap.xml", async (req, res) => {
 
     // 📂 Categories
     categories.forEach((cat) => {
+      // Jo category kisi aur page/site par jaati hai (All Toys "/", Keychain -> bafnadaily, Deals -> hot-deals) wo skip
+      if (cat.link && cat.link.trim()) return;
       const slug = cat.slug || cat.name.toLowerCase().replace(/\s+/g, "-");
       const lastmod = cat.updatedAt ? new Date(cat.updatedAt).toISOString() : "";
       xml += `  <url>
-    <loc>${baseUrl}/products?category=${encodeURIComponent(slug)}</loc>
+    <loc>${baseUrl}/category/${encodeURIComponent(slug)}</loc>
     ${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>

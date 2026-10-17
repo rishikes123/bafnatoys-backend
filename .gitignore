@@ -1,6 +1,7 @@
 node_modules/
 .env
 .env.*
+migration-backups/
 
 # Sensitive credentials — NEVER commit these
 fcm-service-account.json

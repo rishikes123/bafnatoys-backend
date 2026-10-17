@@ -98,7 +98,8 @@ async function attachRatingsToProducts(products) {
     const productIds = products.map(p => p._id);
     
     const ratingsData = await Review.aggregate([
-      { $match: { productId: { $in: productIds } } },
+      // Sirf asli (verified buyer, userId wale) reviews gino — script/admin se daale gaye nahi
+      { $match: { productId: { $in: productIds }, userId: { $exists: true, $ne: null } } },
       { 
         $group: { 
           _id: "$productId", 
@@ -247,7 +248,7 @@ router.get("/:slugOrId", async (req, res, next) => {
     if (!prod) return res.status(404).json({ message: "Product not found" });
 
     const ratingData = await Review.aggregate([
-      { $match: { productId: prod._id } },
+      { $match: { productId: prod._id, userId: { $exists: true, $ne: null } } },
       { $group: { _id: null, avgRating: { $avg: "$rating" }, totalReviews: { $sum: 1 } } }
     ]);
     

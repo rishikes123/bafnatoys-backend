@@ -18,6 +18,7 @@ const app = express();
 
 // ✅ IMPORTANT: correct IP when behind proxy/CDN (1 = trust first proxy only)
 app.set("trust proxy", 1);
+app.use(require("./middleware/migrationReadOnly").migrationReadOnly);
 
 /* ------------------------- SOCKET.IO SERVER SETUP ------------------------- */
 const server = http.createServer(app);
@@ -115,7 +116,7 @@ app.use("/images", express.static(path.join(__dirname, "images")));
 
 /* ------------------------- HEALTH CHECK ----------------------------- */
 app.get("/api/test", (_req, res) => {
-  res.json({ ok: true, message: "✅ Server Working" });
+  res.json({ ok: true, message: "✅ Server Working", database: process.env.DB_PROVIDER || "mongodb", readOnly: process.env.MIGRATION_READ_ONLY === "true" });
 });
 
 /* --------------------------- API ROUTES ------------------------------ */
@@ -464,6 +465,7 @@ const startServer = async () => {
     await connectDB();
 
     const runCheckoutRecovery = () => {
+      if (process.env.MIGRATION_READ_ONLY === "true" || process.env.DISABLE_BACKGROUND_JOBS === "true") return;
       reconcileCapturedCheckouts()
         .then((count) => {
           if (count > 0) {
@@ -496,6 +498,7 @@ const startServer = async () => {
     // Meta Ads budget guard — kharch zyada aur order zero wale campaign
     // khud pause kar deta hai. Panel me band ho to kuch nahi karta.
     const runMetaGuard = () => {
+      if (process.env.MIGRATION_READ_ONLY === "true" || process.env.DISABLE_BACKGROUND_JOBS === "true") return;
       require("./services/metaGuardService")
         .runGuard({ trigger: "auto" })
         .then((r) => {
