@@ -237,7 +237,7 @@ exports.handleChatMessage = async (req, res) => {
             slabs: normalizedShipping.shippingSlabs,
             baseCharge: normalizedShipping.shippingCharge,
             freeShippingAbove: normalizedShipping.freeShippingThreshold,
-            discountRules: shipSettings?.discountRules || []
+            discountRules: shipSettings?.volumeDiscountsEnabled === false ? [] : shipSettings?.discountRules || []
           }
         };
       }

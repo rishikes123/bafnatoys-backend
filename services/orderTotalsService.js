@@ -7,6 +7,7 @@ const ShippingSettings = require("../models/ShippingSettings");
  * bhi — dono jagah ek hi rule rahe.
  */
 function calculateDiscountAmount(itemsTotal, shippingSettings) {
+  if (shippingSettings?.volumeDiscountsEnabled === false) return 0;
   const discountRules = shippingSettings?.discountRules || [];
   const sortedRules = [...discountRules].sort((a, b) => b.minAmount - a.minAmount);
   const applicableRule = sortedRules.find((rule) => itemsTotal >= rule.minAmount);

@@ -141,7 +141,7 @@ exports.createOrder = async (req, res) => {
     const shippingCharge = calculateShippingCharge(itemsTotal, shippingSettings);
 
     // 4. Discount from DB rules
-    const discountRules = shippingSettings?.discountRules || [];
+    const discountRules = shippingSettings?.volumeDiscountsEnabled === false ? [] : shippingSettings?.discountRules || [];
     let discountAmount = 0;
     const sortedRules = [...discountRules].sort((a, b) => b.minAmount - a.minAmount);
     const applicableRule = sortedRules.find((r) => itemsTotal >= r.minAmount);

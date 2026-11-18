@@ -20,6 +20,7 @@ const ShippingSchema = new mongoose.Schema({
   },
   
   // ✅ NEW: Ye field add kiya hai rules store karne ke liye
+  volumeDiscountsEnabled: { type: Boolean, default: true },
   discountRules: [
     {
       minAmount: { type: Number, required: true },       // Kitne ki shopping

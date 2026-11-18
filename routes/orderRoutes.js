@@ -371,7 +371,7 @@ const legacyCreateOrder = async (req, res) => {
     );
 
     // 4. Discount from DB rules
-    const discountRules = shippingSettings?.discountRules || [];
+    const discountRules = shippingSettings?.volumeDiscountsEnabled === false ? [] : shippingSettings?.discountRules || [];
     let serverDiscountAmount = 0;
     const sortedRules = [...discountRules].sort((a, b) => b.minAmount - a.minAmount);
     const applicableRule = sortedRules.find((r) => serverItemsTotal >= r.minAmount);
