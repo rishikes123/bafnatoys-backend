@@ -277,7 +277,7 @@ orderSchema.index({ orderNumber: 1 }, { unique: true });
 orderSchema.pre("validate", async function (next) {
   if (!this.orderNumber) {
     const lastOrder = await this.constructor.findOne().sort({ createdAt: -1 });
-    let nextNum = 1001001; 
+    let nextNum = 1001094; // D2C reset 2026-11-24: purane B2B orders ODR1001093 tak the
 
     if (lastOrder && lastOrder.orderNumber) {
       const lastNumber = parseInt(lastOrder.orderNumber.replace("ODR", ""), 10);

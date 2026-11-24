@@ -487,7 +487,7 @@ const legacyCreateOrder = async (req, res) => {
         if (e?.code === 11000 && String(e.message).includes("orderNumber")) {
           // ✅ NEW LOGIC: Updated to 1001001 for correct sequence bypassing random big numbers
           const lastOrderRetry = await Order.findOne().sort({ createdAt: -1 });
-          let nextNum = 1001001;
+          let nextNum = 1001094; // D2C reset 2026-11-24: purane B2B orders ODR1001093 tak the
           
           if (lastOrderRetry && lastOrderRetry.orderNumber) {
             const lastNumber = parseInt(lastOrderRetry.orderNumber.replace("ODR", ""), 10);

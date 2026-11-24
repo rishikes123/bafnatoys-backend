@@ -375,7 +375,7 @@ async function createOrderFromPayload(payload, options = {}) {
         String(error.message).includes("orderNumber")
       ) {
         const lastOrder = await Order.findOne().sort({ createdAt: -1 });
-        let nextNumber = 1001001;
+        let nextNumber = 1001094; // D2C reset 2026-11-24: purane B2B orders ODR1001093 tak the
         if (lastOrder?.orderNumber) {
           const parsed = parseInt(
             lastOrder.orderNumber.replace("ODR", ""),
